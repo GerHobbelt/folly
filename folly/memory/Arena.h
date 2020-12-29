@@ -74,8 +74,8 @@ class Arena {
         sizeLimit_(sizeLimit),
         maxAlign_(maxAlign) {
     if ((maxAlign_ & (maxAlign_ - 1)) || maxAlign_ > alignof(Block)) {
-      throw_exception(std::invalid_argument(
-          folly::to<std::string>("Invalid maxAlign: ", maxAlign_)));
+      throw_exception<std::invalid_argument>(
+          folly::to<std::string>("Invalid maxAlign: ", maxAlign_));
     }
   }
 
@@ -121,11 +121,11 @@ class Arena {
   void merge(Arena&& other);
 
   void clear() {
+    bytesUsed_ = 0;
     freeLargeBlocks(); // We don't reuse large blocks
     if (blocks_.empty()) {
       return;
     }
-    bytesUsed_ = 0;
     currentBlock_ = blocks_.begin();
     char* start = currentBlock_->start();
     ptr_ = start;
@@ -200,6 +200,7 @@ class Arena {
   void freeLargeBlocks() {
     largeBlocks_.clear_and_dispose([this](LargeBlock* b) {
       auto size = b->allocSize;
+      totalAllocatedSize_ -= size;
       b->~LargeBlock();
       AllocTraits::deallocate(alloc(), reinterpret_cast<char*>(b), size);
     });

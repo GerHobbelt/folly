@@ -16,6 +16,10 @@
 
 #include <folly/io/async/AsyncUDPSocket.h>
 
+#include <cerrno>
+
+#include <boost/preprocessor/control/if.hpp>
+
 #include <folly/Likely.h>
 #include <folly/Utility.h>
 #include <folly/io/SocketOptionMap.h>
@@ -24,9 +28,6 @@
 #include <folly/portability/Sockets.h>
 #include <folly/portability/Unistd.h>
 #include <folly/small_vector.h>
-
-#include <boost/preprocessor/control/if.hpp>
-#include <cerrno>
 
 // Due to the way kernel headers are included, this may or may not be defined.
 // Number pulled from 3.10 kernel headers.
@@ -474,20 +475,44 @@ ssize_t AsyncUDPSocket::writeChain(
   msg.msg_flags = 0;
 
 #ifdef FOLLY_HAVE_MSG_ERRQUEUE
-  char control[CMSG_SPACE(sizeof(uint16_t))];
+  char control
+      [CMSG_SPACE(sizeof(uint16_t)) + /*gso*/
+       CMSG_SPACE(sizeof(uint64_t)) /*txtime*/
+  ] = {};
+  msg.msg_control = control;
+  struct cmsghdr* cm = nullptr;
   if (options.gso > 0) {
-    msg.msg_control = control;
-    msg.msg_controllen = sizeof(control);
+    msg.msg_controllen = CMSG_SPACE(sizeof(uint16_t));
+    cm = CMSG_FIRSTHDR(&msg);
 
-    struct cmsghdr* cm = CMSG_FIRSTHDR(&msg);
     cm->cmsg_level = SOL_UDP;
     cm->cmsg_type = UDP_SEGMENT;
     cm->cmsg_len = CMSG_LEN(sizeof(uint16_t));
     auto gso_len = static_cast<uint16_t>(options.gso);
     memcpy(CMSG_DATA(cm), &gso_len, sizeof(gso_len));
   }
+
+  if (options.txTime.count() > 0 && txTime_.has_value() &&
+      (txTime_.value().clockid >= 0)) {
+    msg.msg_controllen += CMSG_SPACE(sizeof(uint64_t));
+    if (cm) {
+      cm = CMSG_NXTHDR(&msg, cm);
+    } else {
+      cm = CMSG_FIRSTHDR(&msg);
+    }
+    cm->cmsg_level = SOL_SOCKET;
+    cm->cmsg_type = SCM_TXTIME;
+    cm->cmsg_len = CMSG_LEN(sizeof(uint64_t));
+
+    struct timespec ts;
+    clock_gettime(txTime_.value().clockid, &ts);
+    uint64_t txtime = ts.tv_sec * 1000000000ULL + ts.tv_nsec +
+        std::chrono::nanoseconds(options.txTime).count();
+    memcpy(CMSG_DATA(cm), &txtime, sizeof(txtime));
+  }
 #else
   CHECK_LT(options.gso, 1) << "GSO not supported";
+  CHECK_LT(options.txTime.count(), 1) << "TX_TIME not supported";
 #endif
 
   auto ret = sendmsg(fd_, &msg, msg_flags);
@@ -513,7 +538,7 @@ ssize_t AsyncUDPSocket::writeChain(
   }
 
   return ret;
-}
+} // namespace folly
 
 ssize_t AsyncUDPSocket::write(
     const folly::SocketAddress& address,
@@ -1145,6 +1170,41 @@ int AsyncUDPSocket::getGRO() {
   }
 
   return gro_.value();
+}
+
+AsyncUDPSocket::TXTime AsyncUDPSocket::getTXTime() {
+  // check if we can return the cached value
+  if (FOLLY_UNLIKELY(!txTime_.has_value())) {
+    TXTime txTime;
+#ifdef FOLLY_HAVE_MSG_ERRQUEUE
+    struct net_sock_txtime val = {};
+    socklen_t optlen = sizeof(val);
+    if (!netops::getsockopt(fd_, SOL_SOCKET, SO_TXTIME, &val, &optlen)) {
+      txTime.clockid = val.clockid;
+      txTime.deadline = (val.flags & SOF_TXTIME_DEADLINE_MODE);
+    }
+#endif
+    txTime_ = txTime;
+  }
+
+  return txTime_.value();
+}
+
+bool AsyncUDPSocket::setTXTime(TXTime txTime) {
+#ifdef FOLLY_HAVE_MSG_ERRQUEUE
+  struct net_sock_txtime val;
+  val.clockid = txTime.clockid;
+  val.flags = txTime.deadline ? SOF_TXTIME_DEADLINE_MODE : 0;
+  int ret =
+      netops::setsockopt(fd_, SOL_SOCKET, SO_TIMESTAMPING, &val, sizeof(val));
+
+  txTime_ = ret ? TXTime() : txTime;
+
+  return !ret;
+#else
+  (void)txTime;
+  return false;
+#endif
 }
 
 bool AsyncUDPSocket::setRxZeroChksum6(FOLLY_MAYBE_UNUSED bool bVal) {

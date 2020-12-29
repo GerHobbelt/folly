@@ -20,7 +20,7 @@
 #include <folly/ExceptionWrapper.h>
 #include <folly/Random.h>
 #include <folly/Try.h>
-#include <folly/experimental/coro/Error.h>
+#include <folly/experimental/coro/Result.h>
 #include <folly/experimental/coro/Sleep.h>
 #include <folly/experimental/coro/Task.h>
 #include <folly/experimental/coro/Traits.h>
@@ -187,7 +187,7 @@ class ExponentialBackoffWithJitter {
     // Check to see if we were cancelled during the sleep.
     const auto& cancelToken = co_await co_current_cancellation_token;
     if (cancelToken.isCancellationRequested()) {
-      co_yield folly::coro::co_error(OperationCancelled{});
+      co_yield folly::coro::co_cancelled;
     }
   }
 

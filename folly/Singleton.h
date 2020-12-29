@@ -291,6 +291,7 @@ class SingletonHolderBase {
   virtual bool creationStarted() = 0;
   virtual void preDestroyInstance(ReadMostlyMainPtrDeleter<>&) = 0;
   virtual void destroyInstance() = 0;
+  virtual void inChildAfterFork() = 0;
 
  private:
   TypeDescriptor type_;
@@ -323,6 +324,7 @@ struct SingletonHolder : public SingletonHolderBase {
   bool creationStarted() override;
   void preDestroyInstance(ReadMostlyMainPtrDeleter<>&) override;
   void destroyInstance() override;
+  void inChildAfterFork() override;
 
  private:
   template <typename Tag, typename VaultTag>
@@ -334,6 +336,7 @@ struct SingletonHolder : public SingletonHolderBase {
     NotRegistered,
     Dead,
     Living,
+    LivingInChildAfterFork,
   };
 
   SingletonVault& vault_;
@@ -408,8 +411,7 @@ class SingletonVault {
 
   static Type defaultVaultType();
 
-  explicit SingletonVault(Type type = defaultVaultType()) noexcept
-      : type_(type) {}
+  explicit SingletonVault(Type type = defaultVaultType()) noexcept;
 
   // Destructor is only called by unit tests to check destroyInstances.
   ~SingletonVault();
@@ -520,6 +522,10 @@ class SingletonVault {
 
   [[noreturn]] void fireShutdownTimer();
 
+  void setFailOnUseAfterFork(bool failOnUseAfterFork) {
+    failOnUseAfterFork_ = failOnUseAfterFork;
+  }
+
  private:
   template <typename T>
   friend struct detail::SingletonHolder;
@@ -553,6 +559,7 @@ class SingletonVault {
       eagerInitSingletons_;
   Synchronized<std::vector<detail::TypeDescriptor>, SharedMutexSuppressTSAN>
       creationOrder_;
+  std::unordered_set<detail::SingletonHolderBase*> liveSingletonsPreFork_;
 
   // Using SharedMutexReadPriority is important here, because we want to make
   // sure we don't block nested singleton creation happening concurrently with
@@ -564,6 +571,7 @@ class SingletonVault {
   std::atomic<bool> shutdownTimerStarted_{false};
   std::chrono::milliseconds shutdownTimeout_{std::chrono::minutes{5}};
   Synchronized<std::vector<std::string>> shutdownLog_;
+  bool failOnUseAfterFork_{false};
 };
 
 // This is the wrapper class that most users actually interact with.
