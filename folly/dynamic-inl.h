@@ -239,6 +239,9 @@ struct dynamic::item_iterator : detail::IteratorAdaptor<
   /* implicit */ item_iterator(dynamic::ObjectImpl::iterator b) : Super(b) {}
 
   using object_type = dynamic::ObjectImpl;
+
+  using Super::operator==;
+  using Super::operator!=;
 };
 
 struct dynamic::value_iterator : detail::IteratorAdaptor<
@@ -256,6 +259,9 @@ struct dynamic::value_iterator : detail::IteratorAdaptor<
   using object_type = dynamic::ObjectImpl;
 
   dynamic& dereference() const { return base()->second; }
+
+  using Super::operator==;
+  using Super::operator!=;
 };
 
 struct dynamic::const_item_iterator
@@ -276,6 +282,9 @@ struct dynamic::const_item_iterator
   /* implicit */ const_item_iterator(item_iterator i) : Super(i.base()) {}
 
   using object_type = dynamic::ObjectImpl const;
+
+  using Super::operator==;
+  using Super::operator!=;
 };
 
 struct dynamic::const_key_iterator : detail::IteratorAdaptor<
@@ -294,6 +303,9 @@ struct dynamic::const_key_iterator : detail::IteratorAdaptor<
   using object_type = dynamic::ObjectImpl const;
 
   dynamic const& dereference() const { return base()->first; }
+
+  using Super::operator==;
+  using Super::operator!=;
 };
 
 struct dynamic::const_value_iterator : detail::IteratorAdaptor<
@@ -315,6 +327,9 @@ struct dynamic::const_value_iterator : detail::IteratorAdaptor<
   using object_type = dynamic::ObjectImpl const;
 
   dynamic const& dereference() const { return base()->second; }
+
+  using Super::operator==;
+  using Super::operator!=;
 };
 
 //////////////////////////////////////////////////////////////////////
