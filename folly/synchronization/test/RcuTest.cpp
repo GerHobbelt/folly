@@ -308,3 +308,26 @@ TEST(RcuTest, Tsan) {
   t2.join();
   EXPECT_EQ(data, 2);
 }
+
+TEST(RcuTest, RetireUnderLock) {
+  using namespace std::chrono;
+
+  // syncTimePeriod is 3.2s
+  auto deadline = steady_clock::now() + seconds(4);
+
+  std::thread t1([&] {
+    while (steady_clock::now() < deadline) {
+      synchronize_rcu();
+    }
+  });
+
+  std::thread t2([&] {
+    while (steady_clock::now() < deadline) {
+      rcu_reader g;
+      rcu_default_domain()->call([] {});
+    }
+  });
+
+  t1.join();
+  t2.join();
+}
