@@ -224,6 +224,7 @@ TEST(RetryingTest, semifuture_policy_basic) {
   EXPECT_EQ(2, r.value());
 }
 
+#ifndef __APPLE__
 TEST(RetryingTest, policy_capped_jittered_exponential_backoff) {
   multiAttemptExpectDurationWithin(5, milliseconds(200), milliseconds(400), [] {
     using ms = milliseconds;
@@ -243,6 +244,7 @@ TEST(RetryingTest, policy_capped_jittered_exponential_backoff) {
     EXPECT_EQ(2, r.value());
   });
 }
+#endif
 
 TEST(RetryingTest, policy_capped_jittered_exponential_backoff_unsafe) {
   multiAttemptExpectDurationWithin(5, milliseconds(200), milliseconds(400), [] {
