@@ -71,12 +71,9 @@ extern bool (*MallocExtension_Internal_GetNumericProperty)(
 #pragma comment(linker, "/alternatename:_sdallocx=_sdallocxWeak")
 #pragma comment(linker, "/alternatename:_nallocx=_nallocxWeak")
 #pragma comment(linker, "/alternatename:_mallctl=_mallctlWeak")
-#pragma comment( \
-    linker, "/alternatename:_mallctlnametomib=_mallctlnametomibWeak")
+#pragma comment(linker, "/alternatename:_mallctlnametomib=_mallctlnametomibWeak")
 #pragma comment(linker, "/alternatename:_mallctlbymib=_mallctlbymibWeak")
-#pragma comment( \
-    linker,      \
-    "/alternatename:_MallocExtension_Internal_GetNumericProperty=_MallocExtension_Internal_GetNumericPropertyWeak")
+#pragma comment(linker, "/alternatename:_MallocExtension_Internal_GetNumericProperty=_MallocExtension_Internal_GetNumericPropertyWeak")
 #else
 #pragma comment(linker, "/alternatename:mallocx=mallocxWeak")
 #pragma comment(linker, "/alternatename:rallocx=rallocxWeak")
@@ -88,9 +85,7 @@ extern bool (*MallocExtension_Internal_GetNumericProperty)(
 #pragma comment(linker, "/alternatename:mallctl=mallctlWeak")
 #pragma comment(linker, "/alternatename:mallctlnametomib=mallctlnametomibWeak")
 #pragma comment(linker, "/alternatename:mallctlbymib=mallctlbymibWeak")
-#pragma comment( \
-    linker,      \
-    "/alternatename:MallocExtension_Internal_GetNumericProperty=MallocExtension_Internal_GetNumericPropertyWeak")
+#pragma comment(linker, "/alternatename:MallocExtension_Internal_GetNumericProperty=MallocExtension_Internal_GetNumericPropertyWeak")
 #endif
 #endif
 #endif
