@@ -34,13 +34,12 @@
 #include <folly/lang/Exception.h>
 
 /**
- * Cursor class for fast iteration over IOBuf chains.
+ * IOBuf Cursors provide fast iteration over IOBuf chains.
  *
- * Cursor - Read-only access
- *
- * RWPrivateCursor - Read-write access, assumes private access to IOBuf chain
- * RWUnshareCursor - Read-write access, calls unshare on write (COW)
- * Appender        - Write access, assumes private access to IOBuf chain
+ * - Cursor          - Read-only access
+ * - RWPrivateCursor - Read-write access, assumes private access to IOBuf chain
+ * - RWUnshareCursor - Read-write access, calls unshare on write (COW)
+ * - Appender        - Write access, assumes private access to IOBuf chain
  *
  * Note that RW cursors write in the preallocated part of buffers (that is,
  * between the buffer's data() and tail()), while Appenders append to the end
@@ -48,7 +47,10 @@
  * automatically adjust the buffer pointers, so you may only use one
  * Appender with a buffer chain; for this reason, Appenders assume private
  * access to the buffer (you need to call unshare() yourself if necessary).
- **/
+ *
+ * @file Cursor.h
+ */
+
 namespace folly {
 namespace io {
 
@@ -61,6 +63,9 @@ class CursorBase {
   friend class CursorBase;
 
  public:
+  /**
+   * Construct a cursor wrapping an IOBuf.
+   */
   explicit CursorBase(BufType* buf) : crtBuf_(buf), buffer_(buf) {
     if (crtBuf_) {
       crtPos_ = crtBegin_ = crtBuf_->data();
@@ -68,6 +73,11 @@ class CursorBase {
     }
   }
 
+  /**
+   * Constuct a bounded cursor wrapping an IOBuf.
+   *
+   * @param len An upper bound on the number of bytes available to this cursor.
+   */
   CursorBase(BufType* buf, size_t len) : crtBuf_(buf), buffer_(buf) {
     if (crtBuf_) {
       crtPos_ = crtBegin_ = crtBuf_->data();
@@ -115,6 +125,8 @@ class CursorBase {
 
   /**
    * Reset cursor to point to a new buffer.
+   *
+   * @methodset Modifiers
    */
   void reset(BufType* buf) {
     crtBuf_ = buf;
@@ -129,12 +141,19 @@ class CursorBase {
 
   /**
    * Get the current Cursor position relative to the head of IOBuf chain.
+   *
+   * @methodset Capacity
    */
   size_t getCurrentPosition() const {
     dcheckIntegrity();
     return (crtPos_ - crtBegin_) + absolutePos_;
   }
 
+  /**
+   * Get the data at the current cursor position.
+   *
+   * @methodset Accessors
+   */
   const uint8_t* data() const {
     dcheckIntegrity();
     return crtPos_;
@@ -142,6 +161,8 @@ class CursorBase {
 
   /**
    * Return the remaining space available in the current IOBuf.
+   *
+   * @methodset Capacity
    *
    * May return 0 if the cursor is at the end of an IOBuf.  Use peekBytes()
    * instead if you want to avoid this.  peekBytes() will advance to the next
@@ -155,6 +176,9 @@ class CursorBase {
 
   /**
    * Return the space available until the end of the entire IOBuf chain.
+   *
+   * @methodset Capacity
+   *
    * For bounded Cursors, return the available space until the boundary.
    */
   size_t totalLength() const {
@@ -170,6 +194,9 @@ class CursorBase {
   /**
    * Return true if the cursor could advance the specified number of bytes
    * from its current position.
+   *
+   * @methodset Capacity
+   *
    * This is useful for applications that want to do checked reads instead of
    * catching exceptions and is more efficient than using totalLength as it
    * walks the minimal set of buffers in the chain to determine the result.
@@ -191,8 +218,10 @@ class CursorBase {
     return false;
   }
 
-  /*
+  /**
    * Return true if the cursor is at the end of the entire IOBuf chain.
+   *
+   * @methodset Capacity
    */
   bool isAtEnd() const {
     dcheckIntegrity();
@@ -221,6 +250,8 @@ class CursorBase {
 
   /**
    * Advances the cursor to the end of the entire IOBuf chain.
+   *
+   * @methodset Modifiers
    */
   void advanceToEnd() {
     // Simple case, we're already in the last IOBuf.
@@ -252,22 +283,34 @@ class CursorBase {
     }
   }
 
+  /// Advance the cursor
+  ///
+  /// @methodset Modifiers
   Derived& operator+=(size_t offset) {
     Derived* p = static_cast<Derived*>(this);
     p->skip(offset);
     return *p;
   }
+  /// Get a new cursor, advanced by offset from this cursor.
+  ///
+  /// @methodset Modifiers
   Derived operator+(size_t offset) const {
     Derived other(*this);
     other.skip(offset);
     return other;
   }
 
+  /// Retreat the cursor
+  ///
+  /// @methodset Modifiers
   Derived& operator-=(size_t offset) {
     Derived* p = static_cast<Derived*>(this);
     p->retreat(offset);
     return *p;
   }
+  /// Get a new cursor, retreated by offset from this cursor.
+  ///
+  /// @methodset Modifiers
   Derived operator-(size_t offset) const {
     Derived other(*this);
     other.retreat(offset);
@@ -276,6 +319,8 @@ class CursorBase {
 
   /**
    * Compare cursors for equality/inequality.
+   *
+   * @methodset Comparison
    *
    * Two cursors are equal if they are pointing to the same location in the
    * same IOBuf chain.
@@ -300,8 +345,19 @@ class CursorBase {
     return (crtPos == crtPosOther) && (crtBuf == crtBufOther);
   }
 
+  /// @copydoc operator==
   bool operator!=(const CursorBase& other) const { return !operator==(other); }
 
+  /**
+   * Attempt to read from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * @param[out] val  Store the read value in this location.
+   * @return True iff successful; If there are not enough bytes left in the
+   * cursor, return false.
+   * @note val might be modified even if tryRead returns false.
+   */
   template <class T>
   typename std::enable_if<std::is_arithmetic<T>::value, bool>::type tryRead(
       T& val) {
@@ -313,6 +369,13 @@ class CursorBase {
     return pullAtMostSlow(&val, sizeof(T)) == sizeof(T);
   }
 
+  /**
+   * Attempt to read a Big-Endian integral from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * @see tryRead
+   */
   template <class T>
   bool tryReadBE(T& val) {
     const bool result = tryRead(val);
@@ -320,6 +383,13 @@ class CursorBase {
     return result;
   }
 
+  /**
+   * Attempt to read a Little-Endian integral from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * @see tryRead
+   */
   template <class T>
   bool tryReadLE(T& val) {
     const bool result = tryRead(val);
@@ -327,6 +397,17 @@ class CursorBase {
     return result;
   }
 
+  /**
+   * Read a value from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * This function does not perform bounds checking: there must be enough bytes
+   * left in the cursor to populate T.
+   *
+   * This function only works with types that are bit-copyable: it calls memcpy
+   * to reinterpret bits from the IOBuf as T.
+   */
   template <class T>
   T read() {
     if (FOLLY_LIKELY(uintptr_t(crtPos_) + sizeof(T) <= uintptr_t(crtEnd_))) {
@@ -338,11 +419,25 @@ class CursorBase {
     }
   }
 
+  /**
+   * Read a Big-Endian integral from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * @see read
+   */
   template <class T>
   T readBE() {
     return Endian::big(read<T>());
   }
 
+  /**
+   * Read a Little-Endian integral from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * @see read
+   */
   template <class T>
   T readLE() {
     return Endian::little(read<T>());
@@ -350,6 +445,8 @@ class CursorBase {
 
   /**
    * Read a fixed-length string.
+   *
+   * @methodset Consumers
    *
    * The std::string-based APIs should probably be avoided unless you
    * ultimately want the data to live in an std::string. You're better off
@@ -368,8 +465,11 @@ class CursorBase {
   }
 
   /**
-   * Read a string consisting of bytes until the given terminator character is
-   * seen. Raises an std::length_error if maxLength bytes have been processed
+   * Read a string of bytes until the given terminator character is seen.
+   *
+   * @methodset Consumers
+   *
+   * Raises an std::length_error if maxLength bytes have been processed
    * before the terminator is seen.
    *
    * See comments in readFixedString() about when it's appropriate to use this
@@ -379,8 +479,10 @@ class CursorBase {
       char termChar = '\0',
       size_t maxLength = std::numeric_limits<size_t>::max());
 
-  /*
-   * Read all bytes until the specified predicate returns true.
+  /**
+   * @overloadbrief Read bytes until the specified predicate returns true.
+   *
+   * @methodset Consumers
    *
    * The predicate will be called on each byte in turn, until it returns false
    * or until the end of the IOBuf chain is reached.
@@ -390,17 +492,17 @@ class CursorBase {
   template <typename Predicate>
   std::string readWhile(const Predicate& predicate);
 
-  /*
-   * Read all bytes until the specified predicate returns true.
-   *
-   * This is a more generic version of readWhile() takes an arbitrary Output
+  /**
+   * This is a more generic version of readWhile(). It takes an arbitrary Output
    * object, and calls Output::append() with each chunk of matching data.
    */
   template <typename Predicate, typename Output>
   void readWhile(const Predicate& predicate, Output& out);
 
-  /*
-   * Skip all bytes until the specified predicate returns true.
+  /**
+   * Skip bytes until the specified predicate returns true.
+   *
+   * @methodset Consumers
    *
    * The predicate will be called on each byte in turn, until it returns false
    * or until the end of the IOBuf chain is reached.
@@ -408,6 +510,11 @@ class CursorBase {
   template <typename Predicate>
   void skipWhile(const Predicate& predicate);
 
+  /**
+   * Advance the cursor by at most len bytes.
+   *
+   * @methodset Modifiers
+   */
   size_t skipAtMost(size_t len) {
     dcheckIntegrity();
     if (FOLLY_LIKELY(uintptr_t(crtPos_) + len < uintptr_t(crtEnd_))) {
@@ -417,6 +524,13 @@ class CursorBase {
     return skipAtMostSlow(len);
   }
 
+  /**
+   * Advance the cursor by len bytes.
+   *
+   * @methodset Modifiers
+   *
+   * @throws out_of_range if there aren't enough bytes left in the cursor.
+   */
   void skip(size_t len) {
     dcheckIntegrity();
     if (FOLLY_LIKELY(uintptr_t(crtPos_) + len < uintptr_t(crtEnd_))) {
@@ -428,13 +542,21 @@ class CursorBase {
 
   /**
    * Skip bytes in the current IOBuf without advancing to the next one.
-   * Precondition: length() >= len
+   *
+   * @methodset Modifiers
+   *
+   * @pre length() >= len
    */
   void skipNoAdvance(size_t len) {
     DCHECK_LE(len, length());
     crtPos_ += len;
   }
 
+  /**
+   * Retreat the cursor by at most len bytes.
+   *
+   * @methodset Modifiers
+   */
   size_t retreatAtMost(size_t len) {
     dcheckIntegrity();
     if (len <= static_cast<size_t>(crtPos_ - crtBegin_)) {
@@ -444,6 +566,13 @@ class CursorBase {
     return retreatAtMostSlow(len);
   }
 
+  /**
+   * Retreat the cursor by at most len bytes.
+   *
+   * @methodset Modifiers
+   *
+   * @throws out_of_range if the cursor doesn't have enough bytes to retreat.
+   */
   void retreat(size_t len) {
     dcheckIntegrity();
     if (len <= static_cast<size_t>(crtPos_ - crtBegin_)) {
@@ -453,6 +582,16 @@ class CursorBase {
     }
   }
 
+  /**
+   * Copies at most len bytes from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * The cursor will advance by the number of bytes read.
+   *
+   * @param[out] buf The buffer into which the bytes are copied.
+   * @returns The number of bytes copied.
+   */
   size_t pullAtMost(void* buf, size_t len) {
     if (FOLLY_UNLIKELY(len == 0)) {
       return 0;
@@ -467,6 +606,16 @@ class CursorBase {
     return pullAtMostSlow(buf, len);
   }
 
+  /**
+   * Copies len bytes from the cursor.
+   *
+   * @methodset Consumers
+   *
+   * The cursor will advance by len.
+   *
+   * @param[out] buf The buffer into which the bytes are copied.
+   * @throw out_of_range if there aren't enough bytes in the cursor.
+   */
   void pull(void* buf, size_t len) {
     if (FOLLY_UNLIKELY(len == 0)) {
       return;
@@ -481,7 +630,14 @@ class CursorBase {
   }
 
   /**
-   * Return the available data in the current buffer.
+   * Return the available data in the current IOBuf.
+   *
+   * @methodset Accessors
+   *
+   * Unlike data(), peekBytes() will advance to the next IOBuf while length()==0
+   * (though it can still return an empty range if there are no bytes left to
+   * read in the whole IOBuf chain).
+   *
    * If you want to gather more data from the chain into a contiguous region
    * (for hopefully zero-copy access), use gather() before peekBytes().
    */
@@ -496,7 +652,9 @@ class CursorBase {
 
   /**
    * Alternate version of peekBytes() that returns a std::pair
-   * instead of a ByteRange.  (This method pre-dates ByteRange.)
+   * instead of a ByteRange.
+   *
+   * @methodset Accessors
    *
    * This function will eventually be deprecated.
    */
@@ -505,6 +663,14 @@ class CursorBase {
     return std::make_pair(bytes.data(), bytes.size());
   }
 
+  /**
+   * Clone len bytes from this cursor into an IOBuf.
+   *
+   * @methodset Accessors
+   *
+   * @param[out] buf The IOBuf into which to place the cloned data.
+   * @throws out_of_range if there aren't enough bytes in this cursor.
+   */
   void clone(std::unique_ptr<folly::IOBuf>& buf, size_t len) {
     if (FOLLY_UNLIKELY(cloneAtMost(buf, len) != len)) {
       throw_exception<std::out_of_range>("underflow");
@@ -517,6 +683,14 @@ class CursorBase {
     }
   }
 
+  /**
+   * Clone at most len bytes from this cursor into an IOBuf.
+   *
+   * @methodset Accessors
+   *
+   * @param[out] buf The IOBuf into which to place the cloned data.
+   * @return The number of bytes actually cloned.
+   */
   size_t cloneAtMost(folly::IOBuf& buf, size_t len) {
     // We might be at the end of buffer.
     advanceBufferIfEmpty();
@@ -622,6 +796,11 @@ class CursorBase {
     return len;
   }
 
+  /**
+   * Check if this cursor has a size limit imposed on it.
+   *
+   * @methodset Configuration
+   */
   bool isBounded() const {
     return remainingLen_ != std::numeric_limits<size_t>::max();
   }
@@ -817,6 +996,14 @@ namespace detail {
 template <class Derived>
 class Writable {
  public:
+  /**
+   * Write a value to the cursor.
+   *
+   * @methodset Writing
+   *
+   * May throw if there isn't enough space and the derived cursor type does not
+   * support extending the IOBuf's writable range.
+   */
   template <class T>
   typename std::enable_if<std::is_arithmetic<T>::value>::type write(
       T value, size_t n = sizeof(T)) {
@@ -826,18 +1013,41 @@ class Writable {
     d->push(u8, n);
   }
 
+  /**
+   * Write a value to the cursor in Big-Endian.
+   *
+   * @methodset Writing
+   *
+   * May throw if there isn't enough space and the derived cursor type does not
+   * support extending the IOBuf's writable range.
+   */
   template <class T>
   void writeBE(T value) {
     Derived* d = static_cast<Derived*>(this);
     d->write(Endian::big(value));
   }
 
+  /**
+   * Write a value to the cursor in Little-Endian.
+   *
+   * @methodset Writing
+   *
+   * May throw if there isn't enough space and the derived cursor type does not
+   * support extending the IOBuf's writable range.
+   */
   template <class T>
   void writeLE(T value) {
     Derived* d = static_cast<Derived*>(this);
     d->write(Endian::little(value));
   }
 
+  /**
+   * Write bytes to the cursor.
+   *
+   * @methodset Writing
+   *
+   * @throw out_of_range if there isn't enough space in the cursor.
+   */
   void push(const uint8_t* buf, size_t len) {
     Derived* d = static_cast<Derived*>(this);
     if (d->pushAtMost(buf, len) != len) {
@@ -851,16 +1061,17 @@ class Writable {
     }
   }
 
+  /**
+   * Write bytes to the cursor; stop writing if the end of the cursor is
+   * reached.
+   *
+   * @methodset Writing
+   */
   size_t pushAtMost(ByteRange buf) {
     Derived* d = static_cast<Derived*>(this);
     return d->pushAtMost(buf.data(), buf.size());
   }
 
-  /**
-   * push len bytes of data from input cursor, data could be in an IOBuf chain.
-   * If input cursor contains less than len bytes, or this cursor has less than
-   * len bytes writable space, an out_of_range exception will be thrown.
-   */
   void push(Cursor cursor, size_t len) {
     if (this->pushAtMost(cursor, len) != len) {
       throw_exception<std::out_of_range>("overflow");
@@ -912,6 +1123,9 @@ class RWCursor : public detail::CursorBase<RWCursor<access>, IOBuf>,
   // Efficient way to advance to position cursor to the end of the queue,
   // using cached length instead of a walk via advanceToEnd().
   struct AtEnd {};
+  /**
+   * Create the cursor initially pointing to the end of queue.
+   */
   RWCursor(IOBufQueue& queue, AtEnd) : RWCursor(queue) {
     if (!queue.options().cacheChainLength) {
       this->advanceToEnd();
@@ -936,6 +1150,10 @@ class RWCursor : public detail::CursorBase<RWCursor<access>, IOBuf>,
   /**
    * Gather at least n bytes contiguously into the current buffer,
    * by coalescing subsequent buffers from the chain as necessary.
+   *
+   * @methodset Modifiers
+   *
+   * @throw overflow_error if there aren't enough bytes to gather
    */
   void gather(size_t n) {
     // Forbid attempts to gather beyond the end of this IOBuf chain.
@@ -955,6 +1173,13 @@ class RWCursor : public detail::CursorBase<RWCursor<access>, IOBuf>,
     this->crtEnd_ = this->crtBuf_->tail();
     this->crtPos_ = this->crtBegin_ + offset;
   }
+
+  /**
+   * Gather at most n bytes contiguously into the current buffer,
+   * by coalescing subsequent buffers from the chain as necessary.
+   *
+   * @methodset Modifiers
+   */
   void gatherAtMost(size_t n) {
     this->dcheckIntegrity();
     size_t size = std::min(n, this->totalLength());
@@ -1001,6 +1226,17 @@ class RWCursor : public detail::CursorBase<RWCursor<access>, IOBuf>,
     }
   }
 
+  /**
+   * Insert data at the cursor position.
+   *
+   * @methodset Writing
+   *
+   * Data in the IOBuf after the cursor will not be overwritten, though it might
+   * be moved.
+   *
+   * After this operator, the cursor will point to the data just after the
+   * inserted data.
+   */
   void insert(std::unique_ptr<folly::IOBuf> buf) {
     this->dcheckIntegrity();
     this->absolutePos_ += buf->computeChainDataLength();
@@ -1040,6 +1276,11 @@ class RWCursor : public detail::CursorBase<RWCursor<access>, IOBuf>,
     }
   }
 
+  /**
+   * Get a raw pointer to the writable section controlled by this cursor.
+   *
+   * @methodset Accessors
+   */
   uint8_t* writableData() {
     this->dcheckIntegrity();
     return this->crtBuf_->writableData() + (this->crtPos_ - this->crtBegin_);
@@ -1078,19 +1319,33 @@ class Appender : public detail::Writable<Appender> {
   Appender(IOBuf* buf, std::size_t growth)
       : buffer_(buf), crtBuf_(buf->prev()), growth_(growth) {}
 
+  /**
+   * Get the writable tail of the IOBuf this cursor points to.
+   *
+   * @methodset Accessors
+   */
   uint8_t* writableData() { return crtBuf_->writableTail(); }
 
+  /**
+   * Get the amount of writable tailroom of the IOBuf this cursor points to.
+   *
+   * @methodset Capacity
+   */
   size_t length() const { return crtBuf_->tailroom(); }
 
   /**
    * Mark n bytes (must be <= length()) as appended, as per the
    * IOBuf::append() method.
+   *
+   * @methodset Appending
    */
   void append(size_t n) { crtBuf_->append(n); }
 
   /**
    * Ensure at least n contiguous bytes available to write.
    * Postcondition: length() >= n.
+   *
+   * @methodset Appending
    */
   void ensure(std::size_t n) {
     if (FOLLY_LIKELY(length() >= n)) {
@@ -1146,9 +1401,11 @@ class Appender : public detail::Writable<Appender> {
     }
   }
 
-  /*
+  /**
    * Append to the end of this buffer, using a printf() style
    * format specifier.
+   *
+   * @methodset Appending
    *
    * Note that folly/Format.h provides nicer and more type-safe mechanisms
    * for formatting strings, which should generally be preferred over
@@ -1171,12 +1428,15 @@ class Appender : public detail::Writable<Appender> {
   void printf(FOLLY_PRINTF_FORMAT const char* fmt, ...)
       FOLLY_PRINTF_FORMAT_ATTR(2, 3);
 
+  /// @methodset Appending
   void vprintf(const char* fmt, va_list ap);
 
-  /*
-   * Calling an Appender object with a StringPiece will append the string
-   * piece.  This allows Appender objects to be used directly with
-   * Formatter.
+  /**
+   * Append a StringPiece to the buffer.
+   *
+   * @methodset Appending
+   *
+   * This allows Appender objects to be used directly with Formatter.
    */
   void operator()(StringPiece sp) { push(ByteRange(sp)); }
 
@@ -1207,25 +1467,55 @@ class QueueAppender : public detail::Writable<QueueAppender> {
   QueueAppender(IOBufQueue* queue, std::size_t growth)
       : queueCache_(queue), growth_(growth) {}
 
+  /**
+   * Resets this, as if constructed anew.
+   */
   void reset(IOBufQueue* queue, std::size_t growth) {
     queueCache_.reset(queue);
     growth_ = growth;
   }
 
+  /**
+   * Get a pointer to the writable tail.
+   *
+   * @methodset Accessors
+   */
   uint8_t* writableData() { return queueCache_.writableData(); }
 
+  /**
+   * Get the size of the writable tail.
+   *
+   * @methodset Capacity
+   */
   size_t length() { return queueCache_.length(); }
 
+  /**
+   * Append n bytes.
+   *
+   * @methodset Appending
+   */
   void append(size_t n) { queueCache_.append(n); }
 
-  // Ensure at least n contiguous; can go above growth_, throws if
-  // not enough room.
+  /**
+   * Ensure that there are at least n contiguous bytes available for writing.
+   *
+   * @methodset Modifiers
+   *
+   * Can go above growth.
+   *
+   * May throw if there isn't enough room.
+   */
   void ensure(size_t n) {
     if (length() < n) {
       ensureSlow(n);
     }
   }
 
+  /**
+   * Write an object to the cursor.
+   *
+   * @param n The number of bytes of value to write; defaults to sizeof(T)
+   */
   template <class T>
   typename std::enable_if<std::is_arithmetic<T>::value>::type write(
       T value, size_t n = sizeof(T)) {
@@ -1261,6 +1551,11 @@ class QueueAppender : public detail::Writable<QueueAppender> {
     return len;
   }
 
+  /**
+   * Inserts data at the current cursor position.
+   *
+   * @methodset Writing
+   */
   void insert(std::unique_ptr<folly::IOBuf> buf) {
     if (buf) {
       queueCache_.queue()->append(
@@ -1273,11 +1568,21 @@ class QueueAppender : public detail::Writable<QueueAppender> {
         buf, /* pack */ true, /* allowTailReuse */ true);
   }
 
+  /**
+   * Get a RWCursor for this IOBufQueue.
+   *
+   * @methodset Accessors
+   */
   template <CursorAccess access>
   explicit operator RWCursor<access>() {
     return RWCursor<access>(*queueCache_.queue());
   }
 
+  /**
+   * Get a RWCursor for the last n bytes of this IOBufQueue.
+   *
+   * @methodset Accessors
+   */
   template <CursorAccess access>
   RWCursor<access> tail(size_t n) {
     RWCursor<access> result(
@@ -1286,6 +1591,11 @@ class QueueAppender : public detail::Writable<QueueAppender> {
     return result;
   }
 
+  /**
+   * Remove n bytes from the end of this IOBufQueue.
+   *
+   * @methodset Modifiers
+   */
   void trimEnd(size_t n) { queueCache_.queue()->trimEnd(n); }
 
  private:

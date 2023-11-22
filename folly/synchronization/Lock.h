@@ -26,6 +26,7 @@
 #include <folly/Traits.h>
 #include <folly/functional/Invoke.h>
 #include <folly/lang/Exception.h>
+#include <folly/lang/Hint.h>
 
 namespace folly {
 
@@ -284,7 +285,8 @@ class lock_base //
 };
 
 template <typename Mutex, typename Policy>
-class lock_guard_base {
+class lock_guard_base
+    : unsafe_for_async_usage_if<!is_coro_aware_mutex_v<Mutex>> {
  private:
   using lock_type_ = lock_base<Mutex, Policy>;
   using lock_state_type_ = typename lock_type_::state_type;
