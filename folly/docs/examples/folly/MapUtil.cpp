@@ -14,20 +14,23 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <string>
+#include <unordered_map>
+#include <folly/MapUtil.h>
+#include <folly/portability/GTest.h>
 
-#include <map>
+using namespace folly;
 
-namespace folly {
-namespace ssl {
+TEST(maputil, demo) {
+  std::unordered_map<std::string, double> famous_constants = {
+      {"pi", 3.14159},
+      {"e", 2.71828},
+  };
 
-enum class LockType { MUTEX, SPINLOCK, NONE };
+  const double* logs = get_ptr(famous_constants, "e");
+  ASSERT_NE(logs, nullptr);
+  EXPECT_EQ(*logs, 2.71828);
 
-/**
- * Map between an OpenSSL lock (see constants in crypto/crypto.h) and the
- * implementation of the lock
- */
-using LockTypeMapping = std::map<int, LockType>;
-
-} // namespace ssl
-} // namespace folly
+  const double* beauty = get_ptr(famous_constants, "golden_ratio");
+  EXPECT_EQ(beauty, nullptr);
+}

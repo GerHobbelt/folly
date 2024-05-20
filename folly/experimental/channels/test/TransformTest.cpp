@@ -15,9 +15,11 @@
  */
 
 #include <folly/ScopeGuard.h>
+#include <folly/Synchronized.h>
 #include <folly/executors/ManualExecutor.h>
 #include <folly/executors/SerialExecutor.h>
 #include <folly/experimental/channels/ConsumeChannel.h>
+#include <folly/experimental/channels/MaxConcurrentRateLimiter.h>
 #include <folly/experimental/channels/Transform.h>
 #include <folly/experimental/channels/test/ChannelTestUtil.h>
 #include <folly/experimental/coro/AsyncGenerator.h>
@@ -339,7 +341,7 @@ TEST_F(SimpleTransformFixture, Chained) {
 }
 
 TEST_F(SimpleTransformFixture, MultipleTransformsWithRateLimiter) {
-  auto rateLimiter = RateLimiter::create(1 /* maxConcurrent */);
+  auto rateLimiter = MaxConcurrentRateLimiter::create(1 /* maxConcurrent */);
 
   auto [untransformedReceiver1, sender1] = Channel<int>::create();
   auto [controlReceiver1, controlSender1] = Channel<Unit>::create();
@@ -790,7 +792,7 @@ TEST_F(ResumableTransformFixture, TransformThrows_NoReinitialization_Rethrows) {
 }
 
 TEST_F(ResumableTransformFixture, MultipleResumableTransformsWithRateLimiter) {
-  auto rateLimiter = RateLimiter::create(1 /* maxConcurrent */);
+  auto rateLimiter = MaxConcurrentRateLimiter::create(1 /* maxConcurrent */);
 
   auto [untransformedReceiver1, sender1] = Channel<int>::create();
   auto [controlReceiver1, controlSender1] = Channel<Unit>::create();
@@ -914,7 +916,7 @@ class ResumableTransformFixtureStress : public Test {
   }
 
   void setProducer(std::unique_ptr<StressTestProducer<int>> producer) {
-    producer_ = std::move(producer);
+    (*producer_.wlock()) = std::move(producer);
     producerReady_.post();
   }
 
@@ -924,19 +926,19 @@ class ResumableTransformFixtureStress : public Test {
     producerReady_.reset();
   }
 
-  StressTestProducer<int>* getProducer() { return producer_.get(); }
+  void stopProducing() { (*producer_.wlock())->stopProducing(); }
 
   static constexpr std::chrono::milliseconds kTestTimeout =
       std::chrono::milliseconds{10};
 
-  std::unique_ptr<StressTestProducer<int>> producer_;
+  folly::Synchronized<std::unique_ptr<StressTestProducer<int>>> producer_;
   folly::Baton<> producerReady_;
   std::unique_ptr<StressTestConsumer<std::string>> consumer_;
 };
 
 TEST_F(ResumableTransformFixtureStress, Close) {
   folly::CPUThreadPoolExecutor transformExecutor(1);
-  bool close = false;
+  std::atomic<bool> close = false;
   consumer_->startConsuming(resumableTransform(
       folly::SerialExecutor::create(&transformExecutor),
       toVector("start"s),
@@ -965,13 +967,13 @@ TEST_F(ResumableTransformFixtureStress, Close) {
   waitForProducer();
   /* sleep override */
   std::this_thread::sleep_for(kTestTimeout / 2);
-  getProducer()->stopProducing();
+  stopProducing();
 
   waitForProducer();
   /* sleep override */
   std::this_thread::sleep_for(kTestTimeout / 2);
   close = true;
-  getProducer()->stopProducing();
+  stopProducing();
 
   EXPECT_EQ(consumer_->waitForClose().get(), CloseType::NoException);
 }
@@ -1014,7 +1016,7 @@ TEST_F(ResumableTransformFixtureStress, CancelDuringReinitialization) {
   waitForProducer();
   /* sleep override */
   std::this_thread::sleep_for(kTestTimeout / 2);
-  getProducer()->stopProducing();
+  stopProducing();
 
   initializationStarted.getSemiFuture().get();
   initializationStarted = folly::SharedPromise<Unit>();

@@ -86,6 +86,32 @@ using index_constant = std::integral_constant<std::size_t, I>;
 template <typename...>
 FOLLY_INLINE_VARIABLE constexpr bool always_false = false;
 
+//  is_unbounded_array_v
+//  is_unbounded_array
+//
+//  A trait variable and type to check if a given type is an unbounded array.
+//
+//  mimic: std::is_unbounded_array_d, std::is_unbounded_array (C++20)
+template <typename T>
+FOLLY_INLINE_VARIABLE constexpr bool is_unbounded_array_v = false;
+template <typename T>
+FOLLY_INLINE_VARIABLE constexpr bool is_unbounded_array_v<T[]> = true;
+template <typename T>
+struct is_unbounded_array : bool_constant<is_unbounded_array_v<T>> {};
+
+//  is_bounded_array_v
+//  is_bounded_array
+//
+//  A trait variable and type to check if a given type is a bounded array.
+//
+//  mimic: std::is_bounded_array_d, std::is_bounded_array (C++20)
+template <typename T>
+FOLLY_INLINE_VARIABLE constexpr bool is_bounded_array_v = false;
+template <typename T, std::size_t S>
+FOLLY_INLINE_VARIABLE constexpr bool is_bounded_array_v<T[S]> = true;
+template <typename T>
+struct is_bounded_array : bool_constant<is_bounded_array_v<T>> {};
+
 namespace detail {
 
 //  is_instantiation_of_v
@@ -134,7 +160,7 @@ struct is_constexpr_default_constructible_ {
   static std::true_type sfinae(T*);
   static std::false_type sfinae(void*);
   template <typename T>
-  static constexpr bool apply =
+  static constexpr bool apply = sizeof(T) &&
       decltype(sfinae(static_cast<T*>(nullptr)))::value;
 };
 
@@ -342,6 +368,8 @@ struct detected_<void_t<T<A...>>, D, T, A...> {
 //  alias value_t as std::false_type and has member type alias type as D.
 //
 //  mimic: std::experimental::detected_or, Library Fundamentals TS v2
+//
+//  Note: not resilient agaist incomplete types; may violate ODR.
 template <typename D, template <typename...> class T, typename... A>
 using detected_or = detail::detected_<void, D, T, A...>;
 
@@ -353,6 +381,8 @@ using detected_or = detail::detected_<void, D, T, A...>;
 //  Equivalent to detected_or<D, T, A...>::type.
 //
 //  mimic: std::experimental::detected_or_t, Library Fundamentals TS v2
+//
+//  Note: not resilient agaist incomplete types; may violate ODR.
 template <typename D, template <typename...> class T, typename... A>
 using detected_or_t = typename detected_or<D, T, A...>::type;
 
@@ -364,6 +394,8 @@ using detected_or_t = typename detected_or<D, T, A...>::type;
 //  Equivalent to detected_or_t<nonesuch, T, A...>.
 //
 //  mimic: std::experimental::detected_t, Library Fundamentals TS v2
+//
+//  Note: not resilient agaist incomplete types; may violate ODR.
 template <template <typename...> class T, typename... A>
 using detected_t = detected_or_t<nonesuch, T, A...>;
 
@@ -380,6 +412,8 @@ using detected_t = detected_or_t<nonesuch, T, A...>;
 //
 //  mimic: std::experimental::is_detected, std::experimental::is_detected_v,
 //    Library Fundamentals TS v2
+//
+//  Note: not resilient agaist incomplete types; may violate ODR.
 //
 //  Note: the trait type is_detected differs here by being deferred.
 template <template <typename...> class T, typename... A>
@@ -565,7 +599,7 @@ struct IsNothrowSwappable
 template <class T>
 struct IsRelocatable
     : std::conditional<
-          is_detected_v<traits_detail::detect_IsRelocatable, T>,
+          sizeof(T) && is_detected_v<traits_detail::detect_IsRelocatable, T>,
           traits_detail::has_true_IsRelocatable<T>,
           // TODO add this line (and some tests for it) when we
           // upgrade to gcc 4.7
@@ -575,7 +609,8 @@ struct IsRelocatable
 template <class T>
 struct IsZeroInitializable
     : std::conditional<
-          is_detected_v<traits_detail::detect_IsZeroInitializable, T>,
+          sizeof(T) &&
+              is_detected_v<traits_detail::detect_IsZeroInitializable, T>,
           traits_detail::has_true_IsZeroInitializable<T>,
           bool_constant< //
               !std::is_class<T>::value && //
@@ -663,7 +698,7 @@ struct is_transparent : bool_constant<is_transparent_v<T>> {};
 namespace detail {
 
 template <typename T, typename = void>
-FOLLY_INLINE_VARIABLE constexpr bool is_allocator_ = false;
+FOLLY_INLINE_VARIABLE constexpr bool is_allocator_ = !sizeof(T);
 template <typename T>
 FOLLY_INLINE_VARIABLE constexpr bool is_allocator_<
     T,
