@@ -83,22 +83,6 @@
   (OPENSSL_VERSION_NUMBER >= FOLLY_OPENSSL_CALCULATE_VERSION(major, minor, fix))
 #endif
 
-// BoringSSL and OpenSSL 0.9.8f later with TLS extension support SNI.
-#if defined(OPENSSL_IS_BORINGSSL) || \
-    (OPENSSL_VERSION_NUMBER >= 0x00908070L && !defined(OPENSSL_NO_TLSEXT))
-#define FOLLY_OPENSSL_HAS_SNI 1
-#else
-#define FOLLY_OPENSSL_HAS_SNI 0
-#endif
-
-// BoringSSL and OpenSSL 1.0.2 later with TLS extension support ALPN.
-#if defined(OPENSSL_IS_BORINGSSL) || \
-    (OPENSSL_VERSION_NUMBER >= 0x1000200fL && !defined(OPENSSL_NO_TLSEXT))
-#define FOLLY_OPENSSL_HAS_ALPN 1
-#else
-#define FOLLY_OPENSSL_HAS_ALPN 0
-#endif
-
 /**
  * OpenSSL 1.1.1 specific checks.
  */

@@ -111,7 +111,7 @@ static_assert(
 #endif
 
 static_assert(
-    !folly::is_trivially_copyable<std::unique_ptr<int>>::value,
+    !std::is_trivially_copyable<std::unique_ptr<int>>::value,
     "std::unique_ptr<> is trivially copyable");
 
 static_assert(
@@ -170,7 +170,7 @@ struct NontrivialType {
   int32_t a;
 };
 static_assert(
-    !folly::is_trivially_copyable<NontrivialType>::value,
+    !std::is_trivially_copyable<NontrivialType>::value,
     "NontrivialType is trivially copyable");
 
 int NontrivialType::ctored = 0;
@@ -231,7 +231,7 @@ struct NoncopyableCounter {
 int NoncopyableCounter::alive = 0;
 
 static_assert(
-    !folly::is_trivially_copyable<NoncopyableCounter>::value,
+    !std::is_trivially_copyable<NoncopyableCounter>::value,
     "NoncopyableCounter is trivially copyable");
 
 // Check that throws don't break the basic guarantee for some cases.
@@ -362,6 +362,43 @@ TEST(smallVector, leakTest) {
     for (int i = 0; i < 10000; ++i) {
       someVec.push_back(12);
     }
+  }
+}
+
+TEST(smallVector, leakTestWithTracking) {
+  constexpr size_t size = 97;
+  constexpr auto count = folly::annotate_object_count_leaked_uncollected;
+  auto const base = count();
+  small_vector<int> vec;
+  vec.resize(size);
+  EXPECT_EQ(size, vec.size());
+  EXPECT_EQ(base + size_t(folly::kIsSanitizeAddress), count());
+  vec.resize(0);
+  EXPECT_EQ(0, vec.size());
+  EXPECT_EQ(base + size_t(folly::kIsSanitizeAddress), count());
+  vec.shrink_to_fit();
+  EXPECT_LT(vec.capacity(), size);
+  EXPECT_EQ(base, count());
+}
+
+TEST(smallVector, leakTestWithLeakedObject) {
+  {
+    // this case does not actually need leak-tracking
+    using vec_t = folly::small_vector<int, 1>;
+    constexpr size_t size = 97;
+    static auto& vec = *new vec_t();
+    vec.resize(size);
+    EXPECT_EQ(size, vec.size());
+  }
+
+  {
+    // this case does need leak-tracking
+    using policy_t = folly::small_vector_policy::policy_size_type<uint32_t>;
+    using vec_t = folly::small_vector<int, 1, policy_t>;
+    constexpr size_t size = 97;
+    static auto& vec = *new vec_t();
+    vec.resize(size);
+    EXPECT_EQ(size, vec.size());
   }
 }
 

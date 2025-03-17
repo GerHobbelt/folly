@@ -24,6 +24,7 @@
 
 #include <folly/Conv.h>
 #include <folly/Function.h>
+#include <folly/Optional.h>
 #include <folly/Range.h>
 #include <folly/SharedMutex.h>
 #include <folly/ThreadLocal.h>
@@ -236,6 +237,11 @@ class SnapshotBase {
 
   SnapshotBase();
 
+  SnapshotBase(const SnapshotBase&) = delete;
+  SnapshotBase& operator=(const SnapshotBase&) = delete;
+  SnapshotBase(SnapshotBase&&) = delete;
+  SnapshotBase& operator=(SnapshotBase&&) = delete;
+
   template <class T>
   const SettingContents<T>& get(const detail::SettingCore<T>& core) const {
     auto it = snapshotValues_.find(core.getKey());
@@ -383,7 +389,7 @@ class SettingCore : public SettingCoreBase {
         localValue_([]() {
           return new cacheline_aligned<
               std::pair<Version, std::shared_ptr<Contents>>>(
-              in_place, 0, nullptr);
+              std::in_place, 0, nullptr);
         }) {
     forceResetToDefault(/* snapshot */ nullptr);
     registerSetting(*this);
@@ -404,7 +410,7 @@ class SettingCore : public SettingCoreBase {
 
   /* Thread local versions start at 0, this will force a read on first access.
    */
-  cacheline_aligned<std::atomic<Version>> settingVersion_{in_place, 1};
+  cacheline_aligned<std::atomic<Version>> settingVersion_{std::in_place, 1};
 
   ThreadLocal<cacheline_aligned<std::pair<Version, std::shared_ptr<Contents>>>>
       localValue_;
@@ -445,7 +451,7 @@ class SettingCore : public SettingCoreBase {
             getKey(), *settingVersion_, BoxedValue(*globalValue_));
       }
       globalValue_ = std::make_shared<Contents>(reason.str(), t);
-      if (IsSmallPOD<T>::value) {
+      if constexpr (IsSmallPOD<T>::value) {
         uint64_t v = 0;
         std::memcpy(&v, &t, sizeof(T));
         trivialStorage_.store(v);

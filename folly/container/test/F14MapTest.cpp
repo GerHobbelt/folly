@@ -1390,9 +1390,8 @@ TEST(F14VectorMap, destructuringErase) {
 
   resetTracking();
   m.erase(p1.first);
-  LOG(INFO) << "erase -> "
-            << "key_type ops " << Tracked<0>::counts() << ", mapped_type ops "
-            << Tracked<1>::counts();
+  LOG(INFO) << "erase -> " << "key_type ops " << Tracked<0>::counts()
+            << ", mapped_type ops " << Tracked<1>::counts();
   // deleting p1 will cause p2 to be moved to the front of the values array
   EXPECT_EQ(
       Tracked<0>::counts().dist(Counts{0, 1, 0, 0}) +
@@ -1426,9 +1425,10 @@ TEST(F14VectorMap, vectorMaxSize) {
   EXPECT_EQ(
       m.max_size(),
       std::min(
-          folly::f14::detail::SizeAndChunkShift::kMaxSize,
-          std::allocator_traits<decltype(m)::allocator_type>::max_size(
-              m.get_allocator())));
+          {folly::f14::detail::SizeAndChunkShift::kMaxSize,
+           std::size_t{std::numeric_limits<uint32_t>::max()},
+           std::allocator_traits<decltype(m)::allocator_type>::max_size(
+               m.get_allocator())}));
 }
 #endif
 
@@ -1470,7 +1470,6 @@ TEST(F14FastMap, moveOnly) {
   runMoveOnlyTest<F14FastMap<MoveOnlyTestInt, MoveOnlyTestInt>>();
 }
 
-#if FOLLY_F14_ERASE_INTO_AVAILABLE
 template <typename M>
 void runEraseIntoTest() {
   M t0;
@@ -1600,8 +1599,6 @@ TEST(F14FastMap, eraseIntoEmptyFromReserve) {
       F14FastMap<MoveOnlyTestInt, MoveOnlyTestInt>>();
 }
 
-#endif
-
 template <typename M>
 void runPermissiveConstructorTest() {
   M t;
@@ -1616,14 +1613,12 @@ void runPermissiveConstructorTest() {
   EXPECT_EQ(t.size(), 8);
   t.erase(ct.find(30));
   EXPECT_EQ(t.size(), 7);
-#if FOLLY_F14_ERASE_INTO_AVAILABLE
   t.eraseInto(40, [](auto&&, auto&&) {});
   EXPECT_EQ(t.size(), 6);
   t.eraseInto(t.find(50), [](auto&&, auto&&) {});
   EXPECT_EQ(t.size(), 5);
   t.eraseInto(ct.find(60), [](auto&&, auto&&) {});
   EXPECT_EQ(t.size(), 4);
-#endif
 }
 
 TEST(F14ValueMap, permissiveConstructor) {
@@ -1692,7 +1687,7 @@ TEST(F14ValueMap, heterogeneousLookup) {
   };
 
   checks(map);
-  checks(folly::as_const(map));
+  checks(std::as_const(map));
 }
 
 template <typename M>
@@ -1827,14 +1822,12 @@ void runHeterogeneousInsertTest() {
   EXPECT_EQ(Tracked<1>::counts().dist(Counts{0, 0, 0, 0}), 0)
       << Tracked<1>::counts();
 
-#if FOLLY_F14_ERASE_INTO_AVAILABLE
   map.emplace(10, 40);
   resetTracking();
   map.eraseInto(10, [](auto&&, auto&&) {});
   EXPECT_EQ(map.size(), 0);
   EXPECT_EQ(Tracked<1>::counts().dist(Counts{0, 0, 0, 0}), 0)
       << Tracked<1>::counts();
-#endif
 
   const auto t = map.prehash(10);
   resetTracking();
@@ -2512,4 +2505,15 @@ TEST(F14Map, reserveMoreNeverShrinks) {
   runReserveMoreTest<F14NodeMap<int, int>>(10);
   runReserveMoreTest<F14ValueMap<int, int>>(10);
   runReserveMoreTest<F14VectorMap<int, int>>(10);
+}
+
+TEST(F14Map, reserveBadAlloc) {
+  SKIP_IF(kFallback);
+  SKIP_IF(
+      std::numeric_limits<size_t>::max() <=
+      std::numeric_limits<uint32_t>::max());
+  EXPECT_THROW(
+      (F14VectorMap<int, int>().reserve(
+          std::size_t{std::numeric_limits<uint32_t>::max()} + 1)),
+      std::bad_alloc);
 }

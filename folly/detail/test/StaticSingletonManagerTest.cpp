@@ -44,69 +44,65 @@ extern "C" FOLLY_KEEP void* check_nothrow() {
   return &createGlobal<MayThrow<true>, void>();
 }
 
-struct StaticSingletonManagerTest : public testing::Test {};
+template <typename Impl>
+struct StaticSingletonManagerTest : public testing::TestWithParam<Impl> {};
+TYPED_TEST_SUITE_P(StaticSingletonManagerTest);
 
-template <typename T>
+template <typename Impl, typename T>
 struct Tag {};
 
 template <int I>
 using Int = std::integral_constant<int, I>;
 
-TEST_F(StaticSingletonManagerTest, example_sans_rtti) {
-  using K = StaticSingletonManagerSansRtti;
+TYPED_TEST_P(StaticSingletonManagerTest, example) {
+  using K = TypeParam;
 
   using T = std::integral_constant<int, 3>;
 
-  auto& i = K::create<T, Tag<char>>();
+  auto& i = K::template create<T, Tag<K, char>>();
   EXPECT_EQ(T::value, i);
 
-  auto& j = K::create<T, Tag<char>>();
+  auto& j = K::template create<T, Tag<K, char>>();
   EXPECT_EQ(&i, &j);
   EXPECT_EQ(T::value, j);
 
-  auto& k = K::create<T, Tag<char*>>();
+  auto& k = K::template create<T, Tag<K, char*>>();
   EXPECT_NE(&i, &k);
   EXPECT_EQ(T::value, k);
 
-  static K::ArgCreate<true> m_arg{tag<T, Tag<int>>};
-  auto& m = K::create<T>(m_arg);
+  static typename K::template ArgCreate<true> m_arg{tag<T, Tag<K, int>>};
+  auto& m = K::template create<T>(m_arg);
   EXPECT_NE(&i, &m);
   EXPECT_EQ(T::value, m);
 }
 
-TEST_F(StaticSingletonManagerTest, example_with_rtti) {
-  using K = StaticSingletonManagerWithRtti;
+REGISTER_TYPED_TEST_SUITE_P( //
+    StaticSingletonManagerTest,
+    example);
 
+INSTANTIATE_TYPED_TEST_SUITE_P(
+    sans_rtti, StaticSingletonManagerTest, StaticSingletonManagerSansRtti);
+#if FOLLY_HAS_RTTI
+INSTANTIATE_TYPED_TEST_SUITE_P(
+    with_rtti, StaticSingletonManagerTest, StaticSingletonManagerWithRtti);
+#endif
+struct StaticSingletonManagerTestType : StaticSingletonManager {};
+INSTANTIATE_TYPED_TEST_SUITE_P(
+    selection, StaticSingletonManagerTest, StaticSingletonManagerTestType);
+
+struct CreateGlobalTest : testing::Test {};
+
+TEST_F(CreateGlobalTest, example) {
   using T = std::integral_constant<int, 3>;
 
-  auto& i = K::create<T, Tag<char>>();
+  auto& i = createGlobal<T, Tag<void, char>>();
   EXPECT_EQ(T::value, i);
 
-  auto& j = K::create<T, Tag<char>>();
+  auto& j = createGlobal<T, Tag<void, char>>();
   EXPECT_EQ(&i, &j);
   EXPECT_EQ(T::value, j);
 
-  auto& k = K::create<T, Tag<char*>>();
-  EXPECT_NE(&i, &k);
-  EXPECT_EQ(T::value, k);
-
-  static K::ArgCreate<true> m_arg{tag<T, Tag<int>>};
-  auto& m = K::create<T>(m_arg);
-  EXPECT_NE(&i, &m);
-  EXPECT_EQ(T::value, m);
-}
-
-TEST_F(StaticSingletonManagerTest, example) {
-  using T = std::integral_constant<int, 3>;
-
-  auto& i = createGlobal<T, Tag<char>>();
-  EXPECT_EQ(T::value, i);
-
-  auto& j = createGlobal<T, Tag<char>>();
-  EXPECT_EQ(&i, &j);
-  EXPECT_EQ(T::value, j);
-
-  auto& k = createGlobal<T, Tag<char*>>();
+  auto& k = createGlobal<T, Tag<void, char*>>();
   EXPECT_NE(&i, &k);
   EXPECT_EQ(T::value, k);
 }

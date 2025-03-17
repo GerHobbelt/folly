@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cstdint>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -399,7 +400,9 @@ class RequestWithReturn {
     // note that the invariant here is that this function is only called if the
     // requesting thread had it's critical section combined, and the value_
     // member constructed through detach()
-    SCOPE_EXIT { value_.~ReturnType(); };
+    SCOPE_EXIT {
+      value_.~ReturnType();
+    };
     return std::move(value_);
   }
 
@@ -645,7 +648,7 @@ void throwIfExceptionOccurred(Request&, Waiter& waiter, bool exception) {
   // memory
   if (FOLLY_UNLIKELY(!folly::is_nothrow_invocable_v<const F&> && exception)) {
     auto storage = &waiter.storage_;
-    auto exc = folly::launder(reinterpret_cast<std::exception_ptr*>(storage));
+    auto exc = std::launder(reinterpret_cast<std::exception_ptr*>(storage));
     auto copy = std::move(*exc);
     exc->std::exception_ptr::~exception_ptr();
     std::rethrow_exception(std::move(copy));
@@ -682,7 +685,7 @@ void detach(
   static_assert(!std::is_same<ReturnType, void>{}, "");
   static_assert(sizeof(waiter.storage_) >= sizeof(ReturnType), "");
 
-  auto& val = *folly::launder(reinterpret_cast<ReturnType*>(&waiter.storage_));
+  auto& val = *std::launder(reinterpret_cast<ReturnType*>(&waiter.storage_));
   new (&request.value_) ReturnType{std::move(val)};
   val.~ReturnType();
 }
@@ -699,7 +702,7 @@ void detach(
   static_assert(!std::is_same<ReturnType, void>{}, "");
   static_assert(sizeof(storage) >= sizeof(ReturnType), "");
 
-  auto& val = *folly::launder(reinterpret_cast<ReturnType*>(&storage));
+  auto& val = *std::launder(reinterpret_cast<ReturnType*>(&storage));
   new (&request.value_) ReturnType{std::move(val)};
   val.~ReturnType();
 }
@@ -1053,7 +1056,9 @@ auto DistributedMutex<Atomic, TimePublishing>::lock_combine(Func func)
     // to avoid having to play a return-value dance when the combinable
     // returns void, we use a scope exit to perform the unlock after the
     // function return has been processed
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 
@@ -1086,7 +1091,9 @@ DistributedMutex<Atomic, TimePublishing>::try_lock_combine_for(
     const std::chrono::duration<Rep, Period>& duration, Func func) {
   auto state = try_lock_for(duration);
   if (state) {
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 
@@ -1100,7 +1107,9 @@ DistributedMutex<Atomic, TimePublishing>::try_lock_combine_until(
     const std::chrono::time_point<Clock, Duration>& deadline, Func func) {
   auto state = try_lock_until(deadline);
   if (state) {
-    SCOPE_EXIT { unlock(std::move(state)); };
+    SCOPE_EXIT {
+      unlock(std::move(state));
+    };
     return func();
   }
 

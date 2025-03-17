@@ -26,6 +26,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 // clang-format on
 
 #include <chrono>
+#include <numeric>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -38,6 +39,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 #include <folly/FBString.h>
 #include <folly/container/test/F14TestUtil.h>
 #include <folly/container/test/TrackingTypes.h>
+#include <folly/lang/Keep.h>
 #include <folly/portability/GTest.h>
 #include <folly/test/TestUtils.h>
 
@@ -45,6 +47,40 @@ using namespace folly;
 using namespace folly::f14;
 using namespace folly::string_piece_literals;
 using namespace folly::test;
+
+extern "C" FOLLY_KEEP int check_std_unordered_set_int_accumulate(
+    std::unordered_set<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_node_set_int_accumulate(
+    folly::F14NodeSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_vector_set_int_accumulate(
+    folly::F14VectorSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+extern "C" FOLLY_KEEP int check_folly_f14_value_set_int_accumulate(
+    folly::F14ValueSet<int> const& set) {
+  return std::accumulate(set.begin(), set.end(), 0);
+}
+
+extern "C" FOLLY_KEEP size_t
+check_std_unordered_set_int_count(std::unordered_set<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_node_set_int_count(folly::F14NodeSet<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_vector_set_int_count(folly::F14VectorSet<int> const& set, int key) {
+  return set.count(key);
+}
+extern "C" FOLLY_KEEP size_t
+check_folly_value_set_int_count(folly::F14ValueSet<int> const& set, int key) {
+  return set.count(key);
+}
 
 static constexpr bool kFallback = folly::f14::detail::getF14IntrinsicsMode() ==
     folly::f14::detail::F14IntrinsicsMode::None;
@@ -1061,9 +1097,10 @@ TEST(F14VectorSet, maxSize) {
   EXPECT_EQ(
       s.max_size(),
       std::min(
-          folly::f14::detail::SizeAndChunkShift::kMaxSize,
-          std::allocator_traits<decltype(s)::allocator_type>::max_size(
-              s.get_allocator())));
+          {folly::f14::detail::SizeAndChunkShift::kMaxSize,
+           std::size_t{std::numeric_limits<uint32_t>::max()},
+           std::allocator_traits<decltype(s)::allocator_type>::max_size(
+               s.get_allocator())}));
 }
 #endif
 
@@ -1096,7 +1133,6 @@ TEST(F14FastSet, moveOnly) {
   runMoveOnlyTest<F14FastSet<MoveOnlyTestInt>>();
 }
 
-#if FOLLY_F14_ERASE_INTO_AVAILABLE
 template <typename S>
 void runEraseIntoTest() {
   S t0;
@@ -1159,7 +1195,6 @@ TEST(F14VectorSet, eraseInto) {
 TEST(F14FastSet, eraseInto) {
   runEraseIntoTest<F14FastSet<MoveOnlyTestInt>>();
 }
-#endif
 
 TEST(F14ValueSet, heterogeneous) {
   // note: std::string is implicitly convertible to but not from StringPiece
@@ -1206,7 +1241,7 @@ TEST(F14ValueSet, heterogeneous) {
   };
 
   checks(set);
-  checks(as_const(set));
+  checks(std::as_const(set));
 }
 
 template <typename S>
@@ -1330,13 +1365,11 @@ void runHeterogeneousInsertTest() {
   EXPECT_EQ(Tracked<1>::counts().dist(Counts{0, 0, 0, 0}), 0)
       << Tracked<1>::counts;
 
-#if FOLLY_F14_ERASE_INTO_AVAILABLE
   set.insert(10);
   resetTracking();
   set.eraseInto(10, [](auto&&) {});
   EXPECT_EQ(Tracked<1>::counts().dist(Counts{0, 0, 0, 0}), 0)
       << Tracked<1>::counts;
-#endif
 }
 
 template <typename S>
@@ -1541,9 +1574,8 @@ void runRandomInsertOrderTest(F&& func) {
 TEST(F14Set, randomInsertOrder) {
   runRandomInsertOrderTest<F14ValueSet<char>>([](char x) { return x; });
   runRandomInsertOrderTest<F14FastSet<char>>([](char x) { return x; });
-  runRandomInsertOrderTest<F14FastSet<std::string>>([](char x) {
-    return std::string{std::size_t{1}, x};
-  });
+  runRandomInsertOrderTest<F14FastSet<std::string>>(
+      [](char x) { return std::string{std::size_t{1}, x}; });
 }
 
 template <template <class...> class TSet>

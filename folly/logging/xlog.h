@@ -504,7 +504,7 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogFirstNExactImpl(std::size_t n) {
  */
 #define XLOG_ACTUAL_IMPL(level, cond, always_fatal, type, ...)              \
   (!XLOG_IS_ON_IMPL(level) || !(cond))                                      \
-      ? ::folly::logDisabledHelper(::folly::bool_constant<always_fatal>{})  \
+      ? ::folly::logDisabledHelper(::std::bool_constant<always_fatal>{})    \
       : ::folly::LogStreamVoidify<::folly::isLogLevelFatal(level)>{} &      \
           ::folly::LogStreamProcessor(                                      \
               [] {                                                          \
@@ -647,7 +647,9 @@ FOLLY_EXPORT FOLLY_ALWAYS_INLINE bool xlogFirstNExactImpl(std::size_t n) {
   FOLLY_CONSTEVAL inline StringPiece getXlogCategoryName(StringPiece, int) { \
     return category;                                                         \
   }                                                                          \
-  FOLLY_CONSTEVAL inline bool isXlogCategoryOverridden(int) { return true; } \
+  FOLLY_CONSTEVAL inline bool isXlogCategoryOverridden(int) {                \
+    return true;                                                             \
+  }                                                                          \
   }                                                                          \
   }                                                                          \
   }                                                                          \

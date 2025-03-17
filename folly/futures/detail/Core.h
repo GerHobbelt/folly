@@ -471,7 +471,7 @@ class CoreBase {
         } else {
           // mimic constructing and invoking a handler: 1 copy; non-const invoke
           auto fn_ = static_cast<F&&>(fn);
-          fn_(as_const(*object));
+          fn_(std::as_const(*object));
         }
         delete object;
         return;
@@ -524,6 +524,24 @@ class CoreBase {
 
   void derefCallback() noexcept;
 
+  template <typename Self>
+  FOLLY_ERASE static Self& walkProxyChainImpl(Self& self) noexcept {
+    DCHECK(self.hasResult());
+    auto core = &self;
+    while (core->state_.load(std::memory_order_relaxed) == State::Proxy) {
+      core = core->proxy_;
+    }
+    return *core;
+  }
+  FOLLY_ERASE CoreBase& walkProxyChain() noexcept {
+    return walkProxyChainImpl(*this);
+  }
+  FOLLY_ERASE CoreBase const& walkProxyChain() const noexcept {
+    return walkProxyChainImpl(*this);
+  }
+
+  bool destroyDerived() noexcept;
+
   Callback callback_;
   std::atomic<State> state_;
   std::atomic<unsigned char> attached_;
@@ -566,8 +584,8 @@ class Core final : private ResultHolder<T>, public CoreBase {
   /// State will be OnlyResult
   /// Result held will be the `T` constructed from forwarded `args`
   template <typename... Args>
-  static Core<T>* make(in_place_t, Args&&... args) {
-    return new Core<T>(in_place, static_cast<Args&&>(args)...);
+  static Core<T>* make(std::in_place_t, Args&&... args) {
+    return new Core<T>(std::in_place, static_cast<Args&&>(args)...);
   }
 
   /// Call only from consumer thread (since the consumer thread can modify the
@@ -590,20 +608,10 @@ class Core final : private ResultHolder<T>, public CoreBase {
   ///   possibly moved-out, depending on what the callback did; some but not
   ///   all callbacks modify (possibly move-out) the result.)
   Try<T>& getTry() {
-    DCHECK(hasResult());
-    auto core = this;
-    while (core->state_.load(std::memory_order_relaxed) == State::Proxy) {
-      core = static_cast<Core*>(core->proxy_);
-    }
-    return core->result_;
+    return static_cast<decltype(*this)&>(walkProxyChain()).result_;
   }
   Try<T> const& getTry() const {
-    DCHECK(hasResult());
-    auto core = this;
-    while (core->state_.load(std::memory_order_relaxed) == State::Proxy) {
-      core = static_cast<Core const*>(core->proxy_);
-    }
-    return core->result_;
+    return static_cast<decltype(*this)&>(walkProxyChain()).result_;
   }
 
   /// Call only from consumer thread.
@@ -623,11 +631,7 @@ class Core final : private ResultHolder<T>, public CoreBase {
                             CoreBase& coreBase,
                             Executor::KeepAlive<>&& ka,
                             exception_wrapper* ew) mutable {
-      auto& core = static_cast<Core&>(coreBase);
-      if (ew != nullptr) {
-        core.result_ = Try<T>{std::move(*ew)};
-      }
-      func(std::move(ka), std::move(core.result_));
+      func(std::move(ka), setCallbackGetResult(coreBase, ew));
     };
 
     setCallback_(std::move(callback), std::move(context), allowInline);
@@ -679,36 +683,25 @@ class Core final : private ResultHolder<T>, public CoreBase {
   }
 
   template <typename... Args>
-  explicit Core(in_place_t, Args&&... args) noexcept(
+  explicit Core(std::in_place_t, Args&&... args) noexcept(
       std::is_nothrow_constructible<T, Args&&...>::value)
       : CoreBase(State::OnlyResult, 1) {
-    new (&this->result_) Result(in_place, static_cast<Args&&>(args)...);
+    new (&this->result_) Result(std::in_place, static_cast<Args&&>(args)...);
   }
 
   ~Core() override {
-    DCHECK(attached_ == 0);
-    auto state = state_.load(std::memory_order_relaxed);
-    switch (state) {
-      case State::OnlyResult:
-        [[fallthrough]];
-
-      case State::Done:
-        this->result_.~Result();
-        break;
-
-      case State::Proxy:
-        proxy_->detachFuture();
-        break;
-
-      case State::Empty:
-        break;
-
-      case State::Start:
-      case State::OnlyCallback:
-      case State::OnlyCallbackAllowInline:
-      default:
-        terminate_with<std::logic_error>("~Core unexpected state");
+    if (destroyDerived()) {
+      this->result_.~Result();
     }
+  }
+
+  static Try<T>&& setCallbackGetResult(
+      CoreBase& coreBase, exception_wrapper* ew) {
+    auto& core = static_cast<Core&>(coreBase);
+    if (ew != nullptr) {
+      core.result_.emplaceException(std::move(*ew));
+    }
+    return std::move(core.result_);
   }
 };
 

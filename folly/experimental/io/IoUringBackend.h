@@ -33,6 +33,7 @@
 #include <folly/CppAttributes.h>
 #include <folly/ExceptionString.h>
 #include <folly/Function.h>
+#include <folly/Optional.h>
 #include <folly/Range.h>
 #include <folly/experimental/io/IoUringBase.h>
 #include <folly/experimental/io/Liburing.h>
@@ -187,31 +188,37 @@ class IoUringBackend : public EventBaseBackendBase {
       return *this;
     }
 
+    ssize_t sqeSize{-1};
+
     size_t capacity{256};
     size_t minCapacity{0};
     size_t maxSubmit{128};
-    ssize_t sqeSize{-1};
     size_t maxGet{256};
     size_t registeredFds{0};
-    bool registerRingFd{false};
+    size_t sqGroupNumThreads{1};
+    size_t initialProvidedBuffersCount{0};
+    size_t initialProvidedBuffersEachSize{0};
+
     uint32_t flags{0};
-    bool taskRunCoop{false};
-    bool deferTaskRun{false};
-    // Maximum amount of time to wait (in microseconds) per io_uring_enter
-    // Both timeout _and_ batchSize must be set for io_uring_enter wait_nr to be
-    // set!
-    std::chrono::microseconds timeout{0};
+
     // Minimum number of requests (defined as sockets with data to read) to wait
     // for per io_uring_enter
     int batchSize{0};
 
+    bool registerRingFd{false};
+    bool taskRunCoop{false};
+    bool deferTaskRun{false};
+
+    // Maximum amount of time to wait (in microseconds) per io_uring_enter
+    // Both timeout _and_ batchSize must be set for io_uring_enter wait_nr to be
+    // set!
+    std::chrono::microseconds timeout{0};
     std::chrono::milliseconds sqIdle{0};
     std::chrono::milliseconds cqIdle{0};
+
     std::set<uint32_t> sqCpus;
+
     std::string sqGroupName;
-    size_t sqGroupNumThreads{1};
-    size_t initialProvidedBuffersCount{0};
-    size_t initialProvidedBuffersEachSize{0};
   };
 
   explicit IoUringBackend(Options options);
@@ -221,12 +228,8 @@ class IoUringBackend : public EventBaseBackendBase {
   bool isWaitingToSubmit() const {
     return waitingToSubmit_ || !submitList_.empty();
   }
-  struct io_uring* ioRingPtr() {
-    return &ioRing_;
-  }
-  struct io_uring_params const& params() const {
-    return params_;
-  }
+  struct io_uring* ioRingPtr() { return &ioRing_; }
+  struct io_uring_params const& params() const { return params_; }
   bool useReqBatching() const {
     return options_.timeout.count() > 0 && options_.batchSize > 0;
   }

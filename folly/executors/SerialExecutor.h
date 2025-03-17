@@ -24,8 +24,12 @@
 #include <folly/executors/GlobalExecutor.h>
 #include <folly/executors/SerializedExecutor.h>
 #include <folly/io/async/Request.h>
+#include <folly/synchronization/DistributedMutex.h>
+#include <folly/synchronization/RelaxedAtomic.h>
 
 namespace folly {
+
+namespace detail {
 
 /**
  * @class SerialExecutor
@@ -49,35 +53,34 @@ namespace folly {
  * submitted will still be executed with the same guarantees, as long as the
  * parent executor is executing tasks.
  */
-
-template <int LgQueueSegmentSize = 8>
-class SerialExecutorExt : public SerializedExecutor {
+template <template <typename> typename Queue>
+class SerialExecutorImpl : public SerializedExecutor {
  public:
-  SerialExecutorExt(SerialExecutorExt const&) = delete;
-  SerialExecutorExt& operator=(SerialExecutorExt const&) = delete;
-  SerialExecutorExt(SerialExecutorExt&&) = delete;
-  SerialExecutorExt& operator=(SerialExecutorExt&&) = delete;
+  SerialExecutorImpl(SerialExecutorImpl const&) = delete;
+  SerialExecutorImpl& operator=(SerialExecutorImpl const&) = delete;
+  SerialExecutorImpl(SerialExecutorImpl&&) = delete;
+  SerialExecutorImpl& operator=(SerialExecutorImpl&&) = delete;
 
-  static KeepAlive<SerialExecutorExt> create(
+  static KeepAlive<SerialExecutorImpl> create(
       KeepAlive<Executor> parent = getGlobalCPUExecutor());
 
   class Deleter {
    public:
     Deleter() {}
 
-    void operator()(SerialExecutorExt* executor) {
+    void operator()(SerialExecutorImpl* executor) {
       executor->keepAliveRelease();
     }
 
    private:
-    friend class SerialExecutorExt;
+    friend class SerialExecutorImpl;
     explicit Deleter(std::shared_ptr<Executor> parent)
         : parent_(std::move(parent)) {}
 
     std::shared_ptr<Executor> parent_;
   };
 
-  using UniquePtr = std::unique_ptr<SerialExecutorExt, Deleter>;
+  using UniquePtr = std::unique_ptr<SerialExecutorImpl, Deleter>;
   [[deprecated("Replaced by create")]] static UniquePtr createUnique(
       std::shared_ptr<Executor> parent);
 
@@ -109,8 +112,8 @@ class SerialExecutorExt : public SerializedExecutor {
 
   class Worker;
 
-  explicit SerialExecutorExt(KeepAlive<Executor> parent);
-  ~SerialExecutorExt() override;
+  explicit SerialExecutorImpl(KeepAlive<Executor> parent);
+  ~SerialExecutorImpl() override;
 
   bool keepAliveAcquire() noexcept override;
 
@@ -122,14 +125,43 @@ class SerialExecutorExt : public SerializedExecutor {
 
   KeepAlive<Executor> parent_;
   std::atomic<std::size_t> scheduled_{0};
-  // The consumer should only dequeue when the queue is non-empty, so we don't
-  // need blocking.
-  folly::UMPSCQueue<Task, /* MayBlock */ false, LgQueueSegmentSize> queue_;
+  Queue<Task> queue_;
 
   std::atomic<ssize_t> keepAliveCounter_{1};
 };
 
-using SerialExecutor = SerialExecutorExt<>;
+template <int LgQueueSegmentSize = 8>
+struct SerialExecutorWithUnboundedQueue {
+  // The consumer should only dequeue when the queue is non-empty, so we don't
+  // need blocking.
+  template <typename Task>
+  using queue =
+      folly::UMPSCQueue<Task, /* MayBlock */ false, LgQueueSegmentSize>;
+  using type = SerialExecutorImpl<queue>;
+};
+
+template <class Task>
+class SerialExecutorMPSCQueue;
+
+} // namespace detail
+
+using SerialExecutor =
+    typename detail::SerialExecutorWithUnboundedQueue<>::type;
+
+template <int LgQueueSegmentSize>
+using SerialExecutorWithLgSegmentSize =
+    typename detail::SerialExecutorWithUnboundedQueue<LgQueueSegmentSize>::type;
+
+/**
+ * SerialExecutor implementation that uses a mutex-protected queue. This uses
+ * significantly less memory than SerialExecutor, at the expense of being more
+ * susceptible to contention on add(). This is intended for use cases where
+ * granular SerialExecutors are required, for example one per request. In these
+ * scenarios, there are not many concurrent submitters, so contention is not an
+ * issue, while memory overhead is.
+ */
+using SmallSerialExecutor =
+    detail::SerialExecutorImpl<detail::SerialExecutorMPSCQueue>;
 
 } // namespace folly
 

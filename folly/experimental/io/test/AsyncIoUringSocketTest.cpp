@@ -65,18 +65,18 @@ static NullWriteCallback nullWriteCallback;
 class FutureWriteCallback : public AsyncWriter::WriteCallback {
  public:
   void writeSuccess() noexcept override {
-    promiseContract.first.setValue(Unit{});
+    auto& [promise, future] = promiseContract;
+    promise.setValue(Unit{});
   }
 
   void writeErr(
       size_t bytesWritten, const AsyncSocketException& ex) noexcept override {
-    promiseContract.first.setValue(
-        makeUnexpected(std::make_pair(bytesWritten, ex)));
+    auto& [promise, future] = promiseContract;
+    promise.setValue(makeUnexpected(std::make_pair(bytesWritten, ex)));
   }
 
   using TResult = Expected<Unit, std::pair<size_t, AsyncSocketException>>;
-  std::pair<Promise<TResult>, SemiFuture<TResult>> promiseContract =
-      makePromiseContract<TResult>();
+  SemiPromiseContract<TResult> promiseContract = makePromiseContract<TResult>();
 };
 
 } // namespace
@@ -313,10 +313,11 @@ class AsyncIoUringSocketTest : public ::testing::TestWithParam<TestParams>,
     LOG(FATAL) << ex;
   }
 
+  template <typename ServerReadCallback>
   struct Connected {
     std::unique_ptr<EchoTransport> client;
     AsyncTransport::UniquePtr server;
-    std::unique_ptr<CollectCallback> callback;
+    std::unique_ptr<ServerReadCallback> callback;
     ~Connected() {
       if (server) {
         server->setReadCB(nullptr);
@@ -332,7 +333,9 @@ class AsyncIoUringSocketTest : public ::testing::TestWithParam<TestParams>,
     return ret;
   }
 
-  Connected makeConnected(ConnectedOptions options = ConnectedOptions{}) {
+  template <typename ServerReadCallback = CollectCallback>
+  Connected<ServerReadCallback> makeConnected(
+      ConnectedOptions options = ConnectedOptions{}) {
     AsyncSocketTransport::UniquePtr client;
     if (GetParam().ioUringClient) {
       client = AsyncSocketTransport::UniquePtr(
@@ -359,15 +362,16 @@ class AsyncIoUringSocketTest : public ::testing::TestWithParam<TestParams>,
     auto c = std::make_unique<EchoTransport>(
         std::move(client), GetParam().supportBufferMovable);
     c->start();
-    auto cb = std::make_unique<CollectCallback>();
-    AsyncTransport::UniquePtr sock = GetParam().ioUringServer
+    auto serverReadCallback = std::make_unique<ServerReadCallback>();
+    AsyncTransport::UniquePtr server = GetParam().ioUringServer
         ? AsyncTransport::UniquePtr(new AsyncIoUringSocket(
               AsyncSocket::newSocket(base.get(), fd), ioUringSocketOptions()))
         : AsyncTransport::UniquePtr(AsyncSocket::newSocket(base.get(), fd));
     if (options.serverShouldRead) {
-      sock->setReadCB(cb.get());
+      server->setReadCB(serverReadCallback.get());
     }
-    return Connected{std::move(c), std::move(sock), std::move(cb)};
+    return Connected<ServerReadCallback>{
+        std::move(c), std::move(server), std::move(serverReadCallback)};
   }
 
   bool unableToRun = false;
@@ -574,10 +578,8 @@ TEST_P(AsyncIoUringSocketTest, DetachEventBase) {
   } while (true);
 
   // make sure write arrived, it should be on the new event base
-  ASSERT_TRUE(std::move(fwc.promiseContract.second)
-                  .via(&newBase)
-                  .getVia(&newBase)
-                  .hasValue());
+  auto& [promise, future] = fwc.promiseContract;
+  ASSERT_TRUE(std::move(future).via(&newBase).getVia(&newBase).hasValue());
 
   ASSERT_TRUE(transport->isDetachable());
   transport->detachEventBase();
@@ -779,8 +781,8 @@ TEST_P(AsyncIoUringSocketTestAll, SendTimeout) {
     conn.server->setSendTimeout(1);
     conn.server->writev(&ecb, iov.data(), iov.size());
   });
-  auto ex =
-      std::move(ecb.promiseContract.second).via(base.get()).getVia(base.get());
+  auto& [promise, future] = ecb.promiseContract;
+  auto ex = std::move(future).via(base.get()).getVia(base.get());
   ASSERT_TRUE(ex.hasError());
   EXPECT_EQ(AsyncSocketException::TIMED_OUT, ex.error().second.getType());
 }

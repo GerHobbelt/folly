@@ -65,7 +65,6 @@
 #include <folly/Traits.h>
 #include <folly/detail/RangeCommon.h>
 #include <folly/detail/RangeSse42.h>
-#include <folly/lang/Byte.h>
 
 // Ignore shadowing warnings within this file, so includers can use -Wshadow.
 FOLLY_PUSH_WARNING
@@ -180,7 +179,7 @@ constexpr bool range_is_char_type_v_ =
 
 void range_is_byte_type_f_(unsigned char const*);
 void range_is_byte_type_f_(signed char const*);
-void range_is_byte_type_f_(byte const*);
+void range_is_byte_type_f_(std::byte const*);
 template <typename Iter>
 using range_is_byte_type_d_ =
     decltype(folly::detail::range_is_byte_type_f_(FOLLY_DECLVAL(Iter)));
@@ -580,9 +579,7 @@ class Range {
   }
 
   constexpr size_type size() const {
-#if __clang__ || !__GNUC__ || __GNUC__ >= 7
     assert(b_ <= e_);
-#endif
     return size_type(e_ - b_);
   }
   constexpr size_type walk_size() const {
@@ -1680,29 +1677,29 @@ struct hasher<
  */
 inline namespace literals {
 inline namespace string_piece_literals {
-constexpr Range<char const*> operator"" _sp(
+constexpr Range<char const*> operator""_sp(
     char const* str, size_t len) noexcept {
   return Range<char const*>(str, len);
 }
 
 #if defined(__cpp_char8_t) && __cpp_char8_t >= 201811L
-constexpr Range<char8_t const*> operator"" _sp(
+constexpr Range<char8_t const*> operator""_sp(
     char8_t const* str, size_t len) noexcept {
   return Range<char8_t const*>(str, len);
 }
 #endif
 
-constexpr Range<char16_t const*> operator"" _sp(
+constexpr Range<char16_t const*> operator""_sp(
     char16_t const* str, size_t len) noexcept {
   return Range<char16_t const*>(str, len);
 }
 
-constexpr Range<char32_t const*> operator"" _sp(
+constexpr Range<char32_t const*> operator""_sp(
     char32_t const* str, size_t len) noexcept {
   return Range<char32_t const*>(str, len);
 }
 
-constexpr Range<wchar_t const*> operator"" _sp(
+constexpr Range<wchar_t const*> operator""_sp(
     wchar_t const* str, size_t len) noexcept {
   return Range<wchar_t const*>(str, len);
 }
@@ -1740,7 +1737,7 @@ FOLLY_ASSUME_FBVECTOR_COMPATIBLE_1(folly::Range)
 // Unfortunately it is not possible to forward declare enable_view under
 // MSVC 2019.8 due to compiler bugs, so we need to include the actual
 // definition if available.
-#if __has_include(<range/v3/range/concepts.hpp>) && defined(_MSC_VER) && _MSC_VER >= 1920
+#if __has_include(<range/v3/range/concepts.hpp>) && defined(_MSC_VER)
 #include <range/v3/range/concepts.hpp> // @manual
 #else
 namespace ranges {
@@ -1753,5 +1750,5 @@ extern const bool enable_view;
 // the view concept (a lightweight, non-owning range).
 namespace ranges {
 template <class Iter>
-FOLLY_INLINE_VARIABLE constexpr bool enable_view<::folly::Range<Iter>> = true;
+inline constexpr bool enable_view<::folly::Range<Iter>> = true;
 } // namespace ranges

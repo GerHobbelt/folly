@@ -864,7 +864,7 @@ TEST(Function, ParameterCopyMoveCount) {
   EXPECT_LE(cmt.copyCount(), 0);
 
   // pass by rvalue reference
-  Function<size_t(CopyMoveTracker &&)> uf4 = [](CopyMoveTracker&& c) {
+  Function<size_t(CopyMoveTracker&&)> uf4 = [](CopyMoveTracker&& c) {
     return c.moveCount();
   };
 
@@ -1435,8 +1435,13 @@ TEST(Function, AllocatedSize) {
 }
 
 TEST(Function, TrivialSmallBig) {
-  auto tl = [] { return 7; };
-  static_assert(std::is_trivially_copyable_v<decltype(tl)>);
+  auto tsl = [] { return 7; };
+  static_assert(std::is_trivially_copyable_v<decltype(tsl)>);
+  static_assert(sizeof(tsl) == 1);
+
+  auto thl = [x = std::array<int, 64>{{7}}] { return x[0]; };
+  static_assert(std::is_trivially_copyable_v<decltype(thl)>);
+  static_assert(sizeof(thl) >= sizeof(Function<int()>));
 
   struct move_nx {
     move_nx() {}
@@ -1458,19 +1463,23 @@ TEST(Function, TrivialSmallBig) {
   static_assert(!std::is_trivially_copyable_v<decltype(hl)>);
   static_assert(!std::is_nothrow_move_constructible_v<decltype(hl)>);
 
-  Function<int()> t{std::move(tl)};
+  Function<int()> ts{std::move(tsl)};
+  Function<int()> th{std::move(thl)};
   Function<int()> s{std::move(sl)};
   Function<int()> h{std::move(hl)};
 
-  EXPECT_EQ(7, t());
+  EXPECT_EQ(7, ts());
+  EXPECT_EQ(7, th());
   EXPECT_EQ(7, s());
   EXPECT_EQ(7, h());
 
-  auto t2 = std::move(t);
+  auto ts2 = std::move(ts);
+  auto th2 = std::move(th);
   auto s2 = std::move(s);
   auto h2 = std::move(h);
 
-  EXPECT_EQ(7, t2());
+  EXPECT_EQ(7, ts2());
+  EXPECT_EQ(7, th2());
   EXPECT_EQ(7, s2());
   EXPECT_EQ(7, h2());
 }
@@ -1495,7 +1504,7 @@ template <typename T>
 union consteval_immortal {
   T value;
   template <typename... A>
-  explicit FOLLY_CONSTEVAL consteval_immortal(folly::in_place_t, A&&... a)
+  explicit FOLLY_CONSTEVAL consteval_immortal(std::in_place_t, A&&... a)
       : value{static_cast<A&&>(a)...} {}
   ~consteval_immortal() {}
 };
@@ -1503,18 +1512,18 @@ union consteval_immortal {
 
 TEST(Function, ConstEvalEmpty) {
   static FOLLY_CONSTINIT consteval_immortal<Function<int()>> func{
-      folly::in_place};
+      std::in_place};
   EXPECT_THROW(func.value(), std::bad_function_call);
 }
 
 TEST(Function, ConstEvalNullptr) {
   static FOLLY_CONSTINIT consteval_immortal<Function<int()>> func{
-      folly::in_place, nullptr};
+      std::in_place, nullptr};
   EXPECT_THROW(func.value(), std::bad_function_call);
 }
 
 TEST(Function, ConstEvalStaticLambda) {
   static FOLLY_CONSTINIT consteval_immortal<Function<int()>> func{
-      folly::in_place, [] { return 3; }};
+      std::in_place, [] { return 3; }};
   EXPECT_EQ(3, func.value());
 }

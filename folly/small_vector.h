@@ -46,6 +46,7 @@
 #include <folly/lang/CheckedMath.h>
 #include <folly/lang/Exception.h>
 #include <folly/memory/Malloc.h>
+#include <folly/memory/SanitizeLeak.h>
 #include <folly/portability/Malloc.h>
 
 #if (FOLLY_X64 || FOLLY_PPC64 || FOLLY_AARCH64 || FOLLY_RISCV64)
@@ -122,7 +123,7 @@ struct policy_size_type {
 
 template <bool Value>
 struct policy_in_situ_only {
-  using in_situ_only = bool_constant<Value>;
+  using in_situ_only = std::bool_constant<Value>;
 };
 
 } // namespace small_vector_policy
@@ -147,7 +148,7 @@ namespace detail {
  * extra copies and moves for non-trivial types.
  */
 template <class T, class Create>
-typename std::enable_if<!is_trivially_copyable_v<T>>::type
+typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -201,7 +202,7 @@ moveObjectsRightAndCreate(
 // memory may be uninitialized, and std::move_backward() won't work when it
 // can't memmove().
 template <class T, class Create>
-typename std::enable_if<is_trivially_copyable_v<T>>::type
+typename std::enable_if<std::is_trivially_copyable_v<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -337,7 +338,7 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
    * ranges don't overlap.
    */
   template <class T>
-  typename std::enable_if<!is_trivially_copyable_v<T>>::type
+  typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
   moveToUninitialized(T* first, T* last, T* out) {
     std::size_t idx = 0;
     {
@@ -358,8 +359,8 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
 
   // Specialization for trivially copyable types.
   template <class T>
-  typename std::enable_if<is_trivially_copyable_v<T>>::type moveToUninitialized(
-      T* first, T* last, T* out) {
+  typename std::enable_if<std::is_trivially_copyable_v<T>>::type
+  moveToUninitialized(T* first, T* last, T* out) {
     std::memmove(
         static_cast<void*>(out),
         static_cast<void const*>(first),
@@ -679,8 +680,8 @@ class small_vector
    * of in-place vs. heap between this and o.
    */
   void swap(small_vector& o) noexcept(
-      std::is_nothrow_move_constructible<Value>::value&&
-          IsNothrowSwappable<Value>::value) {
+      std::is_nothrow_move_constructible<Value>::value &&
+      std::is_nothrow_swappable_v<Value>) {
     using std::swap; // Allow ADL on swap for our value_type.
 
     if (this->isExtern() && o.isExtern()) {
@@ -1035,7 +1036,7 @@ class small_vector
   }
 
   void copyWholeInlineStorageTrivial(small_vector const& o) {
-    static_assert(is_trivially_copyable_v<Value>);
+    static_assert(std::is_trivially_copyable_v<Value>);
     std::copy(o.u.buffer(), o.u.buffer() + MaxInline, u.buffer());
     this->setSize(o.size());
   }
@@ -1043,11 +1044,14 @@ class small_vector
   void moveInlineStorageRelocatable(small_vector&& o) {
     static_assert(IsRelocatable<Value>::value);
     const auto n = o.size();
+    FOLLY_PUSH_WARNING
+    FOLLY_GCC_DISABLE_WARNING("-Wclass-memaccess")
     if constexpr (kMayCopyWholeInlineStorage) {
       std::memcpy(u.buffer(), o.u.buffer(), MaxInline * kSizeOfValue);
     } else {
       std::memcpy(u.buffer(), o.u.buffer(), n * kSizeOfValue);
     }
+    FOLLY_POP_WARNING
     this->setSize(n);
     o.resetSizePolicy();
   }
@@ -1171,8 +1175,7 @@ class small_vector
     if (newSize <= capacity()) {
       return;
     }
-    makeSizeInternal(
-        newSize, false, [](void*) { assume_unreachable(); }, 0);
+    makeSizeInternal(newSize, false, [](void*) { assume_unreachable(); }, 0);
   }
 
   template <typename EmplaceFunc>
@@ -1260,6 +1263,7 @@ class small_vector
       }
       rollback.dismiss();
     }
+    annotate_object_leaked(newh);
     std::destroy(begin(), end());
     freeHeap();
     // Store shifted pointer if capacity is heapified
@@ -1332,7 +1336,7 @@ class small_vector
       sizeof(InlineStorageType) <= hardware_constructive_interference_size / 2;
 
   static constexpr bool kShouldCopyWholeInlineStorageTrivial =
-      is_trivially_copyable_v<Value> && kMayCopyWholeInlineStorage;
+      std::is_trivially_copyable_v<Value> && kMayCopyWholeInlineStorage;
 
   static bool constexpr kHasInlineCapacity = !BaseType::kAlwaysUseHeap &&
       sizeof(HeapPtrWithCapacity) < sizeof(InlineStorageType);
@@ -1383,9 +1387,12 @@ class small_vector
     if (hasCapacity()) {
       auto extraBytes = u.pdata_.allocationExtraBytes();
       auto vp = detail::unshiftPointer(u.pdata_.heap_, extraBytes);
+      annotate_object_collected(vp);
       sizedFree(vp, u.getCapacity() * sizeof(value_type) + extraBytes);
     } else {
-      free(u.pdata_.heap_);
+      auto vp = u.pdata_.heap_;
+      annotate_object_collected(vp);
+      free(vp);
     }
   }
 

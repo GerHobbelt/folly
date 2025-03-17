@@ -154,35 +154,6 @@ EventBaseBackend::~EventBaseBackend() {
   event_base_free(evb_);
 }
 
-class ExecutionObserverScopeGuard {
- public:
-  ExecutionObserverScopeGuard(
-      folly::ExecutionObserver::List* observerList,
-      void* id,
-      folly::ExecutionObserver::CallbackType callbackType)
-      : observerList_(observerList),
-        id_{reinterpret_cast<uintptr_t>(id)},
-        callbackType_(callbackType) {
-    if (!observerList_->empty()) {
-      for (auto& observer : *observerList_) {
-        observer.starting(id_, callbackType_);
-      }
-    }
-  }
-
-  ~ExecutionObserverScopeGuard() {
-    if (!observerList_->empty()) {
-      for (auto& observer : *observerList_) {
-        observer.stopped(id_, callbackType_);
-      }
-    }
-  }
-
- private:
-  folly::ExecutionObserver::List* observerList_;
-  uintptr_t id_;
-  folly::ExecutionObserver::CallbackType callbackType_;
-};
 } // namespace
 
 namespace folly {
@@ -521,7 +492,9 @@ EventBase::LoopStatus EventBase::loopWithSuspension() {
   DCHECK_NE(evb_->getPollableFd(), -1)
       << "loopWithSuspension() is only supported for backends with pollable fd";
   loopMainSetup();
-  SCOPE_EXIT { loopMainCleanup(); };
+  SCOPE_EXIT {
+    loopMainCleanup();
+  };
   LoopOptions options;
   options.allowSuspension = true;
   return loopMain(EVLOOP_NONBLOCK, options);
@@ -902,7 +875,9 @@ void EventBase::runInEventBaseThreadAndWait(Func fn) noexcept {
 
   Baton<> ready;
   runInEventBaseThread([&ready, fn = std::move(fn)]() mutable {
-    SCOPE_EXIT { ready.post(); };
+    SCOPE_EXIT {
+      ready.post();
+    };
     // A trick to force the stored functor to be executed and then destructed
     // before posting the baton and waking the waiting thread.
     copy(std::move(fn))();

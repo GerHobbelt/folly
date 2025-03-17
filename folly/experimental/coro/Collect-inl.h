@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <atomic>
 #include <utility>
 
 #include <folly/CancellationToken.h>
@@ -331,6 +332,38 @@ auto collectAnyImpl(
 }
 
 template <typename... SemiAwaitables, size_t... Indices>
+auto collectAnyWithoutExceptionImpl(
+    std::index_sequence<Indices...>, SemiAwaitables&&... awaitables)
+    -> folly::coro::Task<std::pair<
+        std::size_t,
+        folly::Try<detail::collect_any_component_t<SemiAwaitables...>>>> {
+  const CancellationToken& parentCancelToken =
+      co_await co_current_cancellation_token;
+  const CancellationSource cancelSource;
+  const CancellationToken cancelToken =
+      CancellationToken::merge(parentCancelToken, cancelSource.getToken());
+
+  constexpr std::size_t nAwaitables = sizeof...(SemiAwaitables);
+  std::atomic<std::size_t> nAwaited = 1;
+  std::pair<std::size_t, folly::Try<collect_any_component_t<SemiAwaitables...>>>
+      firstValueOrLastException;
+  firstValueOrLastException.first = std::numeric_limits<size_t>::max();
+  co_await folly::coro::collectAll(folly::coro::co_withCancellation(
+      cancelToken, [&]() -> folly::coro::Task<void> {
+        auto result = co_await folly::coro::co_awaitTry(
+            std::forward<SemiAwaitables>(awaitables));
+        if ((result.hasValue() ||
+             nAwaited.fetch_add(1, std::memory_order_relaxed) == nAwaitables) &&
+            !cancelSource.requestCancellation()) {
+          firstValueOrLastException.first = Indices;
+          firstValueOrLastException.second = std::move(result);
+        }
+      }())...);
+
+  co_return firstValueOrLastException;
+}
+
+template <typename... SemiAwaitables, size_t... Indices>
 auto collectAnyNoDiscardImpl(
     std::index_sequence<Indices...>, SemiAwaitables&&... awaitables)
     -> folly::coro::Task<
@@ -354,8 +387,9 @@ auto collectAnyNoDiscardImpl(
 } // namespace detail
 
 template <typename... SemiAwaitables>
-auto collectAll(SemiAwaitables&&... awaitables) -> folly::coro::Task<std::tuple<
-    detail::collect_all_component_t<remove_cvref_t<SemiAwaitables>>...>> {
+auto collectAll(SemiAwaitables&&... awaitables)
+    -> folly::coro::Task<std::tuple<
+        detail::collect_all_component_t<remove_cvref_t<SemiAwaitables>>...>> {
   return detail::collectAllImpl(
       std::make_index_sequence<sizeof...(SemiAwaitables)>{},
       static_cast<SemiAwaitables&&>(awaitables)...);
@@ -953,7 +987,7 @@ auto makeUnorderedAsyncGenerator(AsyncScope& scope, InputRange awaitables)
         InputRange,
         false>&&> {
   return detail::makeUnorderedAsyncGeneratorImpl(
-      scope, std::move(awaitables), bool_constant<false>{});
+      scope, std::move(awaitables), std::bool_constant<false>{});
 }
 
 template <typename InputRange>
@@ -962,7 +996,7 @@ auto makeUnorderedTryAsyncGenerator(AsyncScope& scope, InputRange awaitables)
         InputRange,
         true>&&> {
   return detail::makeUnorderedAsyncGeneratorImpl(
-      scope, std::move(awaitables), bool_constant<true>{});
+      scope, std::move(awaitables), std::bool_constant<true>{});
 }
 
 template <typename InputRange>
@@ -972,7 +1006,7 @@ auto makeUnorderedAsyncGenerator(
         InputRange,
         false>&&> {
   return detail::makeUnorderedAsyncGeneratorImpl(
-      scope, std::move(awaitables), bool_constant<false>{});
+      scope, std::move(awaitables), std::bool_constant<false>{});
 }
 
 template <typename InputRange>
@@ -982,7 +1016,7 @@ auto makeUnorderedTryAsyncGenerator(
         InputRange,
         true>&&> {
   return detail::makeUnorderedAsyncGeneratorImpl(
-      scope, std::move(awaitables), bool_constant<true>{});
+      scope, std::move(awaitables), std::bool_constant<true>{});
 }
 
 template <typename SemiAwaitable, typename... SemiAwaitables>
@@ -999,6 +1033,16 @@ auto collectAny(SemiAwaitable&& awaitable, SemiAwaitables&&... awaitables)
 }
 
 template <typename... SemiAwaitables>
+auto collectAnyWithoutException(SemiAwaitables&&... awaitables)
+    -> folly::coro::Task<std::pair<
+        std::size_t,
+        folly::Try<detail::collect_any_component_t<SemiAwaitables...>>>> {
+  return detail::collectAnyWithoutExceptionImpl(
+      std::make_index_sequence<sizeof...(SemiAwaitables)>{},
+      static_cast<SemiAwaitables&&>(awaitables)...);
+}
+
+template <typename... SemiAwaitables>
 auto collectAnyNoDiscard(SemiAwaitables&&... awaitables)
     -> folly::coro::Task<std::tuple<detail::collect_all_try_component_t<
         remove_cvref_t<SemiAwaitables>>...>> {
@@ -1008,10 +1052,11 @@ auto collectAnyNoDiscard(SemiAwaitables&&... awaitables)
 }
 
 template <typename InputRange>
-auto collectAnyRange(InputRange awaitables) -> folly::coro::Task<std::pair<
-    size_t,
-    folly::Try<detail::collect_all_range_component_t<
-        detail::range_reference_t<InputRange>>>>> {
+auto collectAnyRange(InputRange awaitables)
+    -> folly::coro::Task<std::pair<
+        size_t,
+        folly::Try<detail::collect_all_range_component_t<
+            detail::range_reference_t<InputRange>>>>> {
   const CancellationToken& parentCancelToken =
       co_await co_current_cancellation_token;
   const CancellationSource cancelSource;
@@ -1042,6 +1087,47 @@ auto collectAnyRange(InputRange awaitables) -> folly::coro::Task<std::pair<
       cancelToken, folly::coro::collectAllRange(detail::MoveRange(tasks)));
 
   co_return firstCompletion;
+}
+
+template <typename InputRange>
+auto collectAnyWithoutExceptionRange(InputRange awaitables)
+    -> folly::coro::Task<std::pair<
+        size_t,
+        folly::Try<detail::collect_all_range_component_t<
+            detail::range_reference_t<InputRange>>>>> {
+  const CancellationToken& parentCancelToken =
+      co_await co_current_cancellation_token;
+  const CancellationSource cancelSource;
+  const CancellationToken cancelToken =
+      CancellationToken::merge(parentCancelToken, cancelSource.getToken());
+
+  size_t nAwaitables;
+  std::atomic<std::size_t> nAwaited = 1;
+  std::pair<
+      size_t,
+      folly::Try<detail::collect_all_range_component_t<
+          detail::range_reference_t<InputRange>>>>
+      firstValueOrLastException;
+  firstValueOrLastException.first = std::numeric_limits<size_t>::max();
+
+  using awaitable_type = remove_cvref_t<detail::range_reference_t<InputRange>>;
+  auto makeTask = [&](awaitable_type semiAwaitable,
+                      size_t index) -> folly::coro::Task<void> {
+    auto result = co_await folly::coro::co_awaitTry(std::move(semiAwaitable));
+    if ((result.hasValue() ||
+         nAwaited.fetch_add(1, std::memory_order_relaxed) == nAwaitables) &&
+        !cancelSource.requestCancellation()) {
+      firstValueOrLastException.first = index;
+      firstValueOrLastException.second = std::move(result);
+    }
+  };
+
+  auto tasks = detail::collectMakeInnerTaskVec(awaitables, makeTask);
+  nAwaitables = tasks.size();
+  co_await folly::coro::co_withCancellation(
+      cancelToken, folly::coro::collectAllRange(detail::MoveRange(tasks)));
+
+  co_return firstValueOrLastException;
 }
 
 template <typename InputRange>

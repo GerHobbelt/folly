@@ -83,6 +83,7 @@ class Promise;
 
 namespace futures {
 namespace detail {
+class FutureBaseHelper;
 template <class T>
 class FutureBase;
 struct EmptyConstruct {};
@@ -90,6 +91,8 @@ template <typename T, typename F>
 class CoreCallbackState;
 template <typename T>
 void setTry(Promise<T>& p, Executor::KeepAlive<>&& ka, Try<T>&& t);
+
+struct MakeRetrievedFromStolenCoreTag {};
 } // namespace detail
 } // namespace futures
 
@@ -423,6 +426,7 @@ class Promise {
   bool isFulfilled() const noexcept;
 
  private:
+  friend class futures::detail::FutureBaseHelper;
   template <class>
   friend class futures::detail::FutureBase;
   template <class>
@@ -467,6 +471,9 @@ class Promise {
 
   void throwIfFulfilled() const;
   void detach();
+
+  Promise(futures::detail::MakeRetrievedFromStolenCoreTag, Core& core) noexcept
+      : retrieved_{true}, core_{&core} {}
 };
 
 } // namespace folly

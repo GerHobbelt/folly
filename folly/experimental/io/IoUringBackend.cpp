@@ -409,9 +409,8 @@ IoUringFdRegistrationRecord* IoUringBackend::FdRegistry::alloc(
     // this usually happens when we hit the file desc limit
     // and retrying this operation for every request is expensive
     err_ = true;
-    LOG(ERROR) << "io_uring_register_files(1) "
-               << "failed errno = " << errno << ":\"" << folly::errnoStr(errno)
-               << "\" " << this;
+    LOG(ERROR) << "io_uring_register_files(1) " << "failed errno = " << errno
+               << ":\"" << folly::errnoStr(errno) << "\" " << this;
     return nullptr;
   }
 
@@ -798,9 +797,9 @@ void IoUringBackend::addTimerEvent(
   auto expire = getTimerExpireTime(*timeout);
 
   TimerUserData* td = (TimerUserData*)event.getUserData();
-  DVLOG(6) << "addTimerEvent this=" << this << " event=" << &event
-           << " td=" << td << " changed_=" << timerChanged_
-           << " u=" << timeout->tv_usec;
+  VLOG(6) << "addTimerEvent this=" << this << " event=" << &event
+          << " td=" << td << " changed_=" << timerChanged_
+          << " u=" << timeout->tv_usec;
   if (td) {
     CHECK_EQ(event.getFreeFunction(), timerUserDataFreeFunction);
     if (td->iter == timers_.end()) {
@@ -814,7 +813,7 @@ void IoUringBackend::addTimerEvent(
     auto it = timers_.emplace(expire, &event);
     td = new TimerUserData();
     td->iter = it;
-    DVLOG(6) << "addTimerEvent::alloc " << td << " event=" << &event;
+    VLOG(6) << "addTimerEvent::alloc " << td << " event=" << &event;
     event.setUserData(td, timerUserDataFreeFunction);
   }
   timerChanged_ |= td->iter == timers_.begin();
@@ -822,8 +821,8 @@ void IoUringBackend::addTimerEvent(
 
 void IoUringBackend::removeTimerEvent(Event& event) {
   TimerUserData* td = (TimerUserData*)event.getUserData();
-  DVLOG(6) << "removeTimerEvent this=" << this << " event=" << &event
-           << " td=" << td;
+  VLOG(6) << "removeTimerEvent this=" << this << " event=" << &event
+          << " td=" << td;
   CHECK(td && event.getFreeFunction() == timerUserDataFreeFunction);
   timerChanged_ |= td->iter == timers_.begin();
   timers_.erase(td->iter);
@@ -833,7 +832,7 @@ void IoUringBackend::removeTimerEvent(Event& event) {
 }
 
 size_t IoUringBackend::processTimers() {
-  DVLOG(3) << "IoUringBackend::processTimers " << timers_.size();
+  VLOG(3) << "IoUringBackend::processTimers " << timers_.size();
   size_t ret = 0;
   uint64_t data = 0;
   // this can fail with but it is OK since the fd
@@ -849,7 +848,7 @@ size_t IoUringBackend::processTimers() {
     timerChanged_ = true;
     Event* e = it->second;
     TimerUserData* td = (TimerUserData*)e->getUserData();
-    DVLOG(5) << "processTimer " << e << " td=" << td;
+    VLOG(5) << "processTimer " << e << " td=" << td;
     CHECK(td && e->getFreeFunction() == timerUserDataFreeFunction);
     td->iter = timers_.end();
     timers_.erase(it);
@@ -861,8 +860,8 @@ size_t IoUringBackend::processTimers() {
     ++ret;
   }
 
-  DVLOG(3) << "IoUringBackend::processTimers done, changed= " << timerChanged_
-           << " count=" << ret;
+  VLOG(3) << "IoUringBackend::processTimers done, changed= " << timerChanged_
+          << " count=" << ret;
   return ret;
 }
 
@@ -954,7 +953,9 @@ void IoUringBackend::processPollIo(
   if (ev) {
     if (flags & IORING_CQE_F_MORE) {
       ioSqe->useCount_++;
-      SCOPE_EXIT { ioSqe->useCount_--; };
+      SCOPE_EXIT {
+        ioSqe->useCount_--;
+      };
       if (ioSqe->cbData_.processCb(this, res, flags)) {
         return;
       }
@@ -1233,7 +1234,7 @@ int IoUringBackend::eb_event_base_loopbreak() {
 }
 
 int IoUringBackend::eb_event_add(Event& event, const struct timeval* timeout) {
-  DVLOG(4) << "Add event " << &event;
+  VLOG(4) << "Add event " << &event;
   auto* ev = event.getEvent();
   CHECK(ev);
   CHECK(!(event_ref_flags(ev) & ~EVLIST_ALL));
@@ -1269,7 +1270,7 @@ int IoUringBackend::eb_event_add(Event& event, const struct timeval* timeout) {
 }
 
 int IoUringBackend::eb_event_del(Event& event) {
-  DVLOG(4) << "Del event " << &event;
+  VLOG(4) << "Del event " << &event;
   if (!event.eb_ev_base()) {
     return -1;
   }
@@ -1338,7 +1339,7 @@ int IoUringBackend::eb_event_del(Event& event) {
 }
 
 int IoUringBackend::eb_event_modify_inserted(Event& event, IoSqe* ioSqe) {
-  DVLOG(4) << "Modify event " << &event;
+  VLOG(4) << "Modify event " << &event;
   // unlink and append
   ioSqe->unlink();
   if (event_ref_flags(event.getEvent()) & EVLIST_INTERNAL) {
@@ -1401,7 +1402,7 @@ void IoUringBackend::cancel(IoSqeBase* ioSqe) {
     skip = true;
   }
 #endif
-  DVLOG(4) << "Cancel " << ioSqe << " skip=" << skip;
+  VLOG(4) << "Cancel " << ioSqe << " skip=" << skip;
 }
 
 int IoUringBackend::cancelOne(IoSqe* ioSqe) {
@@ -1427,7 +1428,9 @@ size_t IoUringBackend::getActiveEvents(WaitForEventsMode waitForEvents) {
   struct io_uring_cqe* cqe;
 
   setGetActiveEvents();
-  SCOPE_EXIT { doneGetActiveEvents(); };
+  SCOPE_EXIT {
+    doneGetActiveEvents();
+  };
 
   auto inner_do_wait = [&]() -> int {
     if (waitingToSubmit_) {
@@ -1931,7 +1934,9 @@ static bool doKernelSupportsSendZC() {
         << "doKernelSupportsSendZC: Unexpectedly io_uring_queue_init failed";
     return false;
   }
-  SCOPE_EXIT { io_uring_queue_exit(&ring); };
+  SCOPE_EXIT {
+    io_uring_queue_exit(&ring);
+  };
 
   auto* sqe = ::io_uring_get_sqe(&ring);
   if (!sqe) {

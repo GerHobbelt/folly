@@ -85,12 +85,7 @@ using EvpPkeySharedPtr = std::shared_ptr<EVP_PKEY>;
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(
     EvpEncodeCtx, EVP_ENCODE_CTX, EVP_ENCODE_CTX_free);
 
-// No EVP_PKEY_CTX <= 0.9.8b
-#if OPENSSL_VERSION_NUMBER >= 0x10000002L
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(EvpPkeyCtx, EVP_PKEY_CTX, EVP_PKEY_CTX_free);
-#else
-struct EVP_PKEY_CTX;
-#endif
 
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(EvpMdCtx, EVP_MD_CTX, EVP_MD_CTX_free);
 FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(
@@ -161,7 +156,6 @@ FOLLY_SSL_DETAIL_DEFINE_PTR_TYPE(OcspCertId, OCSP_CERTID, OCSP_CERTID_free);
 // the appropriate destructor:
 //    * OwningStackOf* -> Invokes sk_T_free
 //    * BorrowingStackOf* -> Invokes sk_T_pop_free
-#if FOLLY_OPENSSL_PREREQ(1, 1, 0)
 namespace detail {
 template <
     class StackType,
@@ -189,31 +183,6 @@ struct OpenSSLBorrowedStackDestructor {
 
 #define FOLLY_SSL_DETAIL_BORROWING_STACK_DESTRUCTOR(T) \
   ::folly::ssl::detail::OpenSSLBorrowedStackDestructor<STACK_OF(T)>
-
-#else
-namespace detail {
-
-template <class ElementType, void (*ElementDestructor)(ElementType*)>
-struct OpenSSL102OwnedStackDestructor {
-  template <class T>
-  void operator()(T* stack) const {
-    sk_pop_free(
-        reinterpret_cast<_STACK*>(stack), ((void (*)(void*))ElementDestructor));
-  }
-};
-
-struct OpenSSL102BorrowedStackDestructor {
-  template <class T>
-  void operator()(T* stack) const {
-    sk_free(reinterpret_cast<_STACK*>(stack));
-  }
-};
-} // namespace detail
-#define FOLLY_SSL_DETAIL_OWNING_STACK_DESTRUCTOR(T) \
-  ::folly::ssl::detail::OpenSSL102OwnedStackDestructor<T, T##_free>
-#define FOLLY_SSL_DETAIL_BORROWING_STACK_DESTRUCTOR(T) \
-  ::folly::ssl::detail::OpenSSL102BorrowedStackDestructor
-#endif
 
 #define FOLLY_SSL_DETAIL_DEFINE_OWNING_STACK_PTR_TYPE(             \
     element_alias, element_type)                                   \

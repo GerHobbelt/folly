@@ -62,13 +62,10 @@
 #include <cstddef>
 #include <functional>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
-#if __cplusplus >= 201703L && __has_include(<optional>)
-#define FOLLY_HAS_STD_OPTIONAL
-#include <optional>
-#endif
 
 #include <folly/Portability.h>
 #include <folly/Traits.h>
@@ -156,18 +153,18 @@ class Optional {
   /**
    * Creates an Optional with a value, where that value is constructed in-place.
    *
-   * The in_place_t argument exists so that values can be default constructed
+   * The std::in_place argument exists so that values can be default constructed
    * (i.e. have no arguments), since this would otherwise be confused with
    * default-constructing an Optional, which in turn results in None.
    */
   template <typename... Args>
-  constexpr explicit Optional(in_place_t, Args&&... args) noexcept(
+  constexpr explicit Optional(std::in_place_t, Args&&... args) noexcept(
       std::is_nothrow_constructible<Value, Args...>::value)
       : Optional{PrivateConstructor{}, std::forward<Args>(args)...} {}
 
   template <typename U, typename... Args>
   constexpr explicit Optional(
-      in_place_t,
+      std::in_place_t,
       std::initializer_list<U> il,
       Args&&... args) noexcept(std::
                                    is_nothrow_constructible<
@@ -182,8 +179,8 @@ class Optional {
     p.promise_->value_ = this;
   }
 
-// Conversions to ease migration to std::optional
-#ifdef FOLLY_HAS_STD_OPTIONAL
+  // Conversions to ease migration to std::optional
+
   /// Allow construction of Optional from std::optional.
   template <
       typename U,
@@ -219,7 +216,6 @@ class Optional {
     return storage_.hasValue ? std::optional<Value>(storage_.value)
                              : std::nullopt;
   }
-#endif
 
   /// Set the Optional
   /// @methodset Modifiers
@@ -312,7 +308,7 @@ class Optional {
   void clear() noexcept { reset(); }
 
   /// @methodset Modifiers
-  void swap(Optional& that) noexcept(IsNothrowSwappable<Value>::value) {
+  void swap(Optional& that) noexcept(std::is_nothrow_swappable_v<Value>) {
     if (hasValue() && that.hasValue()) {
       using std::swap;
       swap(value(), that.value());

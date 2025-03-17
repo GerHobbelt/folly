@@ -37,12 +37,6 @@
 #include <folly/detail/TypeList.h>
 #include <folly/lang/Assume.h>
 
-#if !defined(__cpp_inline_variables)
-#define FOLLY_INLINE_CONSTEXPR constexpr
-#else
-#define FOLLY_INLINE_CONSTEXPR inline constexpr
-#endif
-
 #include <folly/PolyException.h>
 #include <folly/detail/PolyDetail.h>
 
@@ -223,7 +217,8 @@ template <
     typename... As,
     std::enable_if_t<detail::IsPoly<Poly>::value, int> = 0>
 auto poly_call(Poly&& _this, As&&... as) -> decltype(poly_call<N, I>(
-    static_cast<Poly&&>(_this).get(), static_cast<As&&>(as)...)) {
+                                             static_cast<Poly&&>(_this).get(),
+                                             static_cast<As&&>(as)...)) {
   return poly_call<N, I>(
       static_cast<Poly&&>(_this).get(), static_cast<As&&>(as)...);
 }
@@ -1093,10 +1088,8 @@ void swap(Poly<I>& left, Poly<I>& right) noexcept {
  * The above is permitted
  */
 template <class Sig>
-FOLLY_INLINE_CONSTEXPR detail::Sig<Sig> const sig = {};
+inline constexpr detail::Sig<Sig> const sig = {};
 
 } // namespace folly
 
 #include <folly/Poly-inl.h>
-
-#undef FOLLY_INLINE_CONSTEXPR

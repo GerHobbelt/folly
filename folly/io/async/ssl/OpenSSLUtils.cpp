@@ -24,7 +24,6 @@
 #include <folly/ScopeGuard.h>
 #include <folly/portability/Sockets.h>
 #include <folly/portability/Unistd.h>
-#include <folly/ssl/Init.h>
 #include <folly/ssl/detail/OpenSSLSession.h>
 
 namespace {
@@ -145,25 +144,25 @@ bool OpenSSLUtils::validatePeerCertNames(
 }
 
 static std::unordered_map<uint16_t, std::string> getOpenSSLCipherNames() {
-  folly::ssl::init();
   std::unordered_map<uint16_t, std::string> ret;
   SSL_CTX* ctx = nullptr;
   SSL* ssl = nullptr;
 
   const SSL_METHOD* meth = TLS_server_method();
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-  OpenSSL_add_ssl_algorithms();
-#endif
 
   if ((ctx = SSL_CTX_new(meth)) == nullptr) {
     return ret;
   }
-  SCOPE_EXIT { SSL_CTX_free(ctx); };
+  SCOPE_EXIT {
+    SSL_CTX_free(ctx);
+  };
 
   if ((ssl = SSL_new(ctx)) == nullptr) {
     return ret;
   }
-  SCOPE_EXIT { SSL_free(ssl); };
+  SCOPE_EXIT {
+    SSL_free(ssl);
+  };
 
   STACK_OF(SSL_CIPHER)* sk = SSL_get_ciphers(ssl);
   for (int i = 0; i < sk_SSL_CIPHER_num(sk); i++) {

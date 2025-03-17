@@ -379,27 +379,6 @@ struct S {
 };
 } // namespace
 
-TEST(MakeFromTupleTest, makeFromTuple) {
-  S expected{42, 1.0, "foobar"};
-
-  // const lvalue ref
-  auto s1 = folly::make_from_tuple<S>(expected.tuple_);
-  EXPECT_EQ(expected.tuple_, s1.tuple_);
-
-  // rvalue ref
-  S sCopy{expected.tuple_};
-  auto s2 = folly::make_from_tuple<S>(std::move(sCopy.tuple_));
-  EXPECT_EQ(expected.tuple_, s2.tuple_);
-  EXPECT_TRUE(std::get<2>(sCopy.tuple_).empty());
-
-  // forward
-  std::string str{"foobar"};
-  auto s3 =
-      folly::make_from_tuple<S>(std::forward_as_tuple(42, 1.0, std::move(str)));
-  EXPECT_EQ(expected.tuple_, s3.tuple_);
-  EXPECT_TRUE(str.empty());
-}
-
 TEST(MakeIndexSequenceFromTuple, Basic) {
   using folly::index_sequence_for_tuple;
   using OneElementTuple = std::tuple<int>;
@@ -529,9 +508,9 @@ TEST(ForwardTuple, Basic) {
                std::tuple<int&, double&>>::value));
   EXPECT_EQ(folly::forward_tuple(tuple), tuple);
   EXPECT_TRUE((std::is_same<
-               decltype(folly::forward_tuple(folly::as_const(tuple))),
+               decltype(folly::forward_tuple(std::as_const(tuple))),
                std::tuple<const int&, const double&>>::value));
-  EXPECT_EQ(folly::forward_tuple(folly::as_const(tuple)), tuple);
+  EXPECT_EQ(folly::forward_tuple(std::as_const(tuple)), tuple);
 
   EXPECT_TRUE((std::is_same<
                decltype(folly::forward_tuple(std::move(tuple))),
@@ -542,14 +521,13 @@ TEST(ForwardTuple, Basic) {
 #else
   constexpr bool before_lwg2485 = false;
 #endif
-  EXPECT_TRUE(
-      (std::is_same<
-          decltype(folly::forward_tuple(std::move(folly::as_const(tuple)))),
-          std::conditional_t<
-              before_lwg2485,
-              std::tuple<const int&, const double&>,
-              std::tuple<const int&&, const double&&>>>::value));
-  EXPECT_EQ(folly::forward_tuple(std::move(folly::as_const(tuple))), tuple);
+  EXPECT_TRUE((std::is_same<
+               decltype(folly::forward_tuple(std::move(std::as_const(tuple)))),
+               std::conditional_t<
+                   before_lwg2485,
+                   std::tuple<const int&, const double&>,
+                   std::tuple<const int&&, const double&&>>>::value));
+  EXPECT_EQ(folly::forward_tuple(std::move(std::as_const(tuple))), tuple);
 
   auto integer = 1;
   auto floating_point = 2.0;

@@ -40,7 +40,6 @@
 #include <folly/lang/Align.h>
 #include <folly/lang/Assume.h>
 #include <folly/lang/Exception.h>
-#include <folly/lang/Launder.h>
 #include <folly/lang/Pretty.h>
 #include <folly/lang/SafeAssert.h>
 #include <folly/portability/Builtins.h>
@@ -234,13 +233,13 @@ namespace detail {
 // Detection for folly_assume_32bit_hash
 
 template <typename Hasher, typename Void = void>
-struct ShouldAssume32BitHash : bool_constant<!require_sizeof<Hasher>> {};
+struct ShouldAssume32BitHash : std::bool_constant<!require_sizeof<Hasher>> {};
 
 template <typename Hasher>
 struct ShouldAssume32BitHash<
     Hasher,
     void_t<typename Hasher::folly_assume_32bit_hash>>
-    : bool_constant<Hasher::folly_assume_32bit_hash::value> {};
+    : std::bool_constant<Hasher::folly_assume_32bit_hash::value> {};
 
 //////// hash helpers
 
@@ -392,7 +391,9 @@ class F14HashedKey final {
 
   const TKeyType& getKey() const { return key_; }
   const F14HashToken& getHashToken() const { return hash_; }
-  explicit operator const TKeyType&() const { return key_; }
+  // We want the conversion to the key to be implicit - the hashed key should
+  // seamlessly behave as the key itself.
+  /* implicit */ operator const TKeyType&() const { return key_; }
   explicit operator const F14HashToken&() const { return hash_; }
 
   bool operator==(const F14HashedKey& other) const {
@@ -718,12 +719,12 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
 
   Item& item(std::size_t i) {
     FOLLY_SAFE_DCHECK(this->occupied(i), "");
-    return *launder(itemAddr(i));
+    return *std::launder(itemAddr(i));
   }
 
   Item const& citem(std::size_t i) const {
     FOLLY_SAFE_DCHECK(this->occupied(i), "");
-    return *launder(itemAddr(i));
+    return *std::launder(itemAddr(i));
   }
 
   static F14Chunk& owner(Item& item, std::size_t index) {
@@ -1177,6 +1178,7 @@ class F14Table : public Policy {
   using Alloc = typename Policy::Alloc;
   using AllocTraits = typename Policy::AllocTraits;
   using Hasher = typename Policy::Hasher;
+  using InternalSizeType = typename Policy::InternalSizeType;
   using KeyEqual = typename Policy::KeyEqual;
 
   using Policy::kAllocIsAlwaysEqual;
@@ -1262,9 +1264,9 @@ class F14Table : public Policy {
   }
 
   F14Table(F14Table&& rhs) noexcept(
-      std::is_nothrow_move_constructible<Hasher>::value&&
-          std::is_nothrow_move_constructible<KeyEqual>::value&&
-              std::is_nothrow_move_constructible<Alloc>::value)
+      std::is_nothrow_move_constructible<Hasher>::value &&
+      std::is_nothrow_move_constructible<KeyEqual>::value &&
+      std::is_nothrow_move_constructible<Alloc>::value)
       : Policy{std::move(rhs)} {
     swapContents(rhs);
   }
@@ -1294,8 +1296,8 @@ class F14Table : public Policy {
   }
 
   F14Table& operator=(F14Table&& rhs) noexcept(
-      std::is_nothrow_move_assignable<Hasher>::value&&
-          std::is_nothrow_move_assignable<KeyEqual>::value &&
+      std::is_nothrow_move_assignable<Hasher>::value &&
+      std::is_nothrow_move_assignable<KeyEqual>::value &&
       (kAllocIsAlwaysEqual ||
        (AllocTraits::propagate_on_container_move_assignment::value &&
         std::is_nothrow_move_assignable<Alloc>::value))) {
@@ -1453,7 +1455,9 @@ class F14Table : public Policy {
   std::size_t max_size() const noexcept {
     auto& a = this->alloc();
     return std::min<std::size_t>(
-        SizeAndChunkShift::kMaxSize, AllocTraits::max_size(a));
+        {SizeAndChunkShift::kMaxSize,
+         std::numeric_limits<InternalSizeType>::max(),
+         AllocTraits::max_size(a)});
   }
 
   std::size_t bucket_count() const noexcept {
@@ -1740,8 +1744,8 @@ class F14Table : public Policy {
     // partial failure should not occur.  Sorry for the subtle invariants
     // in the Policy API.
 
-    if (is_trivially_copyable<Item>::value && !this->destroyItemOnClear() &&
-        itemCount() == src.itemCount()) {
+    if (std::is_trivially_copyable<Item>::value &&
+        !this->destroyItemOnClear() && itemCount() == src.itemCount()) {
       FOLLY_SAFE_DCHECK(chunkShift() == src.chunkShift(), "");
 
       auto scale = chunks_->capacityScale();

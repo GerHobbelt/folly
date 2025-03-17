@@ -17,6 +17,7 @@
 #pragma once
 
 #include <memory>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -163,7 +164,8 @@ struct FOLLY_MSVC_DECLSPEC(empty_bases) BasePolicy
       std::is_nothrow_default_constructible<Alloc>::value;
 
   static constexpr bool kSwapIsNoexcept = kAllocIsAlwaysEqual &&
-      IsNothrowSwappable<Hasher>{} && IsNothrowSwappable<KeyEqual>{};
+      std::is_nothrow_swappable_v<Hasher> &&
+      std::is_nothrow_swappable_v<KeyEqual>;
 
   static constexpr bool isAvalanchingHasher() {
     return IsAvalanchingHasher<Hasher, Key>::value;
@@ -625,7 +627,7 @@ class ValueContainerPolicy : public BasePolicy<
         // location), but it seems highly likely that it will also cause
         // the compiler to drop such assumptions that are violated due
         // to our UB const_cast in moveValue.
-        destroyItem(*launder(std::addressof(src)));
+        destroyItem(*std::launder(std::addressof(src)));
       } else {
         destroyItem(src);
       }
@@ -1061,7 +1063,7 @@ class VectorContainerPolicy : public BasePolicy<
   static constexpr bool valueIsTriviallyCopyable() {
     return AllocatorHasDefaultObjectConstruct<Alloc, Value, Value>::value &&
         AllocatorHasDefaultObjectDestroy<Alloc, Value>::value &&
-        is_trivially_copyable<Value>::value;
+        std::is_trivially_copyable<Value>::value;
   }
 
  public:
@@ -1246,7 +1248,7 @@ class VectorContainerPolicy : public BasePolicy<
         assume(dst != nullptr);
         AllocTraits::construct(a, dst, Super::moveValue(*src));
         if (kIsMap) {
-          AllocTraits::destroy(a, launder(src));
+          AllocTraits::destroy(a, std::launder(src));
         } else {
           AllocTraits::destroy(a, src);
         }

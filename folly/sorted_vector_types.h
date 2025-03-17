@@ -715,8 +715,8 @@ class sorted_vector_set : detail::growth_policy_wrapper<GrowthPolicy> {
   }
 
   void swap(sorted_vector_set& o) noexcept(
-      IsNothrowSwappable<Compare>::value&& noexcept(
-          std::declval<Container&>().swap(o.m_.cont_))) {
+      std::is_nothrow_swappable_v<Compare> &&
+      noexcept(std::declval<Container&>().swap(o.m_.cont_))) {
     using std::swap; // Allow ADL for swap(); fall back to std::swap().
     Compare& a = m_;
     Compare& b = o.m_;
@@ -760,22 +760,22 @@ class sorted_vector_set : detail::growth_policy_wrapper<GrowthPolicy> {
     explicit EBO(const Compare& c, const Allocator& alloc) noexcept(
         std::is_nothrow_default_constructible<Container>::value)
         : Compare(c), cont_(alloc) {}
-    EBO(const EBO& other, const Allocator& alloc)
-    noexcept(std::is_nothrow_constructible<
-             Container,
-             const Container&,
-             const Allocator&>::value)
+    EBO(const EBO& other, const Allocator& alloc) noexcept(
+        std::is_nothrow_constructible<
+            Container,
+            const Container&,
+            const Allocator&>::value)
         : Compare(static_cast<const Compare&>(other)),
           cont_(other.cont_, alloc) {}
-    EBO(EBO&& other, const Allocator& alloc)
-    noexcept(std::is_nothrow_constructible<
-             Container,
-             Container&&,
-             const Allocator&>::value)
+    EBO(EBO&& other, const Allocator& alloc) noexcept(
+        std::is_nothrow_constructible<
+            Container,
+            Container&&,
+            const Allocator&>::value)
         : Compare(static_cast<Compare&&>(other)),
           cont_(std::move(other.cont_), alloc) {}
-    EBO(const Compare& c, Container&& cont)
-    noexcept(std::is_nothrow_move_constructible<Container>::value)
+    EBO(const Compare& c, Container&& cont) noexcept(
+        std::is_nothrow_move_constructible<Container>::value)
         : Compare(c), cont_(std::move(cont)) {}
     Container cont_;
   } m_;
@@ -858,11 +858,11 @@ inline void swap(
 }
 
 template <typename T>
-FOLLY_INLINE_VARIABLE constexpr bool is_sorted_vector_set_v =
+inline constexpr bool is_sorted_vector_set_v =
     detail::is_instantiation_of_v<sorted_vector_set, T>;
 
 template <typename T>
-struct is_sorted_vector_set : bool_constant<is_sorted_vector_set_v<T>> {};
+struct is_sorted_vector_set : std::bool_constant<is_sorted_vector_set_v<T>> {};
 
 #if FOLLY_HAS_MEMORY_RESOURCE
 
@@ -1226,6 +1226,16 @@ class sorted_vector_map : detail::growth_policy_wrapper<GrowthPolicy> {
     return itAndInserted;
   }
 
+  template <class M>
+  iterator insert_or_assign(const_iterator hint, const key_type& k, M&& obj) {
+    return insert_or_assign_impl(hint, k, std::forward<M>(obj));
+  }
+
+  template <class M>
+  iterator insert_or_assign(const_iterator hint, key_type&& k, M&& obj) {
+    return insert_or_assign_impl(hint, std::move(k), std::forward<M>(obj));
+  }
+
   size_type erase(const key_type& key) {
     iterator it = find(key);
     if (it == end()) {
@@ -1440,22 +1450,22 @@ class sorted_vector_map : detail::growth_policy_wrapper<GrowthPolicy> {
     explicit EBO(const value_compare& c, const Allocator& alloc) noexcept(
         std::is_nothrow_default_constructible<Container>::value)
         : value_compare(c), cont_(alloc) {}
-    EBO(const EBO& other, const Allocator& alloc)
-    noexcept(std::is_nothrow_constructible<
-             Container,
-             const Container&,
-             const Allocator&>::value)
+    EBO(const EBO& other, const Allocator& alloc) noexcept(
+        std::is_nothrow_constructible<
+            Container,
+            const Container&,
+            const Allocator&>::value)
         : value_compare(static_cast<const value_compare&>(other)),
           cont_(other.cont_, alloc) {}
-    EBO(EBO&& other, const Allocator& alloc)
-    noexcept(std::is_nothrow_constructible<
-             Container,
-             Container&&,
-             const Allocator&>::value)
+    EBO(EBO&& other, const Allocator& alloc) noexcept(
+        std::is_nothrow_constructible<
+            Container,
+            Container&&,
+            const Allocator&>::value)
         : value_compare(static_cast<value_compare&&>(other)),
           cont_(std::move(other.cont_), alloc) {}
-    EBO(const Compare& c, Container&& cont)
-    noexcept(std::is_nothrow_move_constructible<Container>::value)
+    EBO(const Compare& c, Container&& cont) noexcept(
+        std::is_nothrow_move_constructible<Container>::value)
         : value_compare(c), cont_(std::move(cont)) {}
     Container cont_;
   } m_;
@@ -1565,6 +1575,34 @@ class sorted_vector_map : detail::growth_policy_wrapper<GrowthPolicy> {
     }
     return std::make_pair(it, false);
   }
+
+  template <class K, class M>
+  iterator insert_or_assign_impl(const_iterator hint, K&& k, M&& obj) {
+    if (hint == end() || key_comp()(k, hint->first)) {
+      if (hint == begin() || key_comp()((hint - 1)->first, k)) {
+        auto it = get_growth_policy().increase_capacity(m_.cont_, hint);
+        return m_.cont_.emplace(
+            it, std::make_pair(std::forward<K>(k), std::forward<M>(obj)));
+      } else {
+        return insert_or_assign(std::forward<K>(k), std::forward<M>(obj)).first;
+      }
+    }
+
+    if (key_comp()(hint->first, k)) {
+      if (hint + 1 == end() || key_comp()(k, (hint + 1)->first)) {
+        auto it = get_growth_policy().increase_capacity(m_.cont_, hint + 1);
+        return m_.cont_.emplace(
+            it, std::make_pair(std::forward<K>(k), std::forward<M>(obj)));
+      } else {
+        return insert_or_assign(std::forward<K>(k), std::forward<M>(obj)).first;
+      }
+    }
+
+    // Value and *hint did not compare, so they are equal keys.
+    auto it = begin() + std::distance(cbegin(), hint);
+    it->second = std::forward<M>(obj);
+    return it;
+  }
 };
 
 // Swap function that can be found using ADL.
@@ -1575,11 +1613,11 @@ inline void swap(
 }
 
 template <typename T>
-FOLLY_INLINE_VARIABLE constexpr bool is_sorted_vector_map_v =
+inline constexpr bool is_sorted_vector_map_v =
     detail::is_instantiation_of_v<sorted_vector_map, T>;
 
 template <typename T>
-struct is_sorted_vector_map : bool_constant<is_sorted_vector_map_v<T>> {};
+struct is_sorted_vector_map : std::bool_constant<is_sorted_vector_map_v<T>> {};
 
 #if FOLLY_HAS_MEMORY_RESOURCE
 

@@ -33,7 +33,6 @@
 #include <folly/container/Access.h>
 #include <folly/io/async/ssl/OpenSSLUtils.h>
 #include <folly/portability/OpenSSL.h>
-#include <folly/ssl/OpenSSLLockTypes.h>
 #include <folly/ssl/OpenSSLPtrTypes.h>
 
 namespace folly {
@@ -348,6 +347,16 @@ class SSLContext {
       folly::StringPiece cert, folly::StringPiece pkey);
 
   /**
+   * Sets cert chain and key. Guaranteed to throw if cert and private key
+   * mismatch.
+   *
+   * @param certChain A vector of X509 certificates.
+   * @param key A private key.
+   */
+  virtual void setCertChainKeyPair(
+      std::vector<ssl::X509UniquePtr>&& certChain, ssl::EvpPkeyUniquePtr&& key);
+
+  /**
    * Load cert and key from files. Guaranteed to throw if cert and key mismatch.
    * Equivalent to calling loadCertificate() and loadPrivateKey().
    *
@@ -449,7 +458,7 @@ class SSLContext {
   virtual std::shared_ptr<ssl::PasswordCollector> passwordCollector() {
     return collector_;
   }
-#if FOLLY_OPENSSL_HAS_SNI
+
   /**
    * Provide SNI support
    */
@@ -502,7 +511,6 @@ class SSLContext {
    */
   typedef std::function<void(SSL* ssl)> ClientHelloCallback;
   virtual void addClientHelloCallback(const ClientHelloCallback& cb);
-#endif // FOLLY_OPENSSL_HAS_SNI
 
   /**
    * Create an SSL object from this context.
@@ -519,7 +527,6 @@ class SSLContext {
    */
   void setOptions(long options);
 
-#if FOLLY_OPENSSL_HAS_ALPN
   std::string getAdvertisedNextProtocols() const;
 
   /**
@@ -573,8 +580,6 @@ class SSLContext {
   void setAlpnAllowMismatch(bool allowMismatch) {
     alpnAllowMismatch_ = allowMismatch;
   }
-
-#endif // FOLLY_OPENSSL_HAS_ALPN
 
   /**
    * Gets the underlying SSL_CTX for advanced usage
@@ -657,8 +662,6 @@ class SSLContext {
   void setAllowNoDheKex(bool flag);
 #endif
 
-  [[deprecated("Use folly::ssl::init")]] static void initializeOpenSSL();
-
  protected:
   SSL_CTX* ctx_;
 
@@ -676,10 +679,8 @@ class SSLContext {
   bool checkPeerName_;
   std::string peerFixedName_;
   std::shared_ptr<ssl::PasswordCollector> collector_;
-#if FOLLY_OPENSSL_HAS_SNI
   ServerNameCallback serverNameCb_;
   std::vector<ClientHelloCallback> clientHelloCbs_;
-#endif
 
   ClientProtocolFilterCallback clientProtoFilter_{nullptr};
 
@@ -687,8 +688,6 @@ class SSLContext {
 
   std::unique_ptr<SSLAcceptRunner> sslAcceptRunner_;
   std::unique_ptr<OpenSSLTicketHandler> ticketHandler_;
-
-#if FOLLY_OPENSSL_HAS_ALPN
 
   struct AdvertisedNextProtocolsItem {
     unsigned char* protocols;
@@ -717,11 +716,8 @@ class SSLContext {
 
   bool alpnAllowMismatch_{true};
 
-#endif // FOLLY_OPENSSL_HAS_ALPN
-
   static int passwordCallback(char* password, int size, int, void* data);
 
-#if FOLLY_OPENSSL_HAS_SNI
   /**
    * The function that will be called directly from openssl
    * in order for the application to get the tlsext_hostname just after
@@ -734,7 +730,6 @@ class SSLContext {
    */
   static int baseServerNameOpenSSLCallback(
       SSL* ssl, int* al /* alert (return value) */, void* data);
-#endif
 
   std::string providedCiphersString_;
 

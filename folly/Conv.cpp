@@ -18,6 +18,8 @@
 
 #include <array>
 
+#include <folly/lang/SafeAssert.h>
+
 namespace folly {
 namespace detail {
 
@@ -238,7 +240,7 @@ constexpr const std::array<
 
 // Check if ASCII is really ASCII
 using IsAscii =
-    bool_constant<'A' == 65 && 'Z' == 90 && 'a' == 97 && 'z' == 122>;
+    std::bool_constant<'A' == 65 && 'Z' == 90 && 'a' == 97 && 'z' == 122>;
 
 // The code in this file that uses tolower() really only cares about
 // 7-bit ASCII characters, so we can take a nice shortcut here.
@@ -767,8 +769,9 @@ ConversionError makeConversionError(ConversionCode code, StringPiece input) {
   static_assert(
       std::is_unsigned<std::underlying_type<ConversionCode>::type>::value,
       "ConversionCode should be unsigned");
-  assert((std::size_t)code < kErrorStrings.size());
-  const ErrorString& err = kErrorStrings[(std::size_t)code];
+  auto index = static_cast<std::size_t>(code);
+  FOLLY_SAFE_CHECK(index < kErrorStrings.size(), "code=", uint64_t(index));
+  const ErrorString& err = kErrorStrings[index];
   if (code == ConversionCode::EMPTY_INPUT_STRING && input.empty()) {
     return {err.string, code};
   }

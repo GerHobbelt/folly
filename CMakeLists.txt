@@ -332,6 +332,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif()
 
 set(PCLMUL_FILES
+  ${FOLLY_DIR}/external/fast-crc32/avx512_crc32c_v8s3x4.cpp
   ${FOLLY_DIR}/external/fast-crc32/sse_crc32c_v8s3x3.cpp
   ${FOLLY_DIR}/hash/detail/ChecksumDetail.cpp
   ${FOLLY_DIR}/hash/detail/Crc32CombineDetail.cpp
@@ -886,13 +887,11 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST lang_aligned_test SOURCES AlignedTest.cpp
       TEST lang_badge_test SOURCES BadgeTest.cpp
       TEST lang_bits_test SOURCES BitsTest.cpp
-      TEST lang_byte_test SOURCES ByteTest.cpp
       TEST lang_c_string_test SOURCES CStringTest.cpp
       TEST lang_cast_test SOURCES CastTest.cpp
       TEST lang_checked_math_test SOURCES CheckedMathTest.cpp
       TEST lang_exception_test SOURCES ExceptionTest.cpp
       TEST lang_extern_test SOURCES ExternTest.cpp
-      TEST lang_launder_test SOURCES LaunderTest.cpp
       TEST lang_ordering_test SOURCES OrderingTest.cpp
       TEST lang_pretty_test SOURCES PrettyTest.cpp
       TEST lang_propagate_const_test SOURCES PropagateConstTest.cpp

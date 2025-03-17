@@ -415,11 +415,10 @@ class CursorBase {
    *
    * @methodset Consumers
    *
-   * This function does not perform bounds checking: there must be enough bytes
-   * left in the cursor to populate T.
-   *
    * This function only works with types that are bit-copyable: it calls memcpy
    * to reinterpret bits from the IOBuf as T.
+   *
+   * @throws out_of_range if there aren't enough bytes left in the cursor.
    */
   template <class T>
   T read() {
@@ -827,6 +826,11 @@ class CursorBase {
         crtBuf_ == nullptr ||
         (std::size_t)(crtEnd_ - crtBegin_) <= crtBuf_->length());
   }
+
+  CursorBase(CursorBase const&) = default;
+  CursorBase(CursorBase&&) = default;
+  CursorBase& operator=(CursorBase const&) = default;
+  CursorBase& operator=(CursorBase&&) = default;
 
   ~CursorBase() = default;
 

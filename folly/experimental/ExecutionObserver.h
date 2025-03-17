@@ -62,4 +62,19 @@ class ExecutionObserver
   virtual void stopped(uintptr_t id, CallbackType callbackType) noexcept = 0;
 };
 
+class ExecutionObserverScopeGuard {
+ public:
+  ExecutionObserverScopeGuard(
+      folly::ExecutionObserver::List* observerList,
+      void* id,
+      folly::ExecutionObserver::CallbackType callbackType);
+
+  ~ExecutionObserverScopeGuard();
+
+ private:
+  folly::ExecutionObserver::List* observerList_;
+  uintptr_t id_;
+  folly::ExecutionObserver::CallbackType callbackType_;
+};
+
 } // namespace folly

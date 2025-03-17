@@ -45,14 +45,18 @@ using FBStringFBVector = fbvector<fbstring>;
 TEST(fbvector, clause233613Ambiguity) {
   fbvector<int> v(10, 20);
   EXPECT_EQ(v.size(), 10);
-  FOR_EACH (i, v) { EXPECT_EQ(*i, 20); }
+  FOR_EACH (i, v) {
+    EXPECT_EQ(*i, 20);
+  }
 }
 
 TEST(fbvector, clause2336111Ambiguity) {
   fbvector<int> v;
   v.assign(10, 20);
   EXPECT_EQ(v.size(), 10);
-  FOR_EACH (i, v) { EXPECT_EQ(*i, 20); }
+  FOR_EACH (i, v) {
+    EXPECT_EQ(*i, 20);
+  }
 }
 
 TEST(fbvector, clause233626) {
@@ -257,7 +261,6 @@ TEST(FBVector, zeroLen) {
   fbvector<int> fb7(fb6.begin(), fb6.end());
 }
 
-#if __cpp_deduction_guides >= 201611
 TEST(FBVector, deductionGuides) {
   fbvector<int> v(3);
 
@@ -267,7 +270,6 @@ TEST(FBVector, deductionGuides) {
   fbvector y{v.begin(), v.end()};
   EXPECT_TRUE((std::is_same_v<fbvector<fbvector<int>::iterator>, decltype(y)>));
 }
-#endif
 
 TEST(FBVector, erase) {
   fbvector<int> v(3);

@@ -35,7 +35,11 @@
 static_assert(FOLLY_CPLUSPLUS >= 201703L, "__cplusplus >= 201703L");
 
 #if defined(__GNUC__) && !defined(__clang__)
-static_assert(__GNUC__ >= 7, "__GNUC__ >= 7");
+static_assert(__GNUC__ >= 8, "__GNUC__ >= 8");
+#endif
+
+#if defined(_MSC_VER)
+static_assert(_MSC_VER >= 1920);
 #endif
 
 #if defined(_MSC_VER) || defined(_CPPLIB_VER)
@@ -553,7 +557,6 @@ constexpr auto kCpplibVer = 0;
 #if defined(FOLLY_CFG_NO_COROUTINES)
 #define FOLLY_HAS_COROUTINES 0
 #else
-#if FOLLY_CPLUSPLUS >= 201703L
 // folly::coro requires C++17 support
 #if defined(__NVCC__)
 // For now, NVCC matches other compilers but does not offer coroutines.
@@ -584,16 +587,7 @@ constexpr auto kCpplibVer = 0;
 #else
 #define FOLLY_HAS_COROUTINES 0
 #endif
-#else
-#define FOLLY_HAS_COROUTINES 0
-#endif // FOLLY_CPLUSPLUS >= 201703L
 #endif // FOLLY_CFG_NO_COROUTINES
-
-#if __cpp_inline_variables >= 201606L || FOLLY_CPLUSPLUS >= 201703L
-#define FOLLY_INLINE_VARIABLE inline
-#else
-#define FOLLY_INLINE_VARIABLE
-#endif
 
 // C++20 consteval
 #if FOLLY_CPLUSPLUS >= 202002L

@@ -87,7 +87,7 @@ struct BaseFormatterTuple;
 template <size_t... I, typename... A>
 struct BaseFormatterTuple<std::index_sequence<I...>, A...>
     : BaseFormatterTupleIndexedValue<I, A>... {
-  explicit BaseFormatterTuple(in_place_t, A&&... a)
+  explicit BaseFormatterTuple(std::in_place_t, A&&... a)
       : BaseFormatterTupleIndexedValue<I, A>{static_cast<A&&>(a)}... {}
 };
 
@@ -162,7 +162,7 @@ class BaseFormatterImpl<
 
  private:
   template <typename T, typename D = typename std::decay<T>::type>
-  using IsSizeable = bool_constant<
+  using IsSizeable = std::bool_constant<
       std::is_integral<D>::value && !std::is_same<D, bool>::value>;
 
   template <class Callback>
@@ -188,7 +188,7 @@ class BaseFormatterImpl<
  protected:
   explicit BaseFormatterImpl(StringPiece str, Args&&... args)
       : detail::BaseFormatterBase{str},
-        values_(in_place, static_cast<Args&&>(args)...) {}
+        values_(std::in_place, static_cast<Args&&>(args)...) {}
 
   // Not copyable
   BaseFormatterImpl(const BaseFormatterImpl&) = delete;
