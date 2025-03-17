@@ -121,12 +121,14 @@
 
 #define FOLLY_SDT_DEFINE_SEMAPHORE(provider, name)                             \
   extern "C" {                                                                 \
-    volatile unsigned short FOLLY_SDT_SEMAPHORE(provider, name)                \
-    __attribute__((section(FOLLY_SDT_SEMAPHORE_SECTION), used)) = 0;           \
+    FOLLY_NAME_RESOLVABLE volatile unsigned short                              \
+      FOLLY_SDT_SEMAPHORE(provider, name)                                      \
+      __attribute__((section(FOLLY_SDT_SEMAPHORE_SECTION), used)) = 0;         \
   }
 
 #define FOLLY_SDT_DECLARE_SEMAPHORE(provider, name)                            \
-  extern "C" volatile unsigned short FOLLY_SDT_SEMAPHORE(provider, name)
+  extern "C" FOLLY_NAME_RESOLVABLE volatile unsigned short                     \
+    FOLLY_SDT_SEMAPHORE(provider, name)
 
 #define FOLLY_SDT_SEMAPHORE_NOTE_0(provider, name)                             \
   FOLLY_SDT_ASM_1(     FOLLY_SDT_ASM_ADDR 0) /*No Semaphore*/                  \
@@ -170,6 +172,7 @@
   FOLLY_SDT_ASM_1(     .endif)
 
 // Main probe Macro.
+// NOLINTBEGIN(cppcoreguidelines-avoid-do-while)
 #define FOLLY_SDT_PROBE(provider, name, has_semaphore, n, arglist)             \
   do {                                                                         \
     __asm__ __volatile__ (                                                     \
@@ -182,6 +185,7 @@
       FOLLY_SDT_BASE_CONTENT                                                   \
     );                                                                         \
   } while (0)
+// NOLINTEND(cppcoreguidelines-avoid-do-while)
 
 // Helper Macros to handle variadic arguments.
 #define FOLLY_SDT_NARG_(_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...) N

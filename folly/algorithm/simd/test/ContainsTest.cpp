@@ -19,24 +19,81 @@
 #include <folly/algorithm/simd/detail/ContainsImpl.h>
 
 #include <folly/portability/GTest.h>
+#include <folly/test/TestUtils.h>
 
-namespace folly::simd {
-namespace not_invocable_tests {
+#include <list>
+#include <vector>
 
-static_assert(!std::is_invocable_v< //
-              folly::simd::contains_fn,
-              std::vector<double>&,
-              double>);
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<double>&,
+        double>);
 
-static_assert(std::is_invocable_v< //
-              folly::simd::contains_fn,
-              std::vector<int>&,
-              int>);
+static_assert( //
+    std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        int>);
 
-} // namespace not_invocable_tests
+static_assert( //
+    std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        int>);
+
+static_assert( //
+    std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        std::int16_t>);
+
+static_assert( //
+    std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        std::uint16_t>);
+
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        std::uint32_t>);
+
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<int>&,
+        std::int64_t>);
+
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<std::uint32_t>&,
+        std::int16_t>);
+
+static_assert( //
+    std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::vector<std::uint32_t>&,
+        std::uint16_t>);
+
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        std::list<std::int32_t>&,
+        std::int32_t>);
+
+static_assert( //
+    !std::is_invocable_v< //
+        folly::simd::contains_fn,
+        const std::vector<std::vector<std::int32_t>>&,
+        std::vector<std::int32_t>>);
 
 template <typename T>
 struct ContainsTest : ::testing::Test {};
+
+struct ContainsTestSpeicalCases : ::testing::Test {};
 
 using TypesToTest = ::testing::Types<
     std::int8_t,
@@ -50,9 +107,15 @@ using TypesToTest = ::testing::Types<
 
 TYPED_TEST_SUITE(ContainsTest, TypesToTest);
 
+namespace folly::simd {
+using detail::containsImplHandwritten;
+using detail::containsImplStd;
+using detail::hasHandwrittenContains;
+} // namespace folly::simd
+
 template <typename T>
 void testSimdContainsVerify(folly::span<T> haystack, T needle, bool expected) {
-  bool actual1 = simd::contains(haystack, needle);
+  bool actual1 = folly::simd::contains(haystack, needle);
   ASSERT_EQ(expected, actual1);
 
   auto const_haystack = folly::static_span_cast<const T>(haystack);
@@ -60,13 +123,12 @@ void testSimdContainsVerify(folly::span<T> haystack, T needle, bool expected) {
   if constexpr (
       std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> ||
       std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>) {
-    bool actual2 = simd::detail::containsImplStd(const_haystack, needle);
+    bool actual2 = folly::simd::containsImplStd(const_haystack, needle);
     ASSERT_EQ(expected, actual2) << " haystack.size(): " << haystack.size();
   }
 
-  if constexpr (simd::detail::hasHandwrittenContains<T>()) {
-    bool actual3 =
-        simd::detail::containsImplHandwritten(const_haystack, needle);
+  if constexpr (folly::simd::detail::hasHandwrittenContains<T>()) {
+    bool actual3 = folly::simd::containsImplHandwritten(const_haystack, needle);
     ASSERT_EQ(expected, actual3) << " haystack.size(): " << haystack.size();
   }
 }
@@ -76,21 +138,34 @@ TYPED_TEST(ContainsTest, Basic) {
 
   for (std::size_t size = 0; size != 100; ++size) {
     std::vector<T> buf(size, T{0});
-    for (std::size_t offset = 0; offset != std::min(32UL, buf.size());
-         ++offset) {
+    auto const bound = std::min(std::size_t(32), size);
+    for (std::size_t offset = 0; offset != bound; ++offset) {
       folly::span<T> haystack(buf.data() + offset, buf.data() + buf.size());
       T needle{1};
-      ASSERT_NO_FATAL_FAILURE(
-          testSimdContainsVerify(haystack, needle, /*expected*/ false));
+      testSimdContainsVerify(haystack, needle, /*expected*/ false);
 
       for (auto& x : haystack) {
         x = needle;
-        ASSERT_NO_FATAL_FAILURE(
-            testSimdContainsVerify(haystack, needle, /*expected*/ true));
+        testSimdContainsVerify(haystack, needle, /*expected*/ true);
         x = 0;
       }
     }
   }
 }
 
-} // namespace folly::simd
+TEST_F(ContainsTestSpeicalCases, Pointers) {
+  std::array ints = {0, 1, 2, 3};
+  std::array ptrs = {&ints[0], &ints[1], &ints[3]};
+  EXPECT_TRUE(folly::simd::contains(ptrs, &ints[1]));
+  EXPECT_FALSE(folly::simd::contains(ptrs, &ints[2]));
+}
+
+TEST_F(ContainsTestSpeicalCases, AsanShouldDetectInvalidRange) {
+  SKIP_IF(!folly::kIsSanitizeAddress);
+
+  std::vector<int> v;
+  v.resize(3);
+  folly::span<int> s(v.data() + 1, v.data() + 4);
+  EXPECT_DEATH(
+      (folly::simd::contains(s, 0)), "AddressSanitizer: heap-buffer-overflow");
+}

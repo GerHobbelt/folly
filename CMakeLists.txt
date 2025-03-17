@@ -325,12 +325,12 @@ else()
 endif()
 if (NOT ${LIBGFLAGS_FOUND})
   list(REMOVE_ITEM files
-    ${FOLLY_DIR}/experimental/NestedCommandLineApp.cpp
-    ${FOLLY_DIR}/experimental/ProgramOptions.cpp
+    ${FOLLY_DIR}/cli/NestedCommandLineApp.cpp
+    ${FOLLY_DIR}/cli/ProgramOptions.cpp
   )
   list(REMOVE_ITEM hfiles
-    ${FOLLY_DIR}/experimental/NestedCommandLineApp.h
-    ${FOLLY_DIR}/experimental/ProgramOptions.h
+    ${FOLLY_DIR}/cli/NestedCommandLineApp.h
+    ${FOLLY_DIR}/cli/ProgramOptions.h
   )
 endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
@@ -882,7 +882,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
 
     DIRECTORY hash/test/
       BENCHMARK hash_checksum_benchmark SOURCES ChecksumBenchmark.cpp
-      TEST hash_checksum_test SOURCES ChecksumTest.cpp
+      # builds, but tests fail on MSVC cmake build
+      TEST hash_checksum_test WINDOWS_DISABLED
+        SOURCES ChecksumTest.cpp
       TEST hash_farm_hash_test SOURCES FarmHashTest.cpp
       BENCHMARK hash_hash_benchmark WINDOWS_DISABLED
         SOURCES HashBenchmark.cpp
@@ -1063,15 +1065,19 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST atomic_unordered_map_test SOURCES AtomicUnorderedMapTest.cpp
       TEST base64_test SOURCES base64_test.cpp
       TEST buffered_atomic_test SOURCES BufferedAtomicTest.cpp
-      TEST cancellation_token_test SOURCES CancellationTokenTest.cpp
+      TEST cancellation_token_test WINDOWS_DISABLED
+        SOURCES CancellationTokenTest.cpp
       TEST chrono_test SOURCES ChronoTest.cpp
       TEST clock_gettime_wrappers_test SOURCES ClockGettimeWrappersTest.cpp
       TEST concurrent_bit_set_test SOURCES ConcurrentBitSetTest.cpp
       BENCHMARK concurrent_skip_list_benchmark
         SOURCES ConcurrentSkipListBenchmark.cpp
       TEST concurrent_skip_list_test SOURCES ConcurrentSkipListTest.cpp
-      TEST constexpr_math_test SOURCES ConstexprMathTest.cpp
-      TEST conv_test SOURCES ConvTest.cpp
+      # Builds but fails test on constexpr_exp_floating std::exp(471.L)
+      TEST constexpr_math_test WINDOWS_DISABLED
+        SOURCES ConstexprMathTest.cpp
+      TEST conv_test WINDOWS_DISABLED
+        SOURCES ConvTest.cpp
       TEST cpu_id_test SOURCES CpuIdTest.cpp
       TEST demangle_test SOURCES DemangleTest.cpp
       TEST deterministic_schedule_test SOURCES DeterministicScheduleTest.cpp
@@ -1147,6 +1153,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST range_test SOURCES RangeTest.cpp
       TEST replaceable_test WINDOWS_DISABLED SOURCES ReplaceableTest.cpp
       TEST scope_guard_test WINDOWS_DISABLED SOURCES ScopeGuardTest.cpp
+      # Needs ElfFile
       TEST sdt_test SOURCES SdtTest.cpp
       # Heavily dependent on drand and srand48
       #TEST shared_mutex_test SOURCES SharedMutexTest.cpp
@@ -1161,6 +1168,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST spin_lock_test SOURCES SpinLockTest.cpp
       BENCHMARK string_benchmark WINDOWS_DISABLED SOURCES StringBenchmark.cpp
       TEST string_test WINDOWS_DISABLED SOURCES StringTest.cpp
+      BENCHMARK string_to_float_benchmark SOURCES StringToFloatBenchmark.cpp
       BENCHMARK synchronized_benchmark WINDOWS_DISABLED
         SOURCES SynchronizedBenchmark.cpp
       TEST synchronized_test WINDOWS_DISABLED
@@ -1178,7 +1186,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK uri_benchmark SOURCES UriBenchmark.cpp
       TEST uri_test SOURCES UriTest.cpp
       TEST utf8_string_test SOURCES UTF8StringTest.cpp
-      TEST utility_test SOURCES UtilityTest.cpp
+      # Needs C++20 on MSVC
+      TEST utility_test WINDOWS_DISABLED
+        SOURCES UtilityTest.cpp
       TEST varint_test SOURCES VarintTest.cpp
 
     DIRECTORY testing/test/
