@@ -160,6 +160,7 @@ class IoUring : public AsyncBase {
   void initializeContext() override;
 
  protected:
+  int drainPollFd() override;
   int submitOne(AsyncBase::Op* op) override;
   int submitRange(Range<AsyncBase::Op**> ops) override;
 
@@ -174,7 +175,7 @@ class IoUring : public AsyncBase {
   IoUringOp::Options options_;
   struct io_uring_params params_;
   struct io_uring ioRing_;
-  SharedMutex submitMutex_;
+  mutable SharedMutex submitMutex_;
 };
 
 using IoUringQueue = AsyncBaseQueue;

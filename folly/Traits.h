@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// @author: Andrei Alexandrescu
-
 #pragma once
 
 #include <cstdint>
@@ -86,6 +84,29 @@ using index_constant = std::integral_constant<std::size_t, I>;
 template <typename...>
 FOLLY_INLINE_VARIABLE constexpr bool always_false = false;
 
+namespace detail {
+
+template <typename Void, typename T>
+struct require_sizeof_ {
+  static_assert(always_false<T>, "application of sizeof fails substitution");
+};
+template <typename T>
+struct require_sizeof_<decltype(void(sizeof(T))), T> {
+  template <typename V>
+  using apply_t = V;
+
+  static constexpr std::size_t size = sizeof(T);
+};
+
+} // namespace detail
+
+//  require_sizeof
+//
+//  Equivalent to sizeof, but with a static_assert enforcing that application of
+//  sizeof would not fail substitution.
+template <typename T>
+constexpr std::size_t require_sizeof = detail::require_sizeof_<void, T>::size;
+
 //  is_unbounded_array_v
 //  is_unbounded_array
 //
@@ -141,6 +162,19 @@ struct is_similar_instantiation
 
 } // namespace detail
 
+//  member_pointer_traits
+//
+//  For a member-pointer, reveals its constituent member-type and object-type.
+//
+//  Works for both member-object-pointer and member-function-pointer.
+template <typename>
+struct member_pointer_traits;
+template <typename M, typename O>
+struct member_pointer_traits<M O::*> {
+  using member_type = M;
+  using object_type = O;
+};
+
 namespace detail {
 
 struct is_constexpr_default_constructible_ {
@@ -160,8 +194,8 @@ struct is_constexpr_default_constructible_ {
   static std::true_type sfinae(T*);
   static std::false_type sfinae(void*);
   template <typename T>
-  static constexpr bool apply = sizeof(T) &&
-      decltype(sfinae(static_cast<T*>(nullptr)))::value;
+  static constexpr bool apply =
+      !require_sizeof<T> || decltype(sfinae(static_cast<T*>(nullptr)))::value;
 };
 
 } // namespace detail
@@ -369,7 +403,7 @@ struct detected_<void_t<T<A...>>, D, T, A...> {
 //
 //  mimic: std::experimental::detected_or, Library Fundamentals TS v2
 //
-//  Note: not resilient agaist incomplete types; may violate ODR.
+//  Note: not resilient against incomplete types; may violate ODR.
 template <typename D, template <typename...> class T, typename... A>
 using detected_or = detail::detected_<void, D, T, A...>;
 
@@ -382,7 +416,7 @@ using detected_or = detail::detected_<void, D, T, A...>;
 //
 //  mimic: std::experimental::detected_or_t, Library Fundamentals TS v2
 //
-//  Note: not resilient agaist incomplete types; may violate ODR.
+//  Note: not resilient against incomplete types; may violate ODR.
 template <typename D, template <typename...> class T, typename... A>
 using detected_or_t = typename detected_or<D, T, A...>::type;
 
@@ -395,7 +429,7 @@ using detected_or_t = typename detected_or<D, T, A...>::type;
 //
 //  mimic: std::experimental::detected_t, Library Fundamentals TS v2
 //
-//  Note: not resilient agaist incomplete types; may violate ODR.
+//  Note: not resilient against incomplete types; may violate ODR.
 template <template <typename...> class T, typename... A>
 using detected_t = detected_or_t<nonesuch, T, A...>;
 
@@ -413,7 +447,7 @@ using detected_t = detected_or_t<nonesuch, T, A...>;
 //  mimic: std::experimental::is_detected, std::experimental::is_detected_v,
 //    Library Fundamentals TS v2
 //
-//  Note: not resilient agaist incomplete types; may violate ODR.
+//  Note: not resilient against incomplete types; may violate ODR.
 //
 //  Note: the trait type is_detected differs here by being deferred.
 template <template <typename...> class T, typename... A>
@@ -599,17 +633,15 @@ struct IsNothrowSwappable
 template <class T>
 struct IsRelocatable
     : std::conditional<
-          sizeof(T) && is_detected_v<traits_detail::detect_IsRelocatable, T>,
+          !require_sizeof<T> ||
+              is_detected_v<traits_detail::detect_IsRelocatable, T>,
           traits_detail::has_true_IsRelocatable<T>,
-          // TODO add this line (and some tests for it) when we
-          // upgrade to gcc 4.7
-          // std::is_trivially_move_constructible<T>::value ||
           is_trivially_copyable<T>>::type {};
 
 template <class T>
 struct IsZeroInitializable
     : std::conditional<
-          sizeof(T) &&
+          !require_sizeof<T> ||
               is_detected_v<traits_detail::detect_IsZeroInitializable, T>,
           traits_detail::has_true_IsZeroInitializable<T>,
           bool_constant< //
@@ -698,7 +730,7 @@ struct is_transparent : bool_constant<is_transparent_v<T>> {};
 namespace detail {
 
 template <typename T, typename = void>
-FOLLY_INLINE_VARIABLE constexpr bool is_allocator_ = !sizeof(T);
+FOLLY_INLINE_VARIABLE constexpr bool is_allocator_ = !require_sizeof<T>;
 template <typename T>
 FOLLY_INLINE_VARIABLE constexpr bool is_allocator_<
     T,
@@ -809,10 +841,7 @@ using IsOneOf = StrictDisjunction<std::is_same<T, Ts>...>;
  * Complementary type traits for integral comparisons.
  *
  * For instance, `if(x < 0)` yields an error in clang for unsigned types
- *  when -Werror is used due to -Wtautological-compare
- *
- *
- * @author: Marcelo Juchem <marcelo@fb.com>
+ * when -Werror is used due to -Wtautological-compare
  */
 
 // same as `x < 0`
@@ -1057,19 +1086,21 @@ using type_pack_element_fallback = _t<decltype(type_pack_element_test<I>::impl(
 
 } // namespace traits_detail
 
+//  type_pack_element_t
+//
+//  In the type pack Ts..., the Ith element.
+//
+//  Wraps the builtin __type_pack_element where the builtin is available; where
+//  not, implemented directly.
+//
+//  Under gcc, the builtin is available but does not mangle. Therefore, this
+//  trait must not be used anywhere it might be subject to mangling, such as in
+//  a return-type expression.
+
 #if FOLLY_HAS_BUILTIN(__type_pack_element)
 
-#if __clang__
 template <std::size_t I, typename... Ts>
 using type_pack_element_t = __type_pack_element<I, Ts...>;
-#else
-template <std::size_t I, typename... Ts>
-struct type_pack_element {
-  using type = __type_pack_element<I, Ts...>;
-};
-template <std::size_t I, typename... Ts>
-using type_pack_element_t = typename type_pack_element<I, Ts...>::type;
-#endif
 
 #else
 
@@ -1077,5 +1108,112 @@ template <std::size_t I, typename... Ts>
 using type_pack_element_t = traits_detail::type_pack_element_fallback<I, Ts...>;
 
 #endif
+
+//  type_pack_size_v
+//
+//  The size of a type pack.
+//
+//  A metafunction around sizeof...(Ts).
+template <typename... Ts>
+FOLLY_INLINE_VARIABLE constexpr std::size_t type_pack_size_v = sizeof...(Ts);
+
+//  type_pack_size_t
+//
+//  The size of a type pack.
+//
+//  A metafunction around index_constant<sizeof...(Ts)>.
+template <typename... Ts>
+using type_pack_size_t = index_constant<sizeof...(Ts)>;
+
+/**
+ * Checks the requirements that the Hasher class must satisfy
+ * in order to be used with the standard library containers,
+ * for example `std::unordered_set<T, Hasher>`.
+ */
+template <typename T, typename Hasher>
+using is_hasher_usable = std::integral_constant<
+    bool,
+    std::is_default_constructible_v<Hasher> &&
+        std::is_copy_constructible_v<Hasher> &&
+        std::is_move_constructible_v<Hasher> &&
+        std::is_invocable_r_v<size_t, Hasher, const T&>>;
+
+/**
+ * Checks the requirements that the Hasher class must satisfy
+ * in order to be used with the standard library containers,
+ * for example `std::unordered_set<T, Hasher>`.
+ */
+template <typename T, typename Hasher>
+FOLLY_INLINE_VARIABLE constexpr bool is_hasher_usable_v =
+    is_hasher_usable<T, Hasher>::value;
+
+/**
+ * Checks that the given hasher template's specialization for the given type
+ * is usable with the standard library containters,
+ * for example `std::unordered_set<T, Hasher<T>>`.
+ */
+template <typename T, template <typename U> typename Hasher = std::hash>
+using is_hashable =
+    std::integral_constant<bool, is_hasher_usable_v<T, Hasher<T>>>;
+
+/**
+ * Checks that the given hasher template's specialization for the given type
+ * is usable with the standard library containters,
+ * for example `std::unordered_set<T, Hasher<T>>`.
+ */
+template <typename T, template <typename U> typename Hasher = std::hash>
+FOLLY_INLINE_VARIABLE constexpr bool is_hashable_v =
+    is_hashable<T, Hasher>::value;
+
+namespace detail {
+
+template <typename T, typename>
+using enable_hasher_helper_impl = T;
+
+} // namespace detail
+
+/**
+ * A helper for defining partial specializations of a hasher class that rely
+ * on other partial specializations of that hasher class being usable.
+ *
+ * Example:
+ * ```
+ * template <typename T>
+ * struct hash<
+ *     folly::enable_std_hash_helper<folly::Optional<T>, remove_const_t<T>>> {
+ *   size_t operator()(folly::Optional<T> const& obj) const {
+ *     return static_cast<bool>(obj) ? hash<remove_const_t<T>>()(*obj) : 0;
+ *   }
+ * };
+ * ```
+ */
+template <
+    typename T,
+    template <typename U>
+    typename Hasher,
+    typename... Dependencies>
+using enable_hasher_helper = detail::enable_hasher_helper_impl<
+    T,
+    std::enable_if_t<
+        StrictConjunction<is_hashable<Dependencies, Hasher>...>::value>>;
+
+/**
+ * A helper for defining partial specializations of a hasher class that rely
+ * on other partial specializations of that hasher class being usable.
+ *
+ * Example:
+ * ```
+ * template <typename T>
+ * struct hash<
+ *     folly::enable_std_hash_helper<folly::Optional<T>, remove_const_t<T>>> {
+ *   size_t operator()(folly::Optional<T> const& obj) const {
+ *     return static_cast<bool>(obj) ? hash<remove_const_t<T>>()(*obj) : 0;
+ *   }
+ * };
+ * ```
+ */
+template <typename T, typename... Dependencies>
+using enable_std_hash_helper =
+    enable_hasher_helper<T, std::hash, Dependencies...>;
 
 } // namespace folly

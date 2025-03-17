@@ -106,8 +106,8 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
    * be executed before it returns. Specifically, IOThreadPoolExecutor's stop()
    * behaves like join().
    */
-  void stop();
-  void join();
+  virtual void stop();
+  virtual void join();
 
   /**
    * Execute f against all ThreadPoolExecutors, primarily for retrieving and
@@ -139,21 +139,9 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
    * expensive.
    */
   std::chrono::nanoseconds getUsedCpuTime() const {
-    SharedMutex::ReadHolder r{&threadListLock_};
+    std::shared_lock r{threadListLock_};
     return threadList_.getUsedCpuTime();
   }
-
-  struct TaskStats {
-    TaskStats() : expired(false), waitTime(0), runTime(0), requestId(0) {}
-    bool expired;
-    std::chrono::nanoseconds waitTime;
-    std::chrono::nanoseconds runTime;
-    std::chrono::steady_clock::time_point enqueueTime;
-    uint64_t requestId;
-  };
-
-  using TaskStatsCallback = std::function<void(const TaskStats&)>;
-  void subscribeToTaskStats(TaskStatsCallback cb);
 
   /**
    * Base class for threads created with ThreadPoolExecutor.
@@ -172,15 +160,56 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
    */
   class Observer {
    public:
-    virtual void threadStarted(ThreadHandle*) = 0;
-    virtual void threadStopped(ThreadHandle*) = 0;
+    virtual ~Observer() = default;
+
+    virtual void threadStarted(ThreadHandle*) {}
+    virtual void threadStopped(ThreadHandle*) {}
     virtual void threadPreviouslyStarted(ThreadHandle* h) { threadStarted(h); }
     virtual void threadNotYetStopped(ThreadHandle* h) { threadStopped(h); }
-    virtual ~Observer() = default;
   };
 
   virtual void addObserver(std::shared_ptr<Observer>);
   virtual void removeObserver(std::shared_ptr<Observer>);
+
+  struct TaskInfo {
+    int8_t priority;
+    uint64_t requestId = 0;
+    std::chrono::steady_clock::time_point enqueueTime;
+    uint64_t taskId;
+  };
+
+  struct DequeuedTaskInfo : TaskInfo {
+    std::chrono::nanoseconds waitTime{0}; // Dequeue time - enqueueTime.
+  };
+
+  struct ProcessedTaskInfo : DequeuedTaskInfo {
+    bool expired = false;
+    std::chrono::nanoseconds runTime{0};
+  };
+
+  class TaskObserver {
+   public:
+    virtual ~TaskObserver() = default;
+
+    virtual void taskEnqueued(const TaskInfo& /* info */) noexcept {}
+    virtual void taskDequeued(const DequeuedTaskInfo& /* info */) noexcept {}
+    virtual void taskProcessed(const ProcessedTaskInfo& /* info */) noexcept {}
+
+   private:
+    friend class ThreadPoolExecutor;
+
+    TaskObserver* next_ = nullptr;
+  };
+
+  // For performance reasons, TaskObservers can be added but not removed. All
+  // added observers will be destroyed on executor destruction.
+  void addTaskObserver(std::unique_ptr<TaskObserver> taskObserver);
+
+  // TODO(ott): Migrate call sites to the TaskObserver interface.
+  using TaskStats = ProcessedTaskInfo;
+  using TaskStatsCallback = std::function<void(const TaskStats&)>;
+  [[deprecated("Use addTaskObserver()")]] void subscribeToTaskStats(
+      TaskStatsCallback cb);
 
   void setThreadDeathTimeout(std::chrono::milliseconds timeout) {
     threadTimeout_ = timeout;
@@ -192,18 +221,15 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
   // Prerequisite: threadListLock_ writelocked
   void removeThreads(size_t n, bool isJoin);
 
-  struct TaskStatsCallbackRegistry;
-
   struct //
       alignas(folly::cacheline_align_v) //
       alignas(folly::AtomicStruct<std::chrono::steady_clock::time_point>) //
       Thread : public ThreadHandle {
-    explicit Thread(ThreadPoolExecutor* pool)
+    explicit Thread()
         : id(nextId++),
           handle(),
           idle(true),
-          lastActiveTime(std::chrono::steady_clock::now()),
-          taskStatsCallbacks(pool->taskStatsCallbacks_) {}
+          lastActiveTime(std::chrono::steady_clock::now()) {}
 
     ~Thread() override = default;
 
@@ -215,10 +241,9 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
     std::atomic<bool> idle;
     folly::AtomicStruct<std::chrono::steady_clock::time_point> lastActiveTime;
     folly::Baton<> startupBaton;
-    std::shared_ptr<TaskStatsCallbackRegistry> taskStatsCallbacks;
   };
 
-  typedef std::shared_ptr<Thread> ThreadPtr;
+  using ThreadPtr = std::shared_ptr<Thread>;
 
   struct Task {
     struct Expiration {
@@ -229,15 +254,37 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
     Task(
         Func&& func,
         std::chrono::milliseconds expiration,
-        Func&& expireCallback);
+        Func&& expireCallback,
+        int8_t pri = 0);
+
+    int8_t priority() const { return priority_; }
 
     Func func_;
     std::chrono::steady_clock::time_point enqueueTime_;
     std::shared_ptr<folly::RequestContext> context_;
     std::unique_ptr<Expiration> expiration_;
+
+   private:
+    friend class ThreadPoolExecutor;
+
+    int8_t priority_;
+    uint64_t taskId_;
   };
 
+  static void fillTaskInfo(const Task& task, TaskInfo& info);
+  void registerTaskEnqueue(const Task& task);
+  template <class F>
+  void forEachTaskObserver(F&& f) const {
+    auto* taskObserver = taskObservers_.load(std::memory_order_acquire);
+    while (taskObserver != nullptr) {
+      f(*taskObserver);
+      taskObserver = taskObserver->next_;
+    }
+  }
+
   void runTask(const ThreadPtr& thread, Task&& task);
+
+  virtual void validateNumThreads(size_t /* numThreads */) {}
 
   // The function that will be bound to pool threads. It must call
   // thread->startupBaton.post() when it's ready to consume work.
@@ -254,14 +301,21 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
   // require a lock on ThreadPoolExecutor.
   void joinStoppedThreads(size_t n);
 
+  // To implement shutdown.
+  void stopAndJoinAllThreads(bool isJoin);
+
   // Create a suitable Thread struct
-  virtual ThreadPtr makeThread() { return std::make_shared<Thread>(this); }
+  virtual ThreadPtr makeThread() { return std::make_shared<Thread>(); }
 
   static void registerThreadPoolExecutor(ThreadPoolExecutor* tpe);
   static void deregisterThreadPoolExecutor(ThreadPoolExecutor* tpe);
 
   // Prerequisite: threadListLock_ readlocked or writelocked
   virtual size_t getPendingTaskCountImpl() const = 0;
+
+  // Called with threadListLock_ readlocked or writelocked.
+  virtual void handleObserverRegisterThread(ThreadHandle*, Observer&) {}
+  virtual void handleObserverUnregisterThread(ThreadHandle*, Observer&) {}
 
   class ThreadList {
    public:
@@ -321,15 +375,10 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
   std::shared_ptr<ThreadFactory> threadFactory_;
 
   ThreadList threadList_;
-  SharedMutex threadListLock_;
+  mutable SharedMutex threadListLock_;
   StoppedThreadQueue stoppedThreads_;
   std::atomic<bool> isJoin_{false}; // whether the current downsizing is a join
 
-  struct TaskStatsCallbackRegistry {
-    folly::ThreadLocal<bool> inCallback;
-    folly::Synchronized<std::vector<TaskStatsCallback>> callbackList;
-  };
-  std::shared_ptr<TaskStatsCallbackRegistry> taskStatsCallbacks_;
   std::vector<std::shared_ptr<Observer>> observers_;
   folly::ThreadPoolListHook threadPoolHook_;
 
@@ -349,13 +398,18 @@ class ThreadPoolExecutor : public DefaultKeepAliveExecutor {
   std::atomic<size_t> threadsToJoin_{0};
   std::atomic<std::chrono::milliseconds> threadTimeout_;
 
-  void joinKeepAliveOnce() {
+  bool joinKeepAliveOnce() {
     if (!std::exchange(keepAliveJoined_, true)) {
       joinKeepAlive();
+      return true;
     }
+    return false;
   }
 
   bool keepAliveJoined_{false};
+
+ private:
+  std::atomic<TaskObserver*> taskObservers_{nullptr};
 };
 
 } // namespace folly

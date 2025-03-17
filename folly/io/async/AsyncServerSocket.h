@@ -23,8 +23,8 @@
 #include <exception>
 #include <functional>
 #include <memory>
+#include <variant>
 #include <vector>
-#include <boost/variant.hpp>
 
 #include <folly/ExceptionWrapper.h>
 #include <folly/SocketAddress.h>
@@ -107,7 +107,9 @@ class AsyncServerSocket : public DelayedDestruction, public AsyncSocketBase {
      * probably because of some error encountered.
      */
     virtual void onConnectionDropped(
-        const NetworkSocket socket, const SocketAddress& addr) noexcept = 0;
+        const NetworkSocket socket,
+        const SocketAddress& addr,
+        const std::string& errorMsg = "") noexcept = 0;
 
     /**
      * onConnectionEnqueuedForAcceptorCallback() is called when the
@@ -821,6 +823,12 @@ class AsyncServerSocket : public DelayedDestruction, public AsyncSocketBase {
     return connectionEventCallback_;
   }
 
+  /**
+   * Index of the callback with the same EVB as the current
+   * AsyncServerSocket instance, if any
+   */
+  int getLocalCallbackIndex() const { return localCallbackIndex_; }
+
  protected:
   /**
    * Protected destructor.
@@ -855,7 +863,7 @@ class AsyncServerSocket : public DelayedDestruction, public AsyncSocketBase {
         RemoteAcceptor& acceptor) noexcept;
   };
 
-  using QueueMessage = boost::variant<NewConnMessage, ErrorMessage>;
+  using QueueMessage = std::variant<NewConnMessage, ErrorMessage>;
 
   /**
    * A class to receive notifications to invoke AcceptCallback objects
@@ -870,7 +878,7 @@ class AsyncServerSocket : public DelayedDestruction, public AsyncSocketBase {
     struct Consumer {
       AtomicNotificationQueueTaskStatus operator()(
           QueueMessage&& msg) noexcept {
-        return boost::apply_visitor(
+        return std::visit(
             [this](auto&& visitMsg) { return visitMsg(acceptor_); }, msg);
       }
 
@@ -1009,6 +1017,7 @@ class AsyncServerSocket : public DelayedDestruction, public AsyncSocketBase {
   BackoffTimeout* backoffTimeout_;
   std::vector<CallbackInfo> callbacks_;
   CallbackAssignFunction callbackAssignFunc_;
+  int localCallbackIndex_{-1};
   bool keepAliveEnabled_;
   bool reusePortEnabled_{false};
   // SO_REUSEADDR is enabled by default

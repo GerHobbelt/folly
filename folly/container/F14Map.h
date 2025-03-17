@@ -22,9 +22,6 @@
  * F14FastMap conditionally works like F14ValueMap or F14VectorMap
  *
  * See F14.md
- *
- * @author Nathan Bronson <ngbronson@fb.com>
- * @author Xiao Shi       <xshi@fb.com>
  */
 
 #include <cstddef>
@@ -41,15 +38,17 @@
 
 #include <folly/container/F14Map-fwd.h>
 #include <folly/container/Iterator.h>
+#include <folly/container/detail/F14MapFallback.h>
 #include <folly/container/detail/F14Policy.h>
 #include <folly/container/detail/F14Table.h>
 #include <folly/container/detail/Util.h>
+
+namespace folly {
 
 #if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
 //////// Common case for supported platforms
 
-namespace folly {
 namespace f14 {
 namespace detail {
 
@@ -261,7 +260,7 @@ class F14BasicMap {
    * Remove all elements.
    * @methodset Modifiers
    *
-   * Does not free heap-allocated memory; capacity is unchanged.
+   * Frees heap-allocated memory; bucket_count is returned to 0.
    */
   void clear() noexcept { table_.clear(); }
 
@@ -433,12 +432,28 @@ class F14BasicMap {
 
   template <typename M>
   std::pair<iterator, bool> insert_or_assign(
+      const F14HashedKey<key_type, hasher>& hashedKey, M&& obj) {
+    return insert_or_assign(
+        hashedKey.getHashToken(), hashedKey.getKey(), std::forward<M>(obj));
+  }
+
+  template <typename M>
+  std::pair<iterator, bool> insert_or_assign(
       F14HashToken const& token, key_type&& key, M&& obj) {
     auto rv = try_emplace_token(token, std::move(key), std::forward<M>(obj));
     if (!rv.second) {
       rv.first->second = std::forward<M>(obj);
     }
     return rv;
+  }
+
+  template <typename M>
+  std::pair<iterator, bool> insert_or_assign(
+      F14HashedKey<key_type, hasher>&& hashedKey, M&& obj) {
+    return insert_or_assign(
+        hashedKey.getHashToken(),
+        std::move(hashedKey.getKey()),
+        std::forward<M>(obj));
   }
 
   template <typename M>
@@ -537,6 +552,15 @@ class F14BasicMap {
 
   template <typename... Args>
   std::pair<iterator, bool> try_emplace_token(
+      const F14HashedKey<key_type, hasher>& hashedKey, Args&&... args) {
+    return try_emplace_token(
+        hashedKey.getHashToken(),
+        hashedKey.getKey(),
+        std::forward<Args>(args)...);
+  }
+
+  template <typename... Args>
+  std::pair<iterator, bool> try_emplace_token(
       F14HashToken const& token, key_type&& key, Args&&... args) {
     auto rv = table_.tryEmplaceValueWithToken(
         token,
@@ -545,6 +569,15 @@ class F14BasicMap {
         std::forward_as_tuple(std::move(key)),
         std::forward_as_tuple(std::forward<Args>(args)...));
     return std::make_pair(table_.makeIter(rv.first), rv.second);
+  }
+
+  template <typename... Args>
+  std::pair<iterator, bool> try_emplace_token(
+      F14HashedKey<key_type, hasher>&& hashedKey, Args&&... args) {
+    return try_emplace_token(
+        hashedKey.getHashToken(),
+        std::move(hashedKey.getKey()),
+        std::forward<Args>(args)...);
   }
 
   template <typename... Args>
@@ -831,9 +864,21 @@ class F14BasicMap {
     return table_.makeIter(table_.find(token, key));
   }
 
+  FOLLY_ALWAYS_INLINE iterator
+  find(const F14HashedKey<key_type, hasher>& hashedKey) {
+    return table_.makeIter(
+        table_.find(hashedKey.getHashToken(), hashedKey.getKey()));
+  }
+
   FOLLY_ALWAYS_INLINE const_iterator
   find(F14HashToken const& token, key_type const& key) const {
     return table_.makeConstIter(table_.find(token, key));
+  }
+
+  FOLLY_ALWAYS_INLINE const_iterator
+  find(F14HashedKey<key_type, hasher> const& hashedKey) const {
+    return table_.makeIter(
+        table_.find(hashedKey.getHashToken(), hashedKey.getKey()));
   }
 
   template <typename K>
@@ -877,6 +922,11 @@ class F14BasicMap {
   FOLLY_ALWAYS_INLINE bool contains(
       F14HashToken const& token, key_type const& key) const {
     return !table_.find(token, key).atEnd();
+  }
+
+  FOLLY_ALWAYS_INLINE bool contains(
+      const F14HashedKey<key_type, hasher>& hashedKey) const {
+    return !table_.find(hashedKey.getHashToken(), hashedKey.getKey()).atEnd();
   }
 
   template <typename K>
@@ -1114,8 +1164,8 @@ class F14ValueMap
     this->table_.visitContiguousItemRanges(visitor);
   }
 };
+#endif // FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
-#if FOLLY_HAS_DEDUCTION_GUIDES
 template <
     typename InputIt,
     typename Hasher = f14::DefaultHasher<iterator_key_type_t<InputIt>>,
@@ -1199,8 +1249,8 @@ template <
 F14ValueMap(
     std::initializer_list<std::pair<Key, Mapped>>, std::size_t, Hasher, Alloc)
     -> F14ValueMap<Key, Mapped, Hasher, f14::DefaultKeyEqual<Key>, Alloc>;
-#endif
 
+#if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 template <
     typename Key,
     typename Mapped,
@@ -1263,8 +1313,8 @@ class F14NodeMap
 
   // TODO extract and node_handle insert
 };
+#endif // FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
-#if FOLLY_HAS_DEDUCTION_GUIDES
 template <
     typename InputIt,
     typename Hasher = f14::DefaultHasher<iterator_key_type_t<InputIt>>,
@@ -1347,8 +1397,8 @@ template <
 F14NodeMap(
     std::initializer_list<std::pair<Key, Mapped>>, std::size_t, Hasher, Alloc)
     -> F14NodeMap<Key, Mapped, Hasher, f14::DefaultKeyEqual<Key>, Alloc>;
-#endif
 
+#if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 namespace f14 {
 namespace detail {
 template <
@@ -1670,8 +1720,8 @@ class F14VectorMap : public f14::detail::F14VectorMapImpl<
     return {c.rbegin(), c.rend()};
   }
 };
+#endif // FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
-#if FOLLY_HAS_DEDUCTION_GUIDES
 template <
     typename InputIt,
     typename Hasher = f14::DefaultHasher<iterator_key_type_t<InputIt>>,
@@ -1754,8 +1804,8 @@ template <
 F14VectorMap(
     std::initializer_list<std::pair<Key, Mapped>>, std::size_t, Hasher, Alloc)
     -> F14VectorMap<Key, Mapped, Hasher, f14::DefaultKeyEqual<Key>, Alloc>;
-#endif
 
+#if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 /**
  * F14FastMap is, under the hood, either an F14ValueMap or an F14VectorMap.
  * F14FastMap chooses which of these two representations to use based on the
@@ -1805,8 +1855,8 @@ class F14FastMap : public std::conditional_t<
     this->table_.swap(rhs.table_);
   }
 };
+#endif // if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
-#if FOLLY_HAS_DEDUCTION_GUIDES
 template <
     typename InputIt,
     typename Hasher = f14::DefaultHasher<iterator_key_type_t<InputIt>>,
@@ -1889,13 +1939,8 @@ template <
 F14FastMap(
     std::initializer_list<std::pair<Key, Mapped>>, std::size_t, Hasher, Alloc)
     -> F14FastMap<Key, Mapped, Hasher, f14::DefaultKeyEqual<Key>, Alloc>;
-#endif
+
 } // namespace folly
-
-#endif // if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
-
-//////// Compatibility for unsupported platforms (not x86_64 and not aarch64)
-#include <folly/container/detail/F14MapFallback.h>
 
 namespace folly {
 namespace f14 {

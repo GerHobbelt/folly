@@ -15,23 +15,6 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 # We use the GoogleTest module if it is available (only in CMake 3.9+)
 # It requires CMP0054 and CMP0057 to be enabled.
-
-IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
-  MESSAGE(STATUS "current platform: Linux ")
-ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Windows")
-  MESSAGE(STATUS "current platform: Windows")
-ELSEIF (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
-  MESSAGE(STATUS "current platform: FreeBSD")
-ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
-  MESSAGE(STATUS "current platform: MacOS")
-  set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl" )
-  set(OPENSSL_LIBRARIES "/usr/local/opt/openssl/lib" )
-  set(OPENSSL_INCLUDE_DIR "/usr/local/opt/openssl/include" )
-ELSE ()
-  MESSAGE(STATUS "other platform: ${CMAKE_SYSTEM_NAME}")
-ENDIF (CMAKE_SYSTEM_NAME MATCHES "Linux")
-
-
 if (POLICY CMP0054)
   cmake_policy(SET CMP0054 NEW)
 endif()
@@ -239,7 +222,6 @@ list(APPEND hfiles
   ${FOLLY_DIR}/io/async/test/Util.h
   ${FOLLY_DIR}/synchronization/test/Semaphore.h
   ${FOLLY_DIR}/test/DeterministicSchedule.h
-  ${FOLLY_DIR}/test/JsonTestUtil.h
   ${FOLLY_DIR}/test/TestUtils.h
 )
 
@@ -350,6 +332,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 endif()
 
 set(PCLMUL_FILES
+  ${FOLLY_DIR}/external/fast-crc32/sse_crc32c_v8s3x3.cpp
   ${FOLLY_DIR}/hash/detail/ChecksumDetail.cpp
   ${FOLLY_DIR}/hash/detail/Crc32CombineDetail.cpp
   ${FOLLY_DIR}/hash/detail/Crc32cDetail.cpp
@@ -377,7 +360,7 @@ list(APPEND folly_base_files
   ${files} ${hfiles}
 )
 
-if (NOT MSVC)
+if (IS_X86_64_ARCH AND NOT MSVC)
   set_property(
     SOURCE
     ${FOLLY_DIR}/memcpy.S
@@ -444,7 +427,7 @@ target_link_libraries(folly PUBLIC folly_deps)
 # Test utilities exported for use by downstream projects
 add_library(folly_test_util
   ${FOLLY_DIR}/test/DeterministicSchedule.cpp
-  ${FOLLY_DIR}/test/JsonTestUtil.cpp
+  ${FOLLY_DIR}/json/JsonTestUtil.cpp
 )
 set_property(TARGET folly_test_util PROPERTY VERSION ${PACKAGE_VERSION})
 target_link_libraries(folly_test_util
@@ -688,8 +671,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK edf_thread_pool_executor_benchmark
         SOURCES EDFThreadPoolExecutorBenchmark.cpp
       TEST executor_test SOURCES ExecutorTest.cpp
-      TEST fiber_io_executor_test 
-        SOURCES FiberIOExecutorTest.cpp
+      TEST fiber_io_executor_test SOURCES FiberIOExecutorTest.cpp
       TEST global_executor_test SOURCES GlobalExecutorTest.cpp
       TEST serial_executor_test WINDOWS_DISABLED
         SOURCES SerialExecutorTest.cpp
@@ -710,14 +692,12 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST autotimer_test SOURCES AutoTimerTest.cpp
       TEST bits_test_2 SOURCES BitsTest.cpp
       TEST bitvector_test SOURCES BitVectorCodingTest.cpp
-      TEST dynamic_parser_test SOURCES DynamicParserTest.cpp
       TEST eliasfano_test SOURCES EliasFanoCodingTest.cpp
       TEST event_count_test SOURCES EventCountTest.cpp
       # FunctionSchedulerTest has a lot of timing-dependent checks,
       # and tends to fail on heavily loaded systems.
       TEST function_scheduler_test BROKEN SOURCES FunctionSchedulerTest.cpp
       TEST future_dag_test SOURCES FutureDAGTest.cpp
-      TEST json_schema_test SOURCES JSONSchemaTest.cpp
       TEST lock_free_ring_buffer_test SOURCES LockFreeRingBufferTest.cpp
       #TEST nested_command_line_app_test SOURCES NestedCommandLineAppTest.cpp
       #TEST program_options_test SOURCES ProgramOptionsTest.cpp
@@ -726,8 +706,6 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       #TEST read_mostly_shared_ptr_test SOURCES ReadMostlySharedPtrTest.cpp
       #TEST ref_count_test SOURCES RefCountTest.cpp
       TEST select64_test SOURCES Select64Test.cpp
-      BENCHMARK string_keyed_benchmark SOURCES StringKeyedBenchmark.cpp
-      TEST stringkeyed_test SOURCES StringKeyedTest.cpp
       TEST test_util_test SOURCES TestUtilTest.cpp
       TEST tuple_ops_test SOURCES TupleOpsTest.cpp
 
@@ -1016,9 +994,6 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST demangle_test SOURCES DemangleTest.cpp
       TEST deterministic_schedule_test SOURCES DeterministicScheduleTest.cpp
       TEST discriminated_ptr_test SOURCES DiscriminatedPtrTest.cpp
-      TEST dynamic_test SOURCES DynamicTest.cpp
-      TEST dynamic_converter_test SOURCES DynamicConverterTest.cpp
-      TEST dynamic_other_test SOURCES DynamicOtherTest.cpp
       TEST endian_test SOURCES EndianTest.cpp
       TEST exception_test SOURCES ExceptionTest.cpp
       BENCHMARK exception_wrapper_benchmark WINDOWS_DISABLED
@@ -1059,12 +1034,6 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST indestructible_test SOURCES IndestructibleTest.cpp
       TEST indexed_mem_pool_test BROKEN
         SOURCES IndexedMemPoolTest.cpp
-      # MSVC Preprocessor stringizing raw string literals bug
-      TEST json_test WINDOWS_DISABLED SOURCES JsonTest.cpp
-      BENCHMARK json_benchmark SOURCES JsonBenchmark.cpp
-      TEST json_pointer_test SOURCES json_pointer_test.cpp
-      TEST json_patch_test SOURCES json_patch_test.cpp
-      TEST json_other_test SOURCES JsonOtherTest.cpp
       TEST lazy_test SOURCES LazyTest.cpp
       TEST locks_test SOURCES SpinLockTest.cpp
       TEST math_test SOURCES MathTest.cpp
@@ -1124,6 +1093,19 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK uri_benchmark SOURCES UriBenchmark.cpp
       TEST uri_test SOURCES UriTest.cpp
       TEST varint_test SOURCES VarintTest.cpp
+
+    DIRECTORY json/test/
+      TEST dynamic_converter_test SOURCES DynamicConverterTest.cpp
+      TEST dynamic_other_test SOURCES DynamicOtherTest.cpp
+      TEST dynamic_parser_test SOURCES DynamicParserTest.cpp
+      TEST dynamic_test SOURCES DynamicTest.cpp
+      # MSVC Preprocessor stringizing raw string literals bug
+      TEST json_test WINDOWS_DISABLED SOURCES JsonTest.cpp
+      BENCHMARK json_benchmark SOURCES JsonBenchmark.cpp
+      TEST json_other_test SOURCES JsonOtherTest.cpp
+      TEST json_patch_test SOURCES json_patch_test.cpp
+      TEST json_pointer_test SOURCES json_pointer_test.cpp
+      TEST json_schema_test SOURCES JSONSchemaTest.cpp
   )
 
   if (${LIBSODIUM_FOUND})

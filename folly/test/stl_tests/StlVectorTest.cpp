@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// @author Nicholas Ormrod <njormrod@fb.com>
-
 /*
 
 This file contains an extensive STL compliance test suite for an STL vector
@@ -1338,7 +1336,7 @@ std::pair<typename Vector::iterator, string> iterSpotter(Vector& v, int i) {
         msg = "a[1]";
         break;
       }
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 0:
       it = v.begin();
       msg = "a.begin";
@@ -1351,7 +1349,7 @@ std::pair<typename Vector::iterator, string> iterSpotter(Vector& v, int i) {
         msg = "a[-1]";
         break;
       }
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 3:
       it = v.end();
       msg = "a.end";

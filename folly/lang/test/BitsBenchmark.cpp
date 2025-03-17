@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// @author Tudor Bosman (tudorb@fb.com)
-
 #include <folly/lang/Bits.h>
 
 #include <algorithm>
@@ -86,17 +84,17 @@ uint64_t partialLoadUnalignedSwitch(const char* p, size_t l) {
   switch (l) {
     case 7:
       r = static_cast<uint64_t>(folly::loadUnaligned<uint32_t>(p + 3)) << 24;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 3:
       r |= static_cast<uint64_t>(folly::loadUnaligned<uint16_t>(p + 1)) << 8;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 1:
       r |= *p;
       break;
 
     case 6:
       r = static_cast<uint64_t>(folly::loadUnaligned<uint16_t>(p + 4)) << 32;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case 4:
       r |= folly::loadUnaligned<uint32_t>(p);
       break;

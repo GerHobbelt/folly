@@ -22,6 +22,8 @@
 #include <boost/iterator/iterator_adaptor.hpp>
 #include <folly/portability/SysTypes.h>
 
+#include <folly/portability/SysTypes.h>
+
 namespace folly {
 
 template <class BaseIter>

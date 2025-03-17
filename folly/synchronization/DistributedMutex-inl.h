@@ -34,6 +34,7 @@
 #include <folly/functional/Invoke.h>
 #include <folly/lang/Align.h>
 #include <folly/lang/Bits.h>
+#include <folly/lang/Exception.h>
 #include <folly/portability/Asm.h>
 #include <folly/synchronization/AtomicNotification.h>
 #include <folly/synchronization/AtomicUtil.h>
@@ -145,7 +146,7 @@ constexpr auto kExceptionOccurred = std::uint32_t{0b1010};
 
 // Alias for processor's time-stamp counter value to help distinguish it from
 // other integers
-using CpuTicks = std::int64_t;
+using CpuTicks = std::uint64_t;
 // The number of spins that we are allowed to do before we resort to marking a
 // thread as having slept
 //
@@ -836,7 +837,7 @@ std::uint64_t publish(
     std::uint64_t spins,
     CpuTicks current,
     CpuTicks previous,
-    CpuTicks deadline,
+    CpuTicks elapsed,
     bool& shouldPublish,
     Waiter& waiter,
     std::uint32_t waitMode) {
@@ -868,8 +869,8 @@ std::uint64_t publish(
   // timestamp to force the waking thread to skip us
   auto now = ((waitMode == kCombineWaiting) && !spins)
       ? std::numeric_limits<CpuTicks>::max()
-      : (current < deadline) ? current
-                             : CpuTicks{0};
+      : (elapsed < kMaxSpinTime) ? current
+                                 : CpuTicks{0};
   // the wait mode information is published in the bottom 8 bits of the futex
   // word, the rest contains time information as computed above.  Overflows are
   // not really a correctness concern because time publishing is only a
@@ -889,10 +890,11 @@ bool spin(Waiter& waiter, std::uint32_t& sig, std::uint32_t mode) {
   auto waitMode = (mode == kCombineUninitialized) ? kCombineWaiting : kWaiting;
   auto previous = CpuTicks{0};
   auto shouldPublish = false;
-  for (auto current = time(), deadline = current + kMaxSpinTime;;
-       previous = current, current = time()) {
+  // elapsed is unsigned and will intentionally underflows if time goes back
+  for (CpuTicks start = time(), current = start, elapsed = 0;;
+       previous = current, current = time(), elapsed = current - start) {
     auto signal = publish(
-        spins++, current, previous, deadline, shouldPublish, waiter, waitMode);
+        spins++, current, previous, elapsed, shouldPublish, waiter, waitMode);
 
     // if we got skipped, make a note of it and return if we got a skipped
     // signal or a signal to wake up
@@ -907,7 +909,7 @@ bool spin(Waiter& waiter, std::uint32_t& sig, std::uint32_t mode) {
 
     // if we are under the spin threshold, pause to allow the other
     // hyperthread to run.  If not, then sleep
-    if (current < deadline) {
+    if (elapsed < kMaxSpinTime) {
       asm_volatile_pause();
     } else {
       std::this_thread::sleep_for(folly::detail::Sleeper::kMinYieldingSleep);
@@ -1341,12 +1343,12 @@ FOLLY_ALWAYS_INLINE std::uintptr_t tryCombine(
   // members of the waiter struct, so it's fine to use those values here
   if (isWaitingCombiner(value) &&
       (iteration <= kMaxCombineIterations || preempted(value, now))) {
-    try {
-      task();
-      waiter->futex_.store(kCombined, std::memory_order_release);
-    } catch (...) {
-      transferCurrentException(waiter);
-    }
+    catch_exception(
+        [&] {
+          task();
+          waiter->futex_.store(kCombined, std::memory_order_release);
+        },
+        [&] { transferCurrentException(waiter); });
     return next;
   }
 

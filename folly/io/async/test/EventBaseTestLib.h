@@ -34,29 +34,6 @@
 #include <folly/system/ThreadId.h>
 #include <folly/system/ThreadName.h>
 
-#define FOLLY_SKIP_IF_NULLPTR_BACKEND_WITH_OPTS(evb, opts)  \
-  std::unique_ptr<EventBase> evb##Ptr;                      \
-  try {                                                     \
-    auto factory = [] {                                     \
-      auto backend = TypeParam::getBackend();               \
-      if (!backend) {                                       \
-        throw std::runtime_error("backend not available");  \
-      }                                                     \
-      return backend;                                       \
-    };                                                      \
-    auto evbOpts = opts;                                    \
-    evb##Ptr = std::make_unique<EventBase>(                 \
-        opts.setBackendFactory(std::move(factory)));        \
-  } catch (const std::runtime_error& e) {                   \
-    if (std::string("backend not available") == e.what()) { \
-      SKIP() << "Backend not available";                    \
-    }                                                       \
-  }                                                         \
-  EventBase& evb = *evb##Ptr.get()
-
-#define FOLLY_SKIP_IF_NULLPTR_BACKEND(evb) \
-  FOLLY_SKIP_IF_NULLPTR_BACKEND_WITH_OPTS(evb, EventBase::Options())
-
 ///////////////////////////////////////////////////////////////////////////
 // Tests for read and write events
 ///////////////////////////////////////////////////////////////////////////
@@ -81,40 +58,19 @@ class EventBaseTestBase : public ::testing::Test {
 
 template <typename T>
 class EventBaseTest : public EventBaseTestBase {
- public:
-  EventBaseTest() = default;
+ protected:
+  void SetUp() override {
+    SKIP_IF(T::getBackend() == nullptr) << "Backend not available";
+  }
+
+  std::unique_ptr<EventBase> makeEventBase(
+      folly::EventBase::Options opts = folly::EventBase::Options()) {
+    return std::make_unique<EventBase>(
+        opts.setBackendFactory([] { return T::getBackend(); }));
+  }
 };
 
 TYPED_TEST_SUITE_P(EventBaseTest);
-
-template <typename T>
-class EventBaseTest1 : public EventBaseTestBase {
- public:
-  EventBaseTest1() = default;
-};
-
-template <class Factory>
-std::unique_ptr<EventBase> getEventBase(
-    folly::EventBase::Options opts = folly::EventBase::Options()) {
-  try {
-    auto factory = [] {
-      auto backend = Factory::getBackend();
-      if (!backend) {
-        throw std::runtime_error("backend not available");
-      }
-      return backend;
-    };
-    return std::make_unique<EventBase>(
-        opts.setBackendFactory(std::move(factory)));
-  } catch (const std::runtime_error& e) {
-    if (std::string("backend not available") == e.what()) {
-      return nullptr;
-    }
-    throw;
-  }
-}
-
-TYPED_TEST_SUITE_P(EventBaseTest1);
 
 enum { BUF_SIZE = 4096 };
 
@@ -207,13 +163,19 @@ FOLLY_ALWAYS_INLINE void scheduleEvents(
 
 class TestObserver : public folly::ExecutionObserver {
  public:
-  virtual void starting(uintptr_t /* id */) noexcept override {
+  virtual void starting(
+      uintptr_t /* id */,
+      folly::ExecutionObserver::CallbackType /* callbackType */) noexcept
+      override {
     if (nestedStart_ == 0) {
       nestedStart_ = 1;
     }
     numStartingCalled_++;
   }
-  virtual void stopped(uintptr_t /* id */) noexcept override {
+  virtual void stopped(
+      uintptr_t /* id */,
+      folly::ExecutionObserver::CallbackType /* callbackType */) noexcept
+      override {
     nestedStart_--;
     numStoppedCalled_++;
   }
@@ -297,20 +259,24 @@ TYPED_TEST_P(EventBaseTest, EventBaseThread) {
   };
 
   {
-    auto evbPtr = getEventBase<TypeParam>();
+    auto evbPtr = this->makeEventBase();
     EXPECT_TRUE(evbPtr->isInEventBaseThread());
     testInLoop(*evbPtr, true);
     evbPtr->checkIsInEventBaseThread();
   }
 
   {
-    auto evbPtr =
-        getEventBase<TypeParam>(EventBase::Options().setStrictLoopThread(true));
+    auto evbPtr = this->makeEventBase();
+    EXPECT_TRUE(evbPtr->isInEventBaseThread());
+    evbPtr->setStrictLoopThread();
     EXPECT_FALSE(evbPtr->isInEventBaseThread());
     testInLoop(*evbPtr, false);
     EXPECT_DEATH(
         evbPtr->checkIsInEventBaseThread(),
         ".*This logic must be executed in the event base thread.*");
+    EXPECT_DEATH(
+        evbPtr->terminateLoopSoon(),
+        ".*terminateLoopSoon\\(\\) not allowed in strict loop thread mode.*");
   }
 }
 
@@ -318,8 +284,7 @@ TYPED_TEST_P(EventBaseTest, EventBaseThread) {
  * Test a READ event
  */
 TYPED_TEST_P(EventBaseTest, ReadEvent) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -367,8 +332,7 @@ TYPED_TEST_P(EventBaseTest, ReadEvent) {
  * Test (READ | PERSIST)
  */
 TYPED_TEST_P(EventBaseTest, ReadPersist) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -418,8 +382,7 @@ TYPED_TEST_P(EventBaseTest, ReadPersist) {
  * Test registering for READ when the socket is immediately readable
  */
 TYPED_TEST_P(EventBaseTest, ReadImmediate) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -472,8 +435,7 @@ TYPED_TEST_P(EventBaseTest, ReadImmediate) {
  * Test a WRITE event
  */
 TYPED_TEST_P(EventBaseTest, WriteEvent) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -518,8 +480,7 @@ TYPED_TEST_P(EventBaseTest, WriteEvent) {
  * Test (WRITE | PERSIST)
  */
 TYPED_TEST_P(EventBaseTest, WritePersist) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -570,8 +531,7 @@ TYPED_TEST_P(EventBaseTest, WritePersist) {
  * Test registering for WRITE when the socket is immediately writable
  */
 TYPED_TEST_P(EventBaseTest, WriteImmediate) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -622,8 +582,7 @@ TYPED_TEST_P(EventBaseTest, WriteImmediate) {
  * Test (READ | WRITE) when the socket becomes readable first
  */
 TYPED_TEST_P(EventBaseTest, ReadWrite) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -667,8 +626,7 @@ TYPED_TEST_P(EventBaseTest, ReadWrite) {
  * Test (READ | WRITE) when the socket becomes writable first
  */
 TYPED_TEST_P(EventBaseTest, WriteRead) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -719,8 +677,7 @@ TYPED_TEST_P(EventBaseTest, WriteRead) {
  * at the same time.
  */
 TYPED_TEST_P(EventBaseTest, ReadWriteSimultaneous) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -765,8 +722,7 @@ TYPED_TEST_P(EventBaseTest, ReadWriteSimultaneous) {
  * Test (READ | WRITE | PERSIST)
  */
 TYPED_TEST_P(EventBaseTest, ReadWritePersist) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -853,8 +809,7 @@ class PartialReadHandler : public TestHandler {
  * time around the loop.
  */
 TYPED_TEST_P(EventBaseTest, ReadPartial) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -925,8 +880,7 @@ class PartialWriteHandler : public TestHandler {
  * notified again the next time around the loop.
  */
 TYPED_TEST_P(EventBaseTest, WritePartial) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -988,8 +942,7 @@ class DestroyHandler : public AsyncTimeout {
  * Test destroying a registered EventHandler
  */
 TYPED_TEST_P(EventBaseTest, DestroyingHandler) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   SocketPair sp;
 
@@ -1024,13 +977,104 @@ TYPED_TEST_P(EventBaseTest, DestroyingHandler) {
   ASSERT_GT(bytesRemaining, 0);
 }
 
+/**
+ * Handlers may delete other handlers that fire in the same loop iteration. The
+ * order in which callbacks are invoked is unspecified, so we use the first
+ * callback that runs to delete other handlers.
+ */
+TYPED_TEST_P(EventBaseTest, HandlerSideEffects) {
+  struct SharedState {
+    folly::EventBase* evb;
+    std::vector<std::unique_ptr<AsyncTimeout>> timeouts;
+    std::vector<std::unique_ptr<EventHandler>> io;
+    std::atomic<size_t> timeoutsFired{0};
+    std::atomic<size_t> ioFired{0};
+  };
+
+  struct Timeout : AsyncTimeout {
+    explicit Timeout(SharedState& s) : AsyncTimeout(s.evb), state(s) {}
+
+    void timeoutExpired() noexcept override {
+      ++state.timeoutsFired;
+      // First to fire kills the others.
+      for (auto& timeout : state.timeouts) {
+        if (timeout.get() != this) {
+          timeout.reset();
+        }
+      }
+      // Kill a couple of io events too.
+      state.io.front().reset();
+      state.io.back().reset();
+    }
+
+    SharedState& state;
+  };
+
+  struct ReadyIO : EventHandler {
+    explicit ReadyIO(SharedState& s) : state(s) {
+      initHandler(s.evb, folly::NetworkSocket::fromFd(sp[0]));
+      registerHandler(EventHandler::READ);
+      // Event is ready as soon as the loop starts.
+      writeUntilFull(sp[1]);
+    }
+
+    void handlerReady(uint16_t events) noexcept override {
+      EXPECT_EQ(events, READ);
+      ++state.ioFired;
+      // First to fire kills the others.
+      for (auto& io : state.io) {
+        if (io.get() != this) {
+          io.reset();
+        }
+      }
+
+      // Kill a couple of timeouts too.
+      state.timeouts.front().reset();
+      state.timeouts.back().reset();
+    }
+
+    SocketPair sp;
+    SharedState& state;
+  };
+
+  auto evbPtr = this->makeEventBase();
+
+  SharedState state;
+  state.evb = evbPtr.get();
+
+  for (size_t i = 0; i < 10; ++i) {
+    auto& timeout =
+        state.timeouts.emplace_back(std::make_unique<Timeout>(state));
+    timeout->scheduleTimeout(0); // Fire as soon as the loop starts.
+    state.io.emplace_back(std::make_unique<ReadyIO>(state));
+  }
+
+  // Sleep a bit to side-step any rounding in the internal timer implementation.
+  /* sleep override */
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  // All events should fire in the same iteration.
+  EXPECT_EQ(state.timeoutsFired.load(), 0);
+  EXPECT_EQ(state.ioFired.load(), 0);
+  state.evb->loopOnce();
+  if (TypeParam::isIoUringBackend()) {
+    // IoUringBackend needs two iterations.
+    // TODO(dmm): Figure out why.
+    state.evb->loopOnce();
+  }
+  EXPECT_EQ(state.timeoutsFired.load(), 1);
+  EXPECT_EQ(state.ioFired.load(), 1);
+  state.evb->loop();
+  EXPECT_EQ(state.timeoutsFired.load(), 1);
+  EXPECT_EQ(state.ioFired.load(), 1);
+}
+
 ///////////////////////////////////////////////////////////////////////////
 // Tests for timeout events
 ///////////////////////////////////////////////////////////////////////////
 
 TYPED_TEST_P(EventBaseTest, RunAfterDelay) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TimePoint timestamp1(false);
@@ -1067,8 +1111,7 @@ TYPED_TEST_P(EventBaseTest, RunAfterDelayDestruction) {
   TimePoint end(false);
 
   {
-    auto evbPtr = getEventBase<TypeParam>();
-    SKIP_IF(!evbPtr) << "Backend not available";
+    auto evbPtr = this->makeEventBase();
     folly::EventBase& eb = *evbPtr;
     start.reset();
 
@@ -1111,8 +1154,7 @@ class TestTimeout : public AsyncTimeout {
 } // namespace
 
 TYPED_TEST_P(EventBaseTest, BasicTimeouts) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TestTimeout t1(&eb);
@@ -1165,8 +1207,7 @@ class ReschedulingTimeout : public AsyncTimeout {
  * Test rescheduling the same timeout multiple times
  */
 TYPED_TEST_P(EventBaseTest, ReuseTimeout) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   std::vector<uint32_t> timeouts;
@@ -1199,8 +1240,7 @@ TYPED_TEST_P(EventBaseTest, ReuseTimeout) {
  * Test rescheduling a timeout before it has fired
  */
 TYPED_TEST_P(EventBaseTest, RescheduleTimeout) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TestTimeout t1(&eb);
@@ -1230,8 +1270,7 @@ TYPED_TEST_P(EventBaseTest, RescheduleTimeout) {
  * Test cancelling a timeout
  */
 TYPED_TEST_P(EventBaseTest, CancelTimeout) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   std::vector<uint32_t> timeouts;
@@ -1270,8 +1309,7 @@ class DestroyTimeout : public AsyncTimeout {
  * Test destroying a scheduled timeout object
  */
 TYPED_TEST_P(EventBaseTest, DestroyingTimeout) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TestTimeout* t1 = new TestTimeout(&eb);
@@ -1291,8 +1329,7 @@ TYPED_TEST_P(EventBaseTest, DestroyingTimeout) {
  * Test the scheduled executor impl
  */
 TYPED_TEST_P(EventBaseTest, ScheduledFn) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TimePoint timestamp1(false);
@@ -1316,8 +1353,7 @@ TYPED_TEST_P(EventBaseTest, ScheduledFn) {
 }
 
 TYPED_TEST_P(EventBaseTest, ScheduledFnAt) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
 
   TimePoint timestamp0(false);
@@ -1397,8 +1433,6 @@ static inline void runInThreadTestFunc(RunInThreadArg* arg) {
 TYPED_TEST_P(EventBaseTest, RunInThread) {
   constexpr uint32_t numThreads = 50;
   constexpr uint32_t opsPerThread = 100;
-  auto backend = TypeParam::getBackend();
-  SKIP_IF(!backend) << "Backend not available";
   RunInThreadData data(
       [] { return TypeParam::getBackend(); }, numThreads, opsPerThread);
 
@@ -1465,8 +1499,7 @@ TYPED_TEST_P(EventBaseTest, RunInEventBaseThreadAndWait) {
   const size_t c = 256;
   std::vector<std::unique_ptr<EventBase>> evbs;
   for (size_t i = 0; i < c; ++i) {
-    auto evbPtr = getEventBase<TypeParam>();
-    SKIP_IF(!evbPtr) << "Backend not available";
+    auto evbPtr = this->makeEventBase();
     evbs.push_back(std::move(evbPtr));
   }
 
@@ -1506,8 +1539,7 @@ TYPED_TEST_P(EventBaseTest, RunInEventBaseThreadAndWait) {
 }
 
 TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadAndWaitCross) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   std::thread th(&EventBase::loopForever, &eb);
   SCOPE_EXIT {
@@ -1520,8 +1552,7 @@ TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadAndWaitCross) {
 }
 
 TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadAndWaitWithin) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   std::thread th(&EventBase::loopForever, &eb);
   SCOPE_EXIT {
@@ -1537,8 +1568,7 @@ TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadAndWaitWithin) {
 
 TYPED_TEST_P(
     EventBaseTest, RunImmediatelyOrRunInEventBaseThreadAndWaitNotLooping) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   auto mutated = false;
   eb.runImmediatelyOrRunInEventBaseThreadAndWait([&] { mutated = true; });
@@ -1546,8 +1576,7 @@ TYPED_TEST_P(
 }
 
 TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadCross) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   std::thread th(&EventBase::loopForever, &eb);
   SCOPE_EXIT {
@@ -1569,8 +1598,7 @@ TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadCross) {
 }
 
 TYPED_TEST_P(EventBaseTest, RunImmediatelyOrRunInEventBaseThreadNotLooping) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eb = *evbPtr;
   Baton<> baton;
   eb.runImmediatelyOrRunInEventBaseThread([&] { baton.post(); });
@@ -1611,8 +1639,7 @@ class CountedLoopCallback : public EventBase::LoopCallback {
 // Test that EventBase::loop() doesn't exit while there are
 // still LoopCallbacks remaining to be invoked.
 TYPED_TEST_P(EventBaseTest, RepeatedRunInLoop) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eventBase = *evbPtr;
 
   CountedLoopCallback c(&eventBase, 10);
@@ -1628,9 +1655,8 @@ TYPED_TEST_P(EventBaseTest, RepeatedRunInLoop) {
 
 // Test that EventBase::loop() works as expected without time measurements.
 TYPED_TEST_P(EventBaseTest, RunInLoopNoTimeMeasurement) {
-  auto evbPtr = getEventBase<TypeParam>(
-      EventBase::Options().setSkipTimeMeasurement(true));
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr =
+      this->makeEventBase(EventBase::Options().setSkipTimeMeasurement(true));
   folly::EventBase& eventBase = *evbPtr;
 
   CountedLoopCallback c(&eventBase, 10);
@@ -1646,8 +1672,7 @@ TYPED_TEST_P(EventBaseTest, RunInLoopNoTimeMeasurement) {
 
 // Test runInLoop() calls with terminateLoopSoon()
 TYPED_TEST_P(EventBaseTest, RunInLoopStopLoop) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eventBase = *evbPtr;
 
   CountedLoopCallback c1(&eventBase, 20);
@@ -1677,8 +1702,7 @@ TYPED_TEST_P(EventBaseTest, RunInLoopStopLoop) {
 
 // Test loopPoll() call sequence
 TYPED_TEST_P(EventBaseTest, RunPollLoop) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   folly::EventBase& eventBase = *evbPtr;
   std::atomic<bool> running = true;
   int calls = 0;
@@ -1707,20 +1731,18 @@ TYPED_TEST_P(EventBaseTest, RunPollLoop) {
   ASSERT_GT(calls, 1);
 }
 
-TYPED_TEST_P(EventBaseTest1, pidCheck) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, PidCheck) {
+  auto evbPtr = this->makeEventBase();
 
   auto deadManWalking = [&]() { evbPtr->loopForever(); };
-  EXPECT_DEATH(deadManWalking(), "pid");
+  EXPECT_DEATH(deadManWalking(), "Pid mismatch");
 }
 
 TYPED_TEST_P(EventBaseTest, MessageAvailableException) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
-  auto deadManWalking = []() {
-    auto evb = getEventBase<TypeParam>();
+  auto deadManWalking = [this] {
+    auto evb = this->makeEventBase();
     std::thread t([&] {
       // Call this from another thread to force use of NotificationQueue in
       // runInEventBaseThread
@@ -1733,8 +1755,7 @@ TYPED_TEST_P(EventBaseTest, MessageAvailableException) {
 }
 
 TYPED_TEST_P(EventBaseTest, TryRunningAfterTerminate) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eventBase = *eventBasePtr;
 
   bool ran = false;
@@ -1753,8 +1774,7 @@ TYPED_TEST_P(EventBaseTest, TryRunningAfterTerminate) {
 
 // Test cancelling runInLoop() callbacks
 TYPED_TEST_P(EventBaseTest, CancelRunInLoop) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eventBase = *eventBasePtr;
 
   CountedLoopCallback c1(&eventBase, 20);
@@ -1872,8 +1892,7 @@ class TerminateTestCallback : public EventBase::LoopCallback,
  * registered, but a loop callback installed a new fd handler.
  */
 TYPED_TEST_P(EventBaseTest, LoopTermination) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eventBase = *eventBasePtr;
 
   // Open a pipe and close the write end,
@@ -1903,8 +1922,7 @@ TYPED_TEST_P(EventBaseTest, LoopTermination) {
 
 TYPED_TEST_P(EventBaseTest, CallbackOrderTest) {
   size_t num = 0;
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& evb = *eventBasePtr;
 
   evb.runInEventBaseThread([&]() {
@@ -1930,8 +1948,7 @@ TYPED_TEST_P(EventBaseTest, CallbackOrderTest) {
 
 TYPED_TEST_P(EventBaseTest, AlwaysEnqueueCallbackOrderTest) {
   size_t num = 0;
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& evb = *eventBasePtr;
 
   evb.runInEventBaseThread([&]() {
@@ -1955,11 +1972,10 @@ TYPED_TEST_P(EventBaseTest, AlwaysEnqueueCallbackOrderTest) {
   EXPECT_EQ(num, 2);
 }
 
-TYPED_TEST_P(EventBaseTest1, InternalExternalCallbackOrderTest) {
+TYPED_TEST_P(EventBaseTest, InternalExternalCallbackOrderTest) {
   size_t counter = 0;
 
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& evb = *eventBasePtr;
 
   std::vector<size_t> calls;
@@ -2032,8 +2048,7 @@ class IdleTimeTimeoutSeries : public AsyncTimeout {
  * caused the loop time to decay.
  */
 TYPED_TEST_P(EventBaseTest, IdleTime) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eventBase = *eventBasePtr;
   std::deque<std::size_t> timeouts0(4, 8080);
   timeouts0.push_front(8000);
@@ -2085,7 +2100,7 @@ TYPED_TEST_P(EventBaseTest, IdleTime) {
 }
 
 TYPED_TEST_P(EventBaseTest, MaxLatencyUndamped) {
-  auto eventBasePtr = getEventBase<TypeParam>();
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eb = *eventBasePtr;
   int maxDurationViolations = 0;
   eb.setMaxLatency(
@@ -2102,7 +2117,7 @@ TYPED_TEST_P(EventBaseTest, MaxLatencyUndamped) {
 }
 
 TYPED_TEST_P(EventBaseTest, UnsetMaxLatencyUndamped) {
-  auto eventBasePtr = getEventBase<TypeParam>();
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& eb = *eventBasePtr;
   int maxDurationViolations = 0;
   eb.setMaxLatency(
@@ -2130,8 +2145,7 @@ TYPED_TEST_P(EventBaseTest, ThisLoop) {
   bool runThisLoop = false;
 
   {
-    auto eventBasePtr = getEventBase<TypeParam>();
-    SKIP_IF(!eventBasePtr) << "Backend not available";
+    auto eventBasePtr = this->makeEventBase();
     folly::EventBase& eb = *eventBasePtr;
     eb.runInLoop(
         [&]() {
@@ -2153,8 +2167,7 @@ TYPED_TEST_P(EventBaseTest, ThisLoop) {
 }
 
 TYPED_TEST_P(EventBaseTest, EventBaseThreadLoop) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   bool ran = false;
   base.runInEventBaseThread([&]() { ran = true; });
@@ -2164,8 +2177,7 @@ TYPED_TEST_P(EventBaseTest, EventBaseThreadLoop) {
 }
 
 TYPED_TEST_P(EventBaseTest, EventBaseThreadName) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   base.setName("foo");
   base.loop();
@@ -2174,8 +2186,7 @@ TYPED_TEST_P(EventBaseTest, EventBaseThreadName) {
 }
 
 TYPED_TEST_P(EventBaseTest, RunBeforeLoop) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   CountedLoopCallback cb(&base, 1, [&]() { base.terminateLoopSoon(); });
   base.runBeforeLoop(&cb);
@@ -2184,8 +2195,7 @@ TYPED_TEST_P(EventBaseTest, RunBeforeLoop) {
 }
 
 TYPED_TEST_P(EventBaseTest, RunBeforeLoopWait) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   CountedLoopCallback cb(&base, 1);
   base.tryRunAfterDelay([&]() { base.terminateLoopSoon(); }, 500);
@@ -2207,8 +2217,7 @@ class PipeHandler : public EventHandler {
 } // namespace
 
 TYPED_TEST_P(EventBaseTest, StopBeforeLoop) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& evb = *eventBasePtr;
 
   // Give the evb something to do.
@@ -2235,8 +2244,7 @@ TYPED_TEST_P(EventBaseTest, RunCallbacksOnDestruction) {
   bool ran = false;
 
   {
-    auto eventBasePtr = getEventBase<TypeParam>();
-    SKIP_IF(!eventBasePtr) << "Backend not available";
+    auto eventBasePtr = this->makeEventBase();
     eventBasePtr->runInEventBaseThread([&]() { ran = true; });
   }
 
@@ -2246,7 +2254,7 @@ TYPED_TEST_P(EventBaseTest, RunCallbacksOnDestruction) {
 TYPED_TEST_P(EventBaseTest, RunCallbacksPreDestruction) {
   bool ranPreDestruction = false;
   bool ranOnDestruction = false;
-  auto evbPtr = getEventBase<TypeParam>();
+  auto evbPtr = this->makeEventBase();
   // Prevents the EventBase destruction from completing, but the pre destruction
   // callbacks should still be called.
   auto loopKeepAlive = getKeepAliveToken(*evbPtr);
@@ -2262,8 +2270,7 @@ TYPED_TEST_P(EventBaseTest, RunCallbacksPreDestruction) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAlive) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
   bool done = false;
   std::thread t([&, loopKeepAlive = getKeepAliveToken(*evbPtr)]() mutable {
@@ -2281,8 +2288,7 @@ TYPED_TEST_P(EventBaseTest, LoopKeepAlive) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAliveInLoop) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
   bool done = false;
   std::thread t;
@@ -2304,8 +2310,7 @@ TYPED_TEST_P(EventBaseTest, LoopKeepAliveInLoop) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAliveWithLoopForever) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
   bool done = false;
 
@@ -2333,8 +2338,7 @@ TYPED_TEST_P(EventBaseTest, LoopKeepAliveWithLoopForever) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAliveShutdown) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
   bool done = false;
 
@@ -2355,8 +2359,7 @@ TYPED_TEST_P(EventBaseTest, LoopKeepAliveShutdown) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAliveAtomic) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
 
   static constexpr size_t kNumThreads = 100;
   static constexpr size_t kNumTasks = 100;
@@ -2403,16 +2406,30 @@ TYPED_TEST_P(EventBaseTest, LoopKeepAliveAtomic) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopKeepAliveCast) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+  auto evbPtr = this->makeEventBase();
   Executor::KeepAlive<> keepAlive = getKeepAliveToken(*evbPtr);
 }
 
-TYPED_TEST_P(EventBaseTest1, DrivableExecutorTest) {
+TYPED_TEST_P(EventBaseTest, LastLoopKeepAliveTriggeringDestruction) {
+  auto evbPtr = this->makeEventBase();
+  auto& evb = *evbPtr;
+  auto ka = getKeepAliveToken(evb);
+
+  // Busy wait to increase the chance of a race.
+  Baton</* MayBlock */ false> ready;
+  evb.runInEventBaseThread([&] { ready.post(); });
+
+  std::thread t([evbPtr = std::move(evbPtr)]() mutable { evbPtr->loop(); });
+
+  ready.wait();
+  ka.reset();
+  t.join();
+}
+
+TYPED_TEST_P(EventBaseTest, DrivableExecutorTest) {
   folly::Promise<bool> p;
   auto f = p.getFuture();
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   bool finished = false;
 
@@ -2443,17 +2460,15 @@ TYPED_TEST_P(EventBaseTest1, DrivableExecutorTest) {
   t.join();
 }
 
-TYPED_TEST_P(EventBaseTest1, IOExecutorTest) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, IOExecutorTest) {
+  auto evbPtr = this->makeEventBase();
 
   // Ensure EventBase manages itself as an IOExecutor.
   EXPECT_EQ(evbPtr->getEventBase(), evbPtr.get());
 }
 
-TYPED_TEST_P(EventBaseTest1, RequestContextTest) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, RequestContextTest) {
+  auto evbPtr = this->makeEventBase();
   auto defaultCtx = RequestContext::get();
   std::weak_ptr<RequestContext> rctx_weak_ptr;
 
@@ -2473,9 +2488,8 @@ TYPED_TEST_P(EventBaseTest1, RequestContextTest) {
   EXPECT_EQ(defaultCtx, RequestContext::get());
 }
 
-TYPED_TEST_P(EventBaseTest1, CancelLoopCallbackRequestContextTest) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, CancelLoopCallbackRequestContextTest) {
+  auto evbPtr = this->makeEventBase();
   CountedLoopCallback c(evbPtr.get(), 1);
 
   auto defaultCtx = RequestContext::get();
@@ -2498,9 +2512,8 @@ TYPED_TEST_P(EventBaseTest1, CancelLoopCallbackRequestContextTest) {
   EXPECT_EQ(defaultCtx, RequestContext::get());
 }
 
-TYPED_TEST_P(EventBaseTest1, TestStarvation) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, TestStarvation) {
+  auto evbPtr = this->makeEventBase();
 
   Baton<> stopRequested;
   Baton<> stopScheduled;
@@ -2533,17 +2546,16 @@ TYPED_TEST_P(EventBaseTest1, TestStarvation) {
   t.join();
 }
 
-TYPED_TEST_P(EventBaseTest1, RunOnDestructionBasic) {
+TYPED_TEST_P(EventBaseTest, RunOnDestructionBasic) {
   bool ranOnDestruction = false;
   {
-    auto evbPtr = getEventBase<TypeParam>();
-    SKIP_IF(!evbPtr) << "Backend not available";
+    auto evbPtr = this->makeEventBase();
     evbPtr->runOnDestruction([&ranOnDestruction] { ranOnDestruction = true; });
   }
   EXPECT_TRUE(ranOnDestruction);
 }
 
-TYPED_TEST_P(EventBaseTest1, RunOnDestructionCancelled) {
+TYPED_TEST_P(EventBaseTest, RunOnDestructionCancelled) {
   struct Callback : EventBase::OnDestructionCallback {
     bool ranOnDestruction{false};
 
@@ -2552,8 +2564,7 @@ TYPED_TEST_P(EventBaseTest1, RunOnDestructionCancelled) {
 
   auto cb = std::make_unique<Callback>();
   {
-    auto evbPtr = getEventBase<TypeParam>();
-    SKIP_IF(!evbPtr) << "Backend not available";
+    auto evbPtr = this->makeEventBase();
     evbPtr->runOnDestruction(*cb);
     EXPECT_TRUE(cb->cancel());
   }
@@ -2561,9 +2572,8 @@ TYPED_TEST_P(EventBaseTest1, RunOnDestructionCancelled) {
   EXPECT_FALSE(cb->cancel());
 }
 
-TYPED_TEST_P(EventBaseTest1, RunOnDestructionAfterHandleDestroyed) {
-  auto evbPtr = getEventBase<TypeParam>();
-  SKIP_IF(!evbPtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, RunOnDestructionAfterHandleDestroyed) {
+  auto evbPtr = this->makeEventBase();
   {
     bool ranOnDestruction = false;
     auto* cb = new EventBase::FunctionOnDestructionCallback(
@@ -2574,11 +2584,10 @@ TYPED_TEST_P(EventBaseTest1, RunOnDestructionAfterHandleDestroyed) {
   }
 }
 
-TYPED_TEST_P(EventBaseTest1, RunOnDestructionAddCallbackWithinCallback) {
+TYPED_TEST_P(EventBaseTest, RunOnDestructionAddCallbackWithinCallback) {
   size_t callbacksCalled = 0;
   {
-    auto evbPtr = getEventBase<TypeParam>();
-    SKIP_IF(!evbPtr) << "Backend not available";
+    auto evbPtr = this->makeEventBase();
     evbPtr->runOnDestruction([&] {
       ++callbacksCalled;
       evbPtr->runOnDestruction([&] { ++callbacksCalled; });
@@ -2587,9 +2596,8 @@ TYPED_TEST_P(EventBaseTest1, RunOnDestructionAddCallbackWithinCallback) {
   EXPECT_EQ(2, callbacksCalled);
 }
 
-TYPED_TEST_P(EventBaseTest1, EventBaseExecutionObserver) {
-  auto eventBasePtr = getEventBase<TypeParam>();
-  SKIP_IF(!eventBasePtr) << "Backend not available";
+TYPED_TEST_P(EventBaseTest, EventBaseExecutionObserver) {
+  auto eventBasePtr = this->makeEventBase();
   folly::EventBase& base = *eventBasePtr;
   bool ranBeforeLoop = false;
   bool ran = false;
@@ -2611,7 +2619,7 @@ TYPED_TEST_P(EventBaseTest1, EventBaseExecutionObserver) {
 }
 
 TYPED_TEST_P(EventBaseTest, EventBaseObserver) {
-  auto evbPtr = getEventBase<TypeParam>();
+  auto evbPtr = this->makeEventBase();
   auto observer1 = std::make_shared<TestEventBaseObserver>(2);
   evbPtr->setObserver(observer1);
   evbPtr->loopOnce();
@@ -2627,7 +2635,7 @@ TYPED_TEST_P(EventBaseTest, EventBaseObserver) {
 }
 
 TYPED_TEST_P(EventBaseTest, LoopRearmsNotificationQueue) {
-  auto evbPtr = getEventBase<TypeParam>();
+  auto evbPtr = this->makeEventBase();
   std::atomic<size_t> n = 0;
   evbPtr->runInEventBaseThread([&]() { n = 1; });
   evbPtr->loopOnce();
@@ -2638,8 +2646,7 @@ TYPED_TEST_P(EventBaseTest, LoopRearmsNotificationQueue) {
 }
 
 TYPED_TEST_P(EventBaseTest, GetThreadIdCollector) {
-  auto evbPtr = getEventBase<TypeParam>(
-      EventBase::Options{}.setEnableThreadIdCollection(true));
+  auto evbPtr = this->makeEventBase();
   auto* collector = evbPtr->getThreadIdCollector();
   ASSERT_TRUE(collector != nullptr);
 
@@ -2672,6 +2679,71 @@ TYPED_TEST_P(EventBaseTest, GetThreadIdCollector) {
   EXPECT_THAT(collector->collectThreadIds().threadIds, testing::IsEmpty());
 }
 
+TYPED_TEST_P(EventBaseTest, Suspension) {
+  using LoopStatus = EventBase::LoopStatus;
+
+  auto evbPtr = this->makeEventBase();
+  SKIP_IF(evbPtr->getBackend()->getPollableFd() == -1);
+
+  struct RepeatingBeforeLoopCallback : public EventBase::LoopCallback {
+    explicit RepeatingBeforeLoopCallback(EventBase& e) : evb(e) {}
+
+    void runLoopCallback() noexcept override {
+      ++count;
+      evb.runBeforeLoop(this);
+    }
+
+    EventBase& evb;
+    size_t count = 0;
+  };
+
+  RepeatingBeforeLoopCallback cb(*evbPtr);
+  evbPtr->runBeforeLoop(&cb);
+
+  auto loopAndExpectStatus = [&](LoopStatus expected) {
+    auto status = evbPtr->loopWithSuspension();
+    EXPECT_TRUE(status == expected)
+        << static_cast<int>(status) << " != " << static_cast<int>(expected);
+  };
+
+  folly::Executor::KeepAlive<> ka{evbPtr.get()};
+  // KeepAlive prevents loop to complete.
+  loopAndExpectStatus(LoopStatus::kSuspended);
+  // Fine to call again, run-before callbacks not invoked.
+  auto loops = cb.count;
+  loopAndExpectStatus(LoopStatus::kSuspended);
+  EXPECT_EQ(cb.count, loops);
+
+  // While suspended, the loop appears as running, but not in the current
+  // thread.
+  EXPECT_TRUE(evbPtr->isRunning());
+  EXPECT_FALSE(evbPtr->isInEventBaseThread());
+  EXPECT_FALSE(evbPtr->inRunningEventBaseThread());
+
+  bool called = false;
+  evbPtr->runInEventBaseThread([&] { called = true; });
+  loopAndExpectStatus(LoopStatus::kSuspended);
+  EXPECT_TRUE(called);
+
+  // We can make the loop complete (once) with terminateLoopSoon().
+  evbPtr->terminateLoopSoon();
+  loopAndExpectStatus(LoopStatus::kDone);
+  loopAndExpectStatus(LoopStatus::kSuspended);
+
+  // Once the keepalive is released the loop can complete every time.
+  ka.reset();
+  loopAndExpectStatus(LoopStatus::kDone);
+  loopAndExpectStatus(LoopStatus::kDone);
+
+  EXPECT_FALSE(evbPtr->isRunning());
+  EXPECT_TRUE(evbPtr->isInEventBaseThread());
+  EXPECT_FALSE(evbPtr->inRunningEventBaseThread());
+}
+
+struct BackendProviderBase {
+  static bool isIoUringBackend() { return false; }
+};
+
 REGISTER_TYPED_TEST_SUITE_P(
     EventBaseTest,
     EventBaseThread,
@@ -2688,6 +2760,7 @@ REGISTER_TYPED_TEST_SUITE_P(
     ReadPartial,
     WritePartial,
     DestroyingHandler,
+    HandlerSideEffects,
     RunAfterDelay,
     RunAfterDelayDestruction,
     BasicTimeouts,
@@ -2731,12 +2804,11 @@ REGISTER_TYPED_TEST_SUITE_P(
     LoopKeepAliveShutdown,
     LoopKeepAliveAtomic,
     LoopKeepAliveCast,
+    LastLoopKeepAliveTriggeringDestruction,
     EventBaseObserver,
     LoopRearmsNotificationQueue,
-    GetThreadIdCollector);
-
-REGISTER_TYPED_TEST_SUITE_P(
-    EventBaseTest1,
+    GetThreadIdCollector,
+    Suspension,
     DrivableExecutorTest,
     IOExecutorTest,
     RequestContextTest,
@@ -2747,7 +2819,7 @@ REGISTER_TYPED_TEST_SUITE_P(
     RunOnDestructionAfterHandleDestroyed,
     RunOnDestructionAddCallbackWithinCallback,
     InternalExternalCallbackOrderTest,
-    pidCheck,
+    PidCheck,
     EventBaseExecutionObserver);
 
 } // namespace test

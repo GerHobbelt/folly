@@ -14,51 +14,74 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/io/Epoll.h> // @manual
+#include <folly/experimental/io/Epoll.h>
 
 #if FOLLY_HAS_EPOLL
 
+#include <thread>
+
+#include <folly/executors/test/IOThreadPoolExecutorBaseTestLib.h>
 #include <folly/experimental/io/MuxIOThreadPoolExecutor.h>
 #include <folly/portability/GTest.h>
 #include <folly/synchronization/Latch.h>
 
 namespace folly {
+namespace test {
 
 TEST(MuxIOThreadPoolExecutor, SingleEpollLoopCreateDestroy) {
   static constexpr size_t kNumThreads = 16;
-  static constexpr size_t kMaxEvents = 64;
-  folly::MuxIOThreadPoolExecutor::Options options;
-  options.setMaxEvents(kMaxEvents);
-  folly::MuxIOThreadPoolExecutor ex(kNumThreads, options);
+  folly::MuxIOThreadPoolExecutor ex(kNumThreads);
 }
 
 TEST(MuxIOThreadPoolExecutor, SingleEpollLoopRun) {
   static constexpr size_t kNumThreads = 16;
+  static constexpr size_t kNumEventBases = 64;
   static constexpr size_t kLoops = 10;
-  static constexpr size_t kMaxEvents = 64;
   folly::MuxIOThreadPoolExecutor::Options options;
-  options.setMaxEvents(kMaxEvents);
+  options.setNumEventBases(kNumEventBases);
   folly::MuxIOThreadPoolExecutor ex(kNumThreads, options);
-  folly::Latch latch(kNumThreads * kLoops);
-  for (size_t k = 0; k < kLoops; ++k) {
-    for (size_t i = 0; i < kNumThreads; ++i) {
-      auto* evb = ex.getEventBase();
-      evb->runInEventBaseThread([&]() { latch.count_down(); });
+
+  const auto evbs = ex.getAllEventBases();
+  EXPECT_EQ(ex.numEventBases(), kNumEventBases);
+  EXPECT_EQ(evbs.size(), kNumEventBases);
+
+  const auto testEvbs = [&] {
+    // Ensure that the poller gets to the waiting state.
+    /* sleep override */ std::this_thread::sleep_for(
+        std::chrono::milliseconds{100});
+
+    folly::Latch latch(kNumEventBases * kLoops);
+    for (size_t k = 0; k < kLoops; ++k) {
+      for (auto evb : evbs) {
+        evb->runInEventBaseThread([&]() { latch.count_down(); });
+      }
     }
-  }
-  latch.wait();
+    latch.wait();
+  };
+
+  testEvbs();
+
+  ex.setNumThreads(1);
+  EXPECT_EQ(ex.numThreads(), 1);
+  EXPECT_EQ(ex.numActiveThreads(), 1);
+  testEvbs();
+
+  ex.setNumThreads(kNumEventBases);
+  EXPECT_EQ(ex.numThreads(), kNumEventBases);
+  testEvbs();
 }
 
 TEST(MuxIOThreadPoolExecutor, SingleEpollLoopTimers) {
   static constexpr size_t kNumThreads = 16;
   static constexpr uint32_t kMilliseconds = 500;
-  static constexpr size_t kMaxEvents = 64;
-  folly::MuxIOThreadPoolExecutor::Options options;
-  options.setMaxEvents(kMaxEvents);
-  folly::MuxIOThreadPoolExecutor ex(kNumThreads, options);
+  folly::MuxIOThreadPoolExecutor ex(kNumThreads);
+
+  // Ensure that the poller gets to the waiting state.
+  /* sleep override */ std::this_thread::sleep_for(
+      std::chrono::milliseconds{100});
+
   folly::Latch latch(kNumThreads);
-  for (size_t i = 0; i < kNumThreads; ++i) {
-    auto* evb = ex.getEventBase();
+  for (auto evb : ex.getAllEventBases()) {
     evb->runInEventBaseThread([evb, &latch]() {
       evb->runAfterDelay([&latch]() { latch.count_down(); }, kMilliseconds);
     });
@@ -66,5 +89,25 @@ TEST(MuxIOThreadPoolExecutor, SingleEpollLoopTimers) {
   latch.wait();
 }
 
+TEST(MuxIOThreadPoolExecutor, InvalidSetNumThreads) {
+  folly::MuxIOThreadPoolExecutor ex(16);
+  EXPECT_EQ(ex.numEventBases(), 16);
+  ex.setNumThreads(16); // No-op.
+  EXPECT_THROW(ex.setNumThreads(0), std::invalid_argument);
+  EXPECT_THROW(ex.setNumThreads(17), std::invalid_argument);
+
+  EXPECT_THROW(folly::MuxIOThreadPoolExecutor(0), std::invalid_argument);
+  folly::MuxIOThreadPoolExecutor::Options options;
+  options.setNumEventBases(1);
+  EXPECT_THROW(
+      folly::MuxIOThreadPoolExecutor(2, options), std::invalid_argument);
+}
+
+INSTANTIATE_TYPED_TEST_SUITE_P(
+    MuxIOThreadPoolExecutorTest,
+    IOThreadPoolExecutorBaseTest,
+    MuxIOThreadPoolExecutor);
+
+} // namespace test
 } // namespace folly
 #endif

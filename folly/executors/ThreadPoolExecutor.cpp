@@ -18,6 +18,7 @@
 
 #include <ctime>
 
+#include <folly/concurrency/ProcessLocalUniqueId.h>
 #include <folly/executors/GlobalThreadPoolList.h>
 #include <folly/portability/PThread.h>
 #include <folly/synchronization/AsymmetricThreadFence.h>
@@ -53,7 +54,6 @@ ThreadPoolExecutor::ThreadPoolExecutor(
     size_t minThreads,
     std::shared_ptr<ThreadFactory> threadFactory)
     : threadFactory_(std::move(threadFactory)),
-      taskStatsCallbacks_(std::make_shared<TaskStatsCallbackRegistry>()),
       threadPoolHook_("folly::ThreadPoolExecutor"),
       minThreads_(minThreads) {
   threadTimeout_ = std::chrono::milliseconds(FLAGS_threadtimeout_ms);
@@ -62,14 +62,24 @@ ThreadPoolExecutor::ThreadPoolExecutor(
 ThreadPoolExecutor::~ThreadPoolExecutor() {
   joinKeepAliveOnce();
   CHECK_EQ(0, threadList_.get().size());
+  auto* taskObserver =
+      taskObservers_.exchange(nullptr, std::memory_order_acquire);
+  while (taskObserver != nullptr) {
+    delete std::exchange(taskObserver, taskObserver->next_);
+  }
 }
 
 ThreadPoolExecutor::Task::Task(
-    Func&& func, std::chrono::milliseconds expiration, Func&& expireCallback)
+    Func&& func,
+    std::chrono::milliseconds expiration,
+    Func&& expireCallback,
+    int8_t pri)
     : func_(std::move(func)),
       // Assume that the task in enqueued on creation
       enqueueTime_(std::chrono::steady_clock::now()),
-      context_(folly::RequestContext::saveContext()) {
+      context_(folly::RequestContext::saveContext()),
+      priority_(pri),
+      taskId_(processLocalUniqueId()) {
   if (expiration > std::chrono::milliseconds::zero()) {
     expiration_ = std::make_unique<Expiration>();
     expiration_->expiration = expiration;
@@ -77,22 +87,52 @@ ThreadPoolExecutor::Task::Task(
   }
 }
 
+/* static */ void ThreadPoolExecutor::fillTaskInfo(
+    const Task& task, TaskInfo& info) {
+  info.priority = task.priority();
+  if (task.context_) {
+    info.requestId = task.context_->getRootId();
+  }
+  info.enqueueTime = task.enqueueTime_;
+  info.taskId = task.taskId_;
+}
+
+void ThreadPoolExecutor::registerTaskEnqueue(const Task& task) {
+  TaskInfo info;
+  fillTaskInfo(task, info);
+  forEachTaskObserver([&](auto& observer) { observer.taskEnqueued(info); });
+  FOLLY_SDT(
+      folly,
+      thread_pool_executor_task_enqueued,
+      threadFactory_->getNamePrefix().c_str(),
+      info.requestId,
+      info.enqueueTime.time_since_epoch().count(),
+      info.taskId);
+}
+
 void ThreadPoolExecutor::runTask(const ThreadPtr& thread, Task&& task) {
   thread->idle.store(false, std::memory_order_relaxed);
+
   auto startTime = std::chrono::steady_clock::now();
-  TaskStats stats;
-  stats.enqueueTime = task.enqueueTime_;
-  if (task.context_) {
-    stats.requestId = task.context_->getRootId();
-  }
-  stats.waitTime = startTime - task.enqueueTime_;
+  ProcessedTaskInfo taskInfo;
+  fillTaskInfo(task, taskInfo);
+  taskInfo.waitTime = startTime - task.enqueueTime_;
+  FOLLY_SDT(
+      folly,
+      thread_pool_executor_task_dequeued,
+      threadFactory_->getNamePrefix().c_str(),
+      taskInfo.requestId,
+      taskInfo.enqueueTime.time_since_epoch().count(),
+      taskInfo.waitTime.count(),
+      taskInfo.taskId);
+  forEachTaskObserver([&](auto& observer) { observer.taskDequeued(taskInfo); });
 
   {
     folly::RequestContextScopeGuard rctx(task.context_);
     if (task.expiration_ != nullptr &&
-        stats.waitTime >= task.expiration_->expiration) {
+        taskInfo.waitTime >= task.expiration_->expiration) {
       task.func_ = nullptr;
-      stats.expired = true;
+      taskInfo.expired = true;
       if (task.expiration_->expireCallback != nullptr) {
         invokeCatchingExns(
             "ThreadPoolExecutor: expireCallback",
@@ -106,8 +146,8 @@ void ThreadPoolExecutor::runTask(const ThreadPtr& thread, Task&& task) {
       }
     }
   }
-  if (!stats.expired) {
-    stats.runTime = std::chrono::steady_clock::now() - startTime;
+  if (!taskInfo.expired) {
+    taskInfo.runTime = std::chrono::steady_clock::now() - startTime;
   }
 
   // Times in this USDT use granularity of std::chrono::steady_clock::duration,
@@ -119,23 +159,17 @@ void ThreadPoolExecutor::runTask(const ThreadPtr& thread, Task&& task) {
       folly,
       thread_pool_executor_task_stats,
       threadFactory_->getNamePrefix().c_str(),
-      stats.requestId,
-      stats.enqueueTime.time_since_epoch().count(),
-      stats.waitTime.count(),
-      stats.runTime.count());
+      taskInfo.requestId,
+      taskInfo.enqueueTime.time_since_epoch().count(),
+      taskInfo.waitTime.count(),
+      taskInfo.runTime.count(),
+      taskInfo.taskId);
+  forEachTaskObserver(
+      [&](auto& observer) { observer.taskProcessed(taskInfo); });
 
   thread->idle.store(true, std::memory_order_relaxed);
   thread->lastActiveTime.store(
       std::chrono::steady_clock::now(), std::memory_order_relaxed);
-  thread->taskStatsCallbacks->callbackList.withRLock([&](auto& callbacks) {
-    *thread->taskStatsCallbacks->inCallback = true;
-    SCOPE_EXIT { *thread->taskStatsCallbacks->inCallback = false; };
-    invokeCatchingExns("ThreadPoolExecutor: task stats callback", [&] {
-      for (auto& callback : callbacks) {
-        callback(stats);
-      }
-    });
-  });
 }
 
 void ThreadPoolExecutor::add(Func, std::chrono::milliseconds, Func) {
@@ -170,9 +204,10 @@ void ThreadPoolExecutor::setNumThreads(size_t numThreads) {
      all thread creation (see tests for an example of this)
   */
 
+  validateNumThreads(numThreads);
   size_t numThreadsToJoin = 0;
   {
-    SharedMutex::WriteHolder w{&threadListLock_};
+    std::unique_lock w{threadListLock_};
     auto pending = getPendingTaskCountImpl();
     maxThreads_.store(numThreads, std::memory_order_relaxed);
     auto active = activeThreads_.load(std::memory_order_relaxed);
@@ -223,6 +258,7 @@ void ThreadPoolExecutor::addThreads(size_t n) {
   for (auto& o : observers_) {
     for (auto& thread : newThreads) {
       o->threadStarted(thread.get());
+      handleObserverRegisterThread(thread.get(), *o);
     }
   }
 }
@@ -240,15 +276,14 @@ void ThreadPoolExecutor::joinStoppedThreads(size_t n) {
   }
 }
 
-void ThreadPoolExecutor::stop() {
-  joinKeepAliveOnce();
+void ThreadPoolExecutor::stopAndJoinAllThreads(bool isJoin) {
   size_t n = 0;
   {
-    SharedMutex::WriteHolder w{&threadListLock_};
+    std::unique_lock w{threadListLock_};
     maxThreads_.store(0, std::memory_order_release);
     activeThreads_.store(0, std::memory_order_release);
     n = threadList_.get().size();
-    removeThreads(n, false);
+    removeThreads(n, isJoin);
     n += threadsToJoin_.load(std::memory_order_relaxed);
     threadsToJoin_.store(0, std::memory_order_relaxed);
   }
@@ -257,21 +292,14 @@ void ThreadPoolExecutor::stop() {
   CHECK_EQ(0, stoppedThreads_.size());
 }
 
+void ThreadPoolExecutor::stop() {
+  joinKeepAliveOnce();
+  stopAndJoinAllThreads(/* isJoin */ false);
+}
+
 void ThreadPoolExecutor::join() {
   joinKeepAliveOnce();
-  size_t n = 0;
-  {
-    SharedMutex::WriteHolder w{&threadListLock_};
-    maxThreads_.store(0, std::memory_order_release);
-    activeThreads_.store(0, std::memory_order_release);
-    n = threadList_.get().size();
-    removeThreads(n, true);
-    n += threadsToJoin_.load(std::memory_order_relaxed);
-    threadsToJoin_.store(0, std::memory_order_relaxed);
-  }
-  joinStoppedThreads(n);
-  CHECK_EQ(0, threadList_.get().size());
-  CHECK_EQ(0, stoppedThreads_.size());
+  stopAndJoinAllThreads(/* isJoin */ true);
 }
 
 void ThreadPoolExecutor::withAll(FunctionRef<void(ThreadPoolExecutor&)> f) {
@@ -284,7 +312,7 @@ void ThreadPoolExecutor::withAll(FunctionRef<void(ThreadPoolExecutor&)> f) {
 
 ThreadPoolExecutor::PoolStats ThreadPoolExecutor::getPoolStats() const {
   const auto now = std::chrono::steady_clock::now();
-  SharedMutex::ReadHolder r{&threadListLock_};
+  std::shared_lock r{threadListLock_};
   ThreadPoolExecutor::PoolStats stats;
   size_t activeTasks = 0;
   size_t idleAlive = 0;
@@ -309,7 +337,7 @@ ThreadPoolExecutor::PoolStats ThreadPoolExecutor::getPoolStats() const {
 }
 
 size_t ThreadPoolExecutor::getPendingTaskCount() const {
-  SharedMutex::ReadHolder r{&threadListLock_};
+  std::shared_lock r{threadListLock_};
   return getPendingTaskCountImpl();
 }
 
@@ -334,10 +362,34 @@ std::chrono::nanoseconds ThreadPoolExecutor::Thread::usedCpuTime() const {
 }
 
 void ThreadPoolExecutor::subscribeToTaskStats(TaskStatsCallback cb) {
-  if (*taskStatsCallbacks_->inCallback) {
-    throw std::runtime_error("cannot subscribe in task stats callback");
-  }
-  taskStatsCallbacks_->callbackList.wlock()->push_back(std::move(cb));
+  class TaskStatsCallbackObserver : public TaskObserver {
+   public:
+    explicit TaskStatsCallbackObserver(TaskStatsCallback&& cob)
+        : cob_(std::move(cob)) {}
+
+    void taskProcessed(const ProcessedTaskInfo& info) noexcept override {
+      invokeCatchingExns(
+          "ThreadPoolExecutor: task stats callback", [&] { cob_(info); });
+    }
+
+   private:
+    TaskStatsCallback cob_;
+  };
+
+  addTaskObserver(std::make_unique<TaskStatsCallbackObserver>(std::move(cb)));
+}
+
+void ThreadPoolExecutor::addTaskObserver(
+    std::unique_ptr<TaskObserver> taskObserver) {
+  auto taskObserverPtr = taskObserver.release();
+  auto* head = taskObservers_.load(std::memory_order_relaxed);
+  do {
+    taskObserverPtr->next_ = head;
+  } while (!taskObservers_.compare_exchange_weak(
+      head,
+      taskObserverPtr,
+      std::memory_order_acq_rel,
+      std::memory_order_relaxed));
 }
 
 BlockingQueueAddResult ThreadPoolExecutor::StoppedThreadQueue::add(
@@ -386,19 +438,21 @@ size_t ThreadPoolExecutor::StoppedThreadQueue::size() {
 
 void ThreadPoolExecutor::addObserver(std::shared_ptr<Observer> o) {
   {
-    SharedMutex::WriteHolder r{&threadListLock_};
+    std::unique_lock r{threadListLock_};
     observers_.push_back(o);
     for (auto& thread : threadList_.get()) {
       o->threadPreviouslyStarted(thread.get());
+      handleObserverRegisterThread(thread.get(), *o);
     }
   }
   ensureMaxActiveThreads();
 }
 
 void ThreadPoolExecutor::removeObserver(std::shared_ptr<Observer> o) {
-  SharedMutex::WriteHolder r{&threadListLock_};
+  std::unique_lock r{threadListLock_};
   for (auto& thread : threadList_.get()) {
     o->threadNotYetStopped(thread.get());
+    handleObserverUnregisterThread(thread.get(), *o);
   }
 
   for (auto it = observers_.begin(); it != observers_.end(); it++) {
@@ -416,7 +470,7 @@ void ThreadPoolExecutor::ensureJoined() {
   auto tojoin = threadsToJoin_.load(std::memory_order_relaxed);
   if (tojoin) {
     {
-      SharedMutex::WriteHolder w{&threadListLock_};
+      std::unique_lock w{threadListLock_};
       tojoin = threadsToJoin_.load(std::memory_order_relaxed);
       threadsToJoin_.store(0, std::memory_order_relaxed);
     }
@@ -481,7 +535,7 @@ void ThreadPoolExecutor::ensureActiveThreads() {
     return;
   }
 
-  SharedMutex::WriteHolder w{&threadListLock_};
+  std::unique_lock w{threadListLock_};
   // Double check behind lock.
   active = activeThreads_.load(std::memory_order_relaxed);
   total = maxThreads_.load(std::memory_order_relaxed);

@@ -10,7 +10,7 @@ a brief description of each.
 Simple arena for memory allocation: multiple allocations get freed all
 at once. With threaded version.
 
-#### [`AtomicHashMap.h`, `AtomicHashArray.h`](AtomicHashMap.md), `AtomicHashArray.h`, `AtomicLinkedList.h`, ...
+#### [`AtomicHashMap.h`](AtomicHashMap.md), `AtomicHashArray.h`, `AtomicLinkedList.h`, ...
 
 High-performance atomic data-structures. Many of these are built with very specific
 tradeoffs and constraints in mind that make them faster than their more general
@@ -55,7 +55,7 @@ Pretty-printing C++ types.
 
 #### `DiscriminatedPtr.h`
 
-Similar to `boost::variant`, but restricted to pointers only. Uses the
+Similar to `std::variant`, but restricted to pointers only. Uses the
 highest-order unused 16 bits in a pointer as discriminator. So
 `sizeof(DiscriminatedPtr<int, string, Widget>) == sizeof(void*)`.
 
@@ -159,7 +159,7 @@ chain several queues together with processing steps in between.
 #### [`PackedSyncPtr.h`](PackedSyncPtr.md)
 
 A highly specialized data structure consisting of a pointer, a 1-bit
-spin lock, and a 15-bit integral, all inside one 64-bit word.
+spin lock, and a 15-bit integer, all inside one 64-bit word.
 
 #### [`Poly.h`](Poly.md)
 

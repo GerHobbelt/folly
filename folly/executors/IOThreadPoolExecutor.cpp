@@ -28,6 +28,8 @@ FOLLY_GFLAGS_DEFINE_bool(
 
 namespace folly {
 
+namespace {
+
 using folly::detail::MemoryIdler;
 
 /* Class that will free jemalloc caches and madvise the stack away
@@ -78,8 +80,10 @@ class MemoryIdlerTimeout : public AsyncTimeout, public EventBase::LoopCallback {
   size_t num_{0};
 };
 
+} // namespace
+
 // IOThreadPoolExecutorBase
-EventBase* IOThreadPoolExecutorBase::getEventBase(
+EventBase* IOThreadPoolExecutor::getEventBase(
     ThreadPoolExecutor::ThreadHandle* h) {
   auto thread = dynamic_cast<IOThread*>(h);
 
@@ -96,19 +100,12 @@ IOThreadPoolExecutor::IOThreadPoolExecutor(
     std::shared_ptr<ThreadFactory> threadFactory,
     EventBaseManager* ebm,
     Options options)
-    : IOThreadPoolExecutorBase(
+    : IOThreadPoolExecutor(
           numThreads,
           FLAGS_dynamic_iothreadpoolexecutor ? 0 : numThreads,
-          std::move(threadFactory)),
-      isWaitForAll_(options.waitForAll),
-      nextThread_(0),
-      eventBaseManager_(ebm) {
-  setNumThreads(numThreads);
-  registerThreadPoolExecutor(this);
-  if (options.enableThreadIdCollection) {
-    threadIdCollector_ = std::make_unique<ThreadIdWorkerProvider>();
-  }
-}
+          std::move(threadFactory),
+          ebm,
+          std::move(options)) {}
 
 IOThreadPoolExecutor::IOThreadPoolExecutor(
     size_t maxThreads,
@@ -140,13 +137,14 @@ void IOThreadPoolExecutor::add(Func func) {
 void IOThreadPoolExecutor::add(
     Func func, std::chrono::milliseconds expiration, Func expireCallback) {
   ensureActiveThreads();
-  SharedMutex::ReadHolder r{&threadListLock_};
+  std::shared_lock r{threadListLock_};
   if (threadList_.get().empty()) {
     throw std::runtime_error("No threads available");
   }
   auto ioThread = pickThread();
 
   auto task = Task(std::move(func), expiration, std::move(expireCallback));
+  registerTaskEnqueue(task);
   auto wrappedFunc = [this, ioThread, task = std::move(task)]() mutable {
     runTask(ioThread, std::move(task));
     ioThread->pendingTasks--;
@@ -185,7 +183,7 @@ IOThreadPoolExecutor::pickThread() {
 
 EventBase* IOThreadPoolExecutor::getEventBase() {
   ensureActiveThreads();
-  SharedMutex::ReadHolder r{&threadListLock_};
+  std::shared_lock r{threadListLock_};
   if (threadList_.get().empty()) {
     throw std::runtime_error("No threads available");
   }
@@ -196,7 +194,7 @@ std::vector<Executor::KeepAlive<EventBase>>
 IOThreadPoolExecutor::getAllEventBases() {
   ensureMaxActiveThreads();
   std::vector<Executor::KeepAlive<EventBase>> evbs;
-  SharedMutex::ReadHolder r{&threadListLock_};
+  std::shared_lock r{threadListLock_};
   const auto& threads = threadList_.get();
   evbs.reserve(threads.size());
   for (const auto& thr : threads) {
@@ -210,19 +208,14 @@ EventBaseManager* IOThreadPoolExecutor::getEventBaseManager() {
 }
 
 std::shared_ptr<ThreadPoolExecutor::Thread> IOThreadPoolExecutor::makeThread() {
-  return std::make_shared<IOThread>(this);
+  return std::make_shared<IOThread>();
 }
 
 void IOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   this->threadPoolHook_.registerThread();
 
-  EventBase evb{EventBase::Options{}
-                    // To support IOThreadPoolDeadlockDetectorObserver.
-                    .setEnableThreadIdCollection(true)};
-  eventBaseManager_->setEventBase(&evb, false);
-
   const auto ioThread = std::static_pointer_cast<IOThread>(thread);
-  ioThread->eventBase = &evb;
+  ioThread->eventBase = eventBaseManager_->getEventBase();
   thisThread_.reset(new std::shared_ptr<IOThread>(ioThread));
 
   auto tid = folly::getOSThreadID();
@@ -236,28 +229,30 @@ void IOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   };
 
   auto idler = std::make_unique<MemoryIdlerTimeout>(ioThread->eventBase);
-  evb.runBeforeLoop(idler.get());
+  ioThread->eventBase->runBeforeLoop(idler.get());
 
-  evb.runInEventBaseThread([thread] { thread->startupBaton.post(); });
+  ioThread->eventBase->runInEventBaseThread(
+      [thread] { thread->startupBaton.post(); });
   {
     ExecutorBlockingGuard guard{
         ExecutorBlockingGuard::TrackTag{}, this, getName()};
     while (ioThread->shouldRun) {
-      evb.loopForever();
+      ioThread->eventBase->loopForever();
     }
     if (isJoin_) {
       while (ioThread->pendingTasks > 0) {
-        evb.loopOnce();
+        ioThread->eventBase->loopOnce();
       }
     }
     idler.reset();
     if (isWaitForAll_) {
       // some tasks, like thrift asynchronous calls, create additional
       // event base hookups, let's wait till all of them complete.
-      evb.loop();
+      ioThread->eventBase->loop();
     }
   }
 
+  std::lock_guard<std::mutex> guard(ioThread->eventBaseShutdownMutex_);
   ioThread->eventBase = nullptr;
   eventBaseManager_->clearEventBase();
 }
@@ -271,9 +266,11 @@ void IOThreadPoolExecutor::stopThreads(size_t n) {
         std::static_pointer_cast<IOThread>(threadList_.get()[i]);
     for (auto& o : observers_) {
       o->threadStopped(ioThread.get());
+      handleObserverUnregisterThread(ioThread.get(), *o);
     }
     ioThread->shouldRun = false;
     stoppedThreads.push_back(ioThread);
+    std::lock_guard<std::mutex> guard(ioThread->eventBaseShutdownMutex_);
     if (ioThread->eventBase) {
       ioThread->eventBase->terminateLoopSoon();
     }
@@ -296,6 +293,22 @@ size_t IOThreadPoolExecutor::getPendingTaskCountImpl() const {
     count += pendingTasks;
   }
   return count;
+}
+
+void IOThreadPoolExecutor::handleObserverRegisterThread(
+    ThreadHandle* h, Observer& observer) {
+  auto thread = CHECK_NOTNULL(dynamic_cast<IOThread*>(h));
+  if (auto ioObserver = dynamic_cast<IOObserver*>(&observer)) {
+    ioObserver->registerEventBase(*thread->eventBase);
+  }
+}
+
+void IOThreadPoolExecutor::handleObserverUnregisterThread(
+    ThreadHandle* h, Observer& observer) {
+  auto thread = CHECK_NOTNULL(dynamic_cast<IOThread*>(h));
+  if (auto ioObserver = dynamic_cast<IOObserver*>(&observer)) {
+    ioObserver->unregisterEventBase(*thread->eventBase);
+  }
 }
 
 } // namespace folly

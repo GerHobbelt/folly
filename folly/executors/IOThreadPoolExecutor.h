@@ -43,15 +43,12 @@ class IOThreadPoolExecutorBase : public ThreadPoolExecutor,
   virtual std::vector<folly::Executor::KeepAlive<folly::EventBase>>
   getAllEventBases() = 0;
 
-  static folly::EventBase* getEventBase(ThreadPoolExecutor::ThreadHandle*);
+  virtual folly::EventBaseManager* getEventBaseManager() = 0;
 
- protected:
-  struct alignas(Thread) IOThread : public Thread {
-    explicit IOThread(IOThreadPoolExecutorBase* pool)
-        : Thread(pool), shouldRun(true), pendingTasks(0) {}
-    std::atomic<bool> shouldRun;
-    std::atomic<size_t> pendingTasks;
-    folly::EventBase* eventBase{nullptr};
+  class IOObserver : public Observer {
+   public:
+    virtual void registerEventBase(EventBase&) {}
+    virtual void unregisterEventBase(EventBase&) {}
   };
 };
 
@@ -128,16 +125,27 @@ class IOThreadPoolExecutor : public IOThreadPoolExecutorBase {
   std::vector<folly::Executor::KeepAlive<folly::EventBase>> getAllEventBases()
       override;
 
-  static folly::EventBase* getEventBase(ThreadPoolExecutor::ThreadHandle* h) {
-    return IOThreadPoolExecutorBase::getEventBase(h);
-  }
+  static folly::EventBase* getEventBase(ThreadPoolExecutor::ThreadHandle* h);
 
-  folly::EventBaseManager* getEventBaseManager();
+  folly::EventBaseManager* getEventBaseManager() override;
 
   // Returns nullptr unless explicitly enabled through constructor
   folly::WorkerProvider* getThreadIdCollector() override {
     return threadIdCollector_.get();
   }
+
+ protected:
+  struct alignas(Thread) IOThread : public Thread {
+    std::atomic<bool> shouldRun{true};
+    std::atomic<size_t> pendingTasks{0};
+    folly::EventBase* eventBase{nullptr};
+    std::mutex eventBaseShutdownMutex_;
+  };
+
+  void handleObserverRegisterThread(
+      ThreadHandle* h, Observer& observer) override;
+  void handleObserverUnregisterThread(
+      ThreadHandle* h, Observer& observer) override;
 
  private:
   ThreadPtr makeThread() override;
@@ -145,7 +153,6 @@ class IOThreadPoolExecutor : public IOThreadPoolExecutorBase {
   void threadRun(ThreadPtr thread) override;
   void stopThreads(size_t n) override;
   size_t getPendingTaskCountImpl() const override final;
-
   const bool isWaitForAll_; // whether to wait till event base loop exits
   relaxed_atomic<size_t> nextThread_;
   folly::ThreadLocal<std::shared_ptr<IOThread>> thisThread_;

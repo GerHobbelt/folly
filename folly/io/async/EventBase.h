@@ -23,6 +23,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <set>
 #include <stack>
@@ -39,6 +40,7 @@
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/Synchronized.h>
+#include <folly/container/F14Map.h>
 #include <folly/container/F14Set.h>
 #include <folly/executors/DrivableExecutor.h>
 #include <folly/executors/IOExecutor.h>
@@ -309,27 +311,6 @@ class EventBase : public TimeoutManager,
       timerTickInterval = interval;
       return *this;
     }
-
-    /**
-     * Controls the behavior of isInEventBaseThread(). See the method
-     * documentation for the semantics of this option.
-     */
-    bool strictLoopThread{false};
-
-    Options& setStrictLoopThread(bool b) {
-      strictLoopThread = b;
-      return *this;
-    }
-
-    /**
-     * Enable getThreadIdCollector(). If not enabled, the method returns nullpr.
-     */
-    bool enableThreadIdCollection{false};
-
-    Options& setEnableThreadIdCollection(bool b) {
-      this->enableThreadIdCollection = b;
-      return *this;
-    }
   };
 
   /**
@@ -451,6 +432,21 @@ class EventBase : public TimeoutManager,
   void loopPollCleanup();
 
   /**
+   * Same semantics as loop(), but, instead of blocking, it returns in a
+   * "suspended" state. The caller must continue calling loopWithSuspension()
+   * until a non-suspended state is reached.
+   *
+   * This is only supported with backends that support pollable fd, and intended
+   * to enable external waiting for ready events through the fd: when the fd is
+   * ready, the loop can be resumed and make progress.
+   *
+   * It is not allowed to call other loop methods, or to destroy the EventBase,
+   * while in a suspended state.
+   */
+  enum class LoopStatus { kDone, kError, kSuspended };
+  LoopStatus loopWithSuspension();
+
+  /**
    * Runs the event loop.
    *
    * loopForever() behaves like loop(), except that it keeps running even if
@@ -467,6 +463,20 @@ class EventBase : public TimeoutManager,
    * Throws a std::system_error if an error occurs.
    */
   void loopForever();
+
+  /**
+   * Enable strict loop thread mode. This is intended for executors that take
+   * ownership of the EventBase and run it continuously until joined. Once set,
+   * it is not possible to unset it.
+   *
+   * In this mode:
+   *
+   * - isInEventBaseThread() returns false if the loop is not running.
+   *
+   * - Calling terminateLoopSoon() is not allowed, as the executor is in control
+   *   of the loop lifetime.
+   */
+  void setStrictLoopThread();
 
   /**
    * Causes the event loop to exit soon.
@@ -751,7 +761,7 @@ class EventBase : public TimeoutManager,
    * make any decisions; for that, consider waitUntilRunning().
    */
   bool isRunning() const {
-    return loopThread_.load(std::memory_order_relaxed) != std::thread::id();
+    return loopTid_.load(std::memory_order_relaxed) != kNotRunningTid;
   }
 
   /**
@@ -780,9 +790,10 @@ class EventBase : public TimeoutManager,
    * Otherwise,
    *
    * - In default mode (strictLoopThread = false), isInEventBaseThread() always
-   *   returns true. This is to support use cases in which the loop is run
-   *   manually, and other EventBase methods can be interleaved with loop
-   *   runs. In this mode, if the loop is not running continuously it is
+   *   returns true. this is to support use cases in which driving the loop is
+   *   interleaved with calling other EventBase methods in the same thread.
+   *
+   *   In this mode, if the loop is not running continuously it is
    *   responsibility of the caller to ensure that all methods that may run
    *   non-thread-safe logic (including, for example,
    *   runImmediatelyOrRunInEventBaseThread*()) are serialized with loop runs.
@@ -793,16 +804,12 @@ class EventBase : public TimeoutManager,
    *   isInEventBaseThread() from any thread with with no risk of races. In this
    *   mode, the behavior is equivalent to inRunningEventBaseThread().
    */
-  bool isInEventBaseThread() const {
-    auto tid = loopThread_.load(std::memory_order_relaxed);
-    return tid == std::this_thread::get_id() ||
-        (!strictLoopThread_ && tid == std::thread::id());
-  }
+  bool isInEventBaseThread() const;
 
-  bool inRunningEventBaseThread() const {
-    return loopThread_.load(std::memory_order_relaxed) ==
-        std::this_thread::get_id();
-  }
+  /**
+   * Returns true if and only if the loop is running in the current thread.
+   */
+  bool inRunningEventBaseThread() const;
 
   /**
    * Equivalent to CHECK(isInEventBaseThread()) (and assert/DCHECK for
@@ -931,8 +938,8 @@ class EventBase : public TimeoutManager,
 
   /// Implements the DrivableExecutor interface
   void drive() override {
-    ++loopKeepAliveCount_;
-    SCOPE_EXIT { --loopKeepAliveCount_; };
+    loopKeepAliveCount_.fetch_add(1, std::memory_order_relaxed);
+    SCOPE_EXIT { loopKeepAliveCount_.fetch_sub(1, std::memory_order_relaxed); };
     loopOnce();
   }
 
@@ -970,31 +977,20 @@ class EventBase : public TimeoutManager,
   static std::unique_ptr<EventBaseBackendBase> getDefaultBackend();
 
  protected:
-  bool keepAliveAcquire() noexcept override {
-    if (inRunningEventBaseThread()) {
-      loopKeepAliveCount_++;
-    } else {
-      loopKeepAliveCountAtomic_.fetch_add(1, std::memory_order_relaxed);
-    }
-    return true;
-  }
-
-  void keepAliveRelease() noexcept override {
-    if (!inRunningEventBaseThread()) {
-      return add([this] { loopKeepAliveCount_--; });
-    }
-    loopKeepAliveCount_--;
-  }
+  bool keepAliveAcquire() noexcept override;
+  void keepAliveRelease() noexcept override;
 
  private:
   class FuncRunner;
   class ThreadIdCollector;
 
+  static constexpr pid_t kNotRunningTid = -1;
+  static constexpr pid_t kSuspendedTid = -2;
+
   folly::VirtualEventBase* tryGetVirtualEventBase();
 
+  size_t loopKeepAliveCount();
   void applyLoopKeepAlive();
-
-  ssize_t loopKeepAliveCount();
 
   /*
    * Helper function that tells us whether we have already handled
@@ -1004,10 +1000,17 @@ class EventBase : public TimeoutManager,
 
   typedef LoopCallback::List LoopCallbackList;
 
-  bool loopBody(int flags = 0, bool ignoreKeepAlive = false);
+  bool isSuccess(LoopStatus status);
+
+  struct LoopOptions {
+    bool ignoreKeepAlive = false;
+    bool allowSuspension = false;
+  };
+
+  bool loopBody(int flags, LoopOptions options);
 
   void loopMainSetup();
-  bool loopMain(int flags, bool ignoreKeepAlive);
+  LoopStatus loopMain(int flags, LoopOptions options);
   void loopMainCleanup();
 
   void runLoopCallbacks(LoopCallbackList& currentCallbacks);
@@ -1021,11 +1024,22 @@ class EventBase : public TimeoutManager,
   const std::chrono::milliseconds intervalDuration_{
       HHWheelTimer::DEFAULT_TICK_INTERVAL};
   const bool enableTimeMeasurement_;
-  bool strictLoopThread_;
+  bool strictLoopThread_ = false;
 
-  // The ID of the thread running the main loop. std::thread::id{} if loop is
-  // not running, otherwise acts as lock to enforce loop mutual exclusion.
-  std::atomic<std::thread::id> loopThread_;
+  // Loop state that needs to survive suspension.
+  struct LoopState {
+    std::chrono::steady_clock::time_point prev = {};
+    std::chrono::steady_clock::time_point idleStart = {};
+  };
+  // Only set while the loop is running or suspended.
+  std::optional<LoopState> loopState_;
+
+  // ID of the thread running the loop (kNotRunningTid/kSuspendedTid if loop is
+  // not running/suspended). Acts as lock to enforce loop mutual exclusion.
+  std::atomic<pid_t> loopTid_{kNotRunningTid};
+  // Store the std::thread::id as well, used to get/set thread names, and for
+  // getLoopThreadId().
+  std::atomic<std::thread::id> loopThread_{std::thread::id{}};
 
   // should only be accessed through public getter
   HHWheelTimer::UniquePtr wheelTimer_;
@@ -1048,8 +1062,7 @@ class EventBase : public TimeoutManager,
   // A notification queue for runInEventBaseThread() to use
   // to send function requests to the EventBase thread.
   std::unique_ptr<EventBaseAtomicNotificationQueue<Func, FuncRunner>> queue_;
-  ssize_t loopKeepAliveCount_{0};
-  std::atomic<ssize_t> loopKeepAliveCountAtomic_{0};
+  std::atomic<size_t> loopKeepAliveCount_{0};
   bool loopKeepAliveActive_{false};
 
   // limit for latency in microseconds (0 disables)
@@ -1089,7 +1102,8 @@ class EventBase : public TimeoutManager,
   friend class detail::EventBaseLocalBase;
   template <typename T>
   friend class EventBaseLocal;
-  folly::F14FastMap<std::size_t, erased_unique_ptr> localStorage_;
+  using LocalStorageMap = folly::F14FastMap<std::size_t, erased_unique_ptr>;
+  LocalStorageMap localStorage_;
   folly::Synchronized<folly::F14FastSet<detail::EventBaseLocalBase*>>
       localStorageToDtor_;
   bool tryDeregister(detail::EventBaseLocalBase&);

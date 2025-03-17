@@ -31,6 +31,8 @@ struct atomic_ref_base {
   static_assert(alignof(T) == alignof(std::atomic<T>), "alignment mismatch");
   static_assert(is_trivially_copyable_v<T>, "value not trivially-copyable");
 
+  using value_type = T;
+
   explicit atomic_ref_base(T& ref) : ref_(ref) {}
   atomic_ref_base(atomic_ref_base const&) = default;
 
@@ -145,7 +147,7 @@ class atomic_ref : public detail::atomic_ref_select<T> {
   using base::base;
 };
 
-#if __cpp_deduction_guides >= 201703
+#if __cpp_deduction_guides >= 201611
 
 template <typename T>
 atomic_ref(T&) -> atomic_ref<T>;

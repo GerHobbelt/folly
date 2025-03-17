@@ -29,6 +29,7 @@
 
 #include <folly/Exception.h>
 #include <folly/VirtualExecutor.h>
+#include <folly/container/F14Map.h>
 #include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/executors/EDFThreadPoolExecutor.h>
 #include <folly/executors/FutureExecutor.h>
@@ -37,10 +38,12 @@
 #include <folly/executors/task_queue/UnboundedBlockingQueue.h>
 #include <folly/executors/thread_factory/InitThreadFactory.h>
 #include <folly/executors/thread_factory/PriorityThreadFactory.h>
+#include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/PThread.h>
 #include <folly/portability/SysResource.h>
 #include <folly/synchronization/detail/Spin.h>
+#include <folly/system/ThreadId.h>
 
 using namespace folly;
 using namespace std::chrono;
@@ -304,6 +307,65 @@ static void taskStats() {
 
 TYPED_TEST(ThreadPoolExecutorTypedTest, TaskStats) {
   taskStats<TypeParam>();
+}
+
+TYPED_TEST(ThreadPoolExecutorTypedTest, TaskObserver) {
+  struct TestTaskObserver : ThreadPoolExecutor::TaskObserver {
+    struct TaskState {
+      std::chrono::steady_clock::time_point enqueueTime;
+      std::optional<std::chrono::nanoseconds> waitTime;
+      bool ran = false;
+    };
+
+    void taskEnqueued(
+        const ThreadPoolExecutor::TaskInfo& info) noexcept override {
+      auto ts = taskStates.wlock();
+      auto [it, inserted] = ts->try_emplace(info.taskId);
+      ASSERT_TRUE(inserted);
+      it->second.enqueueTime = info.enqueueTime;
+    }
+
+    void taskDequeued(
+        const ThreadPoolExecutor::DequeuedTaskInfo& info) noexcept override {
+      auto ts = taskStates.wlock();
+      auto it = ts->find(info.taskId);
+      ASSERT_TRUE(it != ts->end());
+      EXPECT_EQ(it->second.enqueueTime, info.enqueueTime);
+      ASSERT_FALSE(std::exchange(it->second.waitTime, info.waitTime));
+    }
+
+    void taskProcessed(
+        const ThreadPoolExecutor::ProcessedTaskInfo& info) noexcept override {
+      auto ts = taskStates.wlock();
+      auto it = ts->find(info.taskId);
+      ASSERT_TRUE(it != ts->end());
+      EXPECT_EQ(it->second.enqueueTime, info.enqueueTime);
+      ASSERT_TRUE(it->second.waitTime);
+      EXPECT_EQ(*it->second.waitTime, info.waitTime);
+      EXPECT_GT(info.runTime.count(), 0);
+      it->second.ran = true;
+    }
+
+    Synchronized<F14FastMap<uint64_t, TaskState>> taskStates;
+  };
+
+  TypeParam ex{4};
+  auto observer = std::make_unique<TestTaskObserver>();
+  auto* observerPtr = observer.get();
+  ex.addTaskObserver(std::move(observer));
+
+  static constexpr size_t kNumTasks = 10;
+  for (size_t i = 0; i < kNumTasks; ++i) {
+    ex.add(burnMs(10));
+  }
+
+  ex.join();
+
+  auto ts = observerPtr->taskStates.exchange({});
+  EXPECT_EQ(ts.size(), kNumTasks);
+  for (auto& [_, taskState] : ts) {
+    EXPECT_TRUE(taskState.ran);
+  }
 }
 
 TEST(ThreadPoolExecutorTest, GetUsedCpuTime) {
@@ -907,6 +969,40 @@ TEST(ThreadPoolExecutorTest, DynamicThreadsTest) {
           std::chrono::steady_clock::now() + std::chrono::seconds(1), pred));
 }
 
+TEST(ThreadPoolExecutorTest, GetThreadIdCollector) {
+  CPUThreadPoolExecutor e(1);
+  auto* collector = e.getThreadIdCollector();
+  ASSERT_TRUE(collector != nullptr);
+
+  EXPECT_THAT(collector->collectThreadIds().threadIds, testing::IsEmpty());
+
+  pid_t tid;
+  Baton<> ready;
+  Baton<> unblock;
+  e.add([&] {
+    tid = getOSThreadID();
+    ready.post();
+    unblock.wait(); // Wait until we acquire the keepalive.
+  });
+
+  ready.wait();
+  auto ids = collector->collectThreadIds();
+  EXPECT_THAT(ids.threadIds, testing::ElementsAre(tid));
+  unblock.post();
+
+  Baton<> joined;
+  std::thread t([&] {
+    e.join();
+    joined.post();
+  });
+  // Until we release ids, the executor join cannot complete
+  EXPECT_FALSE(joined.try_wait_for(100ms));
+  // But things should eventually complete when released.
+  ids = {};
+  t.join();
+  EXPECT_THAT(collector->collectThreadIds().threadIds, testing::IsEmpty());
+}
+
 TEST(ThreadPoolExecutorTest, DynamicThreadAddRemoveRace) {
   CPUThreadPoolExecutor e(1);
   e.setThreadDeathTimeout(std::chrono::milliseconds(0));
@@ -1114,6 +1210,7 @@ class SingleThreadedCPUThreadPoolExecutor : public CPUThreadPoolExecutor,
  public:
   explicit SingleThreadedCPUThreadPoolExecutor(size_t)
       : CPUThreadPoolExecutor(1) {}
+  ~SingleThreadedCPUThreadPoolExecutor() override { stop(); }
 };
 
 TYPED_TEST(ThreadPoolExecutorTypedTest, WeakRef) {

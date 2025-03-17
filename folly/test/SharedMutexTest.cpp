@@ -20,13 +20,13 @@
 
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <shared_mutex> // std::shared_lock
 #include <system_error>
 #include <thread>
 #include <vector>
 
-#include <boost/optional.hpp>
 #include <boost/thread/shared_mutex.hpp>
 
 #include <folly/Benchmark.h>
@@ -45,7 +45,7 @@ using namespace std;
 using namespace std::chrono;
 
 struct DSharedMutexPolicy : SharedMutexPolicyDefault {
-  static constexpr uint32_t max_spin_count = 0;
+  static constexpr uint64_t max_spin_cycles = 0;
   static constexpr uint32_t max_soft_yield_count = 0;
 };
 using DSched = DeterministicSchedule;
@@ -109,21 +109,21 @@ void runBasicHoldersTest() {
 
   {
     // create an exclusive write lock via holder
-    typename Lock::WriteHolder holder(lock);
+    std::unique_lock holder(lock);
     EXPECT_FALSE(lock.eligible_for_lock_elision());
     EXPECT_FALSE(lock.try_lock());
     EXPECT_FALSE(lock.eligible_for_lock_shared_elision());
     EXPECT_FALSE(lock.try_lock_shared(token));
 
     // move ownership to another write holder via move constructor
-    typename Lock::WriteHolder holder2(std::move(holder));
+    std::unique_lock holder2(std::move(holder));
     EXPECT_FALSE(lock.eligible_for_lock_elision());
     EXPECT_FALSE(lock.try_lock());
     EXPECT_FALSE(lock.eligible_for_lock_shared_elision());
     EXPECT_FALSE(lock.try_lock_shared(token));
 
     // move ownership to another write holder via assign operator
-    typename Lock::WriteHolder holder3(nullptr);
+    std::unique_lock holder3(lock, std::defer_lock);
     holder3 = std::move(holder2);
     EXPECT_FALSE(lock.eligible_for_lock_elision());
     EXPECT_FALSE(lock.try_lock());
@@ -131,7 +131,8 @@ void runBasicHoldersTest() {
     EXPECT_FALSE(lock.try_lock_shared(token));
 
     // downgrade from exclusive to upgrade lock via move constructor
-    typename Lock::UpgradeHolder holder4(std::move(holder3));
+    folly::upgrade_lock holder4(
+        folly::transition_lock<folly::upgrade_lock>(holder3));
 
     // ensure we can lock from a shared source
     EXPECT_FALSE(lock.eligible_for_lock_elision());
@@ -141,14 +142,14 @@ void runBasicHoldersTest() {
     lock.unlock_shared(token);
 
     // promote from upgrade to exclusive lock via move constructor
-    typename Lock::WriteHolder holder5(std::move(holder4));
+    std::unique_lock holder5(folly::transition_lock<std::unique_lock>(holder4));
     EXPECT_FALSE(lock.eligible_for_lock_elision());
     EXPECT_FALSE(lock.try_lock());
     EXPECT_FALSE(lock.eligible_for_lock_shared_elision());
     EXPECT_FALSE(lock.try_lock_shared(token));
 
     // downgrade exclusive to shared lock via move constructor
-    typename Lock::ReadHolder holder6(std::move(holder5));
+    std::shared_lock holder6(folly::transition_lock<std::shared_lock>(holder5));
 
     // ensure we can lock from another shared source
     EXPECT_FALSE(lock.eligible_for_lock_elision());
@@ -159,25 +160,25 @@ void runBasicHoldersTest() {
   }
 
   {
-    typename Lock::WriteHolder holder(lock);
+    std::unique_lock holder(lock);
     EXPECT_FALSE(lock.eligible_for_lock_elision());
     EXPECT_FALSE(lock.try_lock());
   }
 
   {
-    typename Lock::ReadHolder holder(lock);
-    typename Lock::ReadHolder holder2(lock);
-    typename Lock::UpgradeHolder holder3(lock);
+    std::shared_lock holder(lock);
+    std::shared_lock holder2(lock);
+    folly::upgrade_lock holder3(lock);
   }
 
   {
-    typename Lock::UpgradeHolder holder(lock);
-    typename Lock::ReadHolder holder2(lock);
-    typename Lock::ReadHolder holder3(std::move(holder));
+    folly::upgrade_lock holder(lock);
+    std::shared_lock holder2(lock);
+    std::shared_lock holder3(folly::transition_lock<std::shared_lock>(holder));
   }
 }
 
-TEST(SharedMutex, basic_holders) {
+TEST(SharedMutex, basicHolders) {
   runBasicHoldersTest<SharedMutexReadPriority>();
   runBasicHoldersTest<SharedMutexWritePriority>();
   runBasicHoldersTest<SharedMutexSuppressTSAN>();
@@ -202,7 +203,7 @@ void runManyReadLocksTestWithTokens() {
   lock.unlock();
 }
 
-TEST(SharedMutex, many_read_locks_with_tokens) {
+TEST(SharedMutex, manyReadLocksWithTokens) {
   // This test fails in an assertion in the TSAN library because there are too
   // many mutexes
   SKIP_IF(folly::kIsSanitizeThread);
@@ -228,7 +229,7 @@ void runManyReadLocksTestWithoutTokens() {
   lock.unlock();
 }
 
-TEST(SharedMutex, many_read_locks_without_tokens) {
+TEST(SharedMutex, manyReadLocksWithoutTokens) {
   // This test fails in an assertion in the TSAN library because there are too
   // many mutexes
   SKIP_IF(folly::kIsSanitizeThread);
@@ -262,7 +263,7 @@ void runTimeoutInPastTest() {
   lock.unlock_shared();
 }
 
-TEST(SharedMutex, timeout_in_past) {
+TEST(SharedMutex, timeoutInPast) {
   runTimeoutInPastTest<SharedMutexReadPriority>();
   runTimeoutInPastTest<SharedMutexWritePriority>();
   runTimeoutInPastTest<SharedMutexSuppressTSAN>();
@@ -343,14 +344,14 @@ void runFailingTryTimeoutTest() {
   lock.unlock();
 
   for (int p = 0; p < 8; ++p) {
-    typename Lock::ReadHolder holder1(lock);
-    typename Lock::ReadHolder holder2(lock);
-    typename Lock::ReadHolder holder3(lock);
+    typename std::shared_lock holder1(lock);
+    typename std::shared_lock holder2(lock);
+    typename std::shared_lock holder3(lock);
     EXPECT_FALSE(lock.try_lock_for(nanoseconds(1 << p)));
   }
 }
 
-TEST(SharedMutex, failing_try_timeout) {
+TEST(SharedMutex, failingTryTimeout) {
   runFailingTryTimeoutTest<SharedMutexReadPriority>();
   runFailingTryTimeoutTest<SharedMutexWritePriority>();
   runFailingTryTimeoutTest<SharedMutexSuppressTSAN>();
@@ -395,14 +396,14 @@ void runBasicUpgradeTest() {
   lock.unlock_shared(token1);
 }
 
-TEST(SharedMutex, basic_upgrade_tests) {
+TEST(SharedMutex, basicUpgradeTests) {
   runBasicUpgradeTest<SharedMutexReadPriority>();
   runBasicUpgradeTest<SharedMutexWritePriority>();
   runBasicUpgradeTest<SharedMutexSuppressTSAN>();
   runBasicUpgradeTest<SharedMutexTracked>();
 }
 
-TEST(SharedMutex, read_has_prio) {
+TEST(SharedMutex, readHasPrio) {
   SharedMutexReadPriority lock;
   SharedMutexToken token1;
   SharedMutexToken token2;
@@ -431,7 +432,7 @@ TEST(SharedMutex, read_has_prio) {
   EXPECT_TRUE(exclusiveAcquired);
 }
 
-TEST(SharedMutex, write_has_prio) {
+TEST(SharedMutex, writeHasPrio) {
   SharedMutexWritePriority lock;
   SharedMutexToken token1;
   SharedMutexToken token2;
@@ -1030,7 +1031,7 @@ static void runAllAndValidate(size_t numOps, size_t numThreads) {
   }
 }
 
-TEST(SharedMutex, deterministic_concurrent_readers_of_one_lock_read_prio) {
+TEST(SharedMutex, deterministicConcurrentReadersOfOneLockReadPrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runContendedReaders<DeterministicAtomic, DSharedMutexReadPriority, Locker>(
@@ -1038,7 +1039,7 @@ TEST(SharedMutex, deterministic_concurrent_readers_of_one_lock_read_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_concurrent_readers_of_one_lock_write_prio) {
+TEST(SharedMutex, deterministicConcurrentReadersOfOneLockWritePrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runContendedReaders<DeterministicAtomic, DSharedMutexWritePriority, Locker>(
@@ -1046,21 +1047,21 @@ TEST(SharedMutex, deterministic_concurrent_readers_of_one_lock_write_prio) {
   }
 }
 
-TEST(SharedMutex, concurrent_readers_of_one_lock_read_prio) {
+TEST(SharedMutex, concurrentReadersOfOneLockReadPrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexReadPriority, Locker>(
         100000, 32, false);
   }
 }
 
-TEST(SharedMutex, concurrent_readers_of_one_lock_write_prio) {
+TEST(SharedMutex, concurrentReadersOfOneLockWritePrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexWritePriority, Locker>(
         100000, 32, false);
   }
 }
 
-TEST(SharedMutex, deterministic_readers_of_concurrent_locks_read_prio) {
+TEST(SharedMutex, deterministicReadersOfConcurrentLocksReadPrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runContendedReaders<DeterministicAtomic, DSharedMutexReadPriority, Locker>(
@@ -1068,7 +1069,7 @@ TEST(SharedMutex, deterministic_readers_of_concurrent_locks_read_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_readers_of_concurrent_locks_write_prio) {
+TEST(SharedMutex, deterministicReadersOfConcurrentLocksWritePrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runContendedReaders<DeterministicAtomic, DSharedMutexWritePriority, Locker>(
@@ -1076,21 +1077,21 @@ TEST(SharedMutex, deterministic_readers_of_concurrent_locks_write_prio) {
   }
 }
 
-TEST(SharedMutex, readers_of_concurrent_locks_read_prio) {
+TEST(SharedMutex, readersOfConcurrentLocksReadPrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexReadPriority, TokenLocker>(
         100000, 32, true);
   }
 }
 
-TEST(SharedMutex, readers_of_concurrent_locks_write_prio) {
+TEST(SharedMutex, readersOfConcurrentLocksWritePrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexWritePriority, TokenLocker>(
         100000, 32, true);
   }
 }
 
-TEST(SharedMutex, deterministic_mixed_mostly_read_read_prio) {
+TEST(SharedMutex, deterministicMixedMostlyReadReadPrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runMixed<DeterministicAtomic, DSharedMutexReadPriority, Locker>(
@@ -1098,7 +1099,7 @@ TEST(SharedMutex, deterministic_mixed_mostly_read_read_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_mixed_mostly_read_write_prio) {
+TEST(SharedMutex, deterministicMixedMostlyReadWritePrio) {
   for (int pass = 0; pass < 3; ++pass) {
     DSched sched(DSched::uniform(pass));
     runMixed<DeterministicAtomic, DSharedMutexWritePriority, Locker>(
@@ -1106,21 +1107,21 @@ TEST(SharedMutex, deterministic_mixed_mostly_read_write_prio) {
   }
 }
 
-TEST(SharedMutex, mixed_mostly_read_read_prio) {
+TEST(SharedMutex, mixedMostlyReadReadPrio) {
   for (int pass = 0; pass < 5; ++pass) {
     runMixed<atomic, SharedMutexReadPriority, TokenLocker>(
         10000, 32, 0.1, false);
   }
 }
 
-TEST(SharedMutex, mixed_mostly_read_write_prio) {
+TEST(SharedMutex, mixedMostlyReadWritePrio) {
   for (int pass = 0; pass < 5; ++pass) {
     runMixed<atomic, SharedMutexWritePriority, TokenLocker>(
         10000, 32, 0.1, false);
   }
 }
 
-TEST(SharedMutex, deterministic_mixed_mostly_write_read_prio) {
+TEST(SharedMutex, deterministicMixedMostlyWriteReadPrio) {
   for (int pass = 0; pass < 1; ++pass) {
     DSched sched(DSched::uniform(pass));
     runMixed<DeterministicAtomic, DSharedMutexReadPriority, TokenLocker>(
@@ -1128,7 +1129,7 @@ TEST(SharedMutex, deterministic_mixed_mostly_write_read_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_mixed_mostly_write_write_prio) {
+TEST(SharedMutex, deterministicMixedMostlyWriteWritePrio) {
   for (int pass = 0; pass < 1; ++pass) {
     DSched sched(DSched::uniform(pass));
     runMixed<DeterministicAtomic, DSharedMutexWritePriority, TokenLocker>(
@@ -1136,7 +1137,7 @@ TEST(SharedMutex, deterministic_mixed_mostly_write_write_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_lost_wakeup_write_prio) {
+TEST(SharedMutex, deterministicLostWakeupWritePrio) {
   for (int pass = 0; pass < 10; ++pass) {
     DSched sched(DSched::uniformSubset(pass, 2, 200));
     runMixed<DeterministicAtomic, DSharedMutexWritePriority, TokenLocker>(
@@ -1153,28 +1154,28 @@ static std::size_t adjustReps(std::size_t reps) {
   return reps;
 }
 
-TEST(SharedMutex, mixed_mostly_write_read_prio) {
+TEST(SharedMutex, mixedMostlyWriteReadPrio) {
   for (int pass = 0; pass < (folly::kIsSanitizeAddress ? 1 : 5); ++pass) {
     runMixed<atomic, SharedMutexReadPriority, TokenLocker>(
         adjustReps(50000), adjustReps(300), 0.9, false);
   }
 }
 
-TEST(SharedMutex, mixed_mostly_write_write_prio) {
+TEST(SharedMutex, mixedMostlyWriteWritePrio) {
   for (int pass = 0; pass < (folly::kIsSanitizeAddress ? 1 : 5); ++pass) {
     runMixed<atomic, SharedMutexWritePriority, TokenLocker>(
         adjustReps(50000), adjustReps(300), 0.9, false);
   }
 }
 
-TEST(SharedMutex, deterministic_all_ops_read_prio) {
+TEST(SharedMutex, deterministicAllOpsReadPrio) {
   for (int pass = 0; pass < 5; ++pass) {
     DSched sched(DSched::uniform(pass));
     runAllAndValidate<DSharedMutexReadPriority, DeterministicAtomic>(1000, 8);
   }
 }
 
-TEST(SharedMutex, deterministic_all_ops_write_prio) {
+TEST(SharedMutex, deterministicAllOpsWritePrio) {
   // This test fails in TSAN because of noisy lock ordering inversions.
   SKIP_IF(folly::kIsSanitizeThread);
   for (int pass = 0; pass < 5; ++pass) {
@@ -1183,13 +1184,13 @@ TEST(SharedMutex, deterministic_all_ops_write_prio) {
   }
 }
 
-TEST(SharedMutex, all_ops_read_prio) {
+TEST(SharedMutex, allOpsReadPrio) {
   for (int pass = 0; pass < 5; ++pass) {
     runAllAndValidate<SharedMutexReadPriority, atomic>(100000, 32);
   }
 }
 
-TEST(SharedMutex, all_ops_write_prio) {
+TEST(SharedMutex, allOpsWritePrio) {
   // This test fails in TSAN because of noisy lock ordering inversions.
   SKIP_IF(folly::kIsSanitizeThread);
   for (int pass = 0; pass < 5; ++pass) {
@@ -1197,8 +1198,7 @@ TEST(SharedMutex, all_ops_write_prio) {
   }
 }
 
-FOLLY_ASSUME_FBVECTOR_COMPATIBLE(
-    boost::optional<boost::optional<SharedMutexToken>>)
+FOLLY_ASSUME_FBVECTOR_COMPATIBLE(std::optional<std::optional<SharedMutexToken>>)
 
 // Setup is a set of threads that either grab a shared lock, or exclusive
 // and then downgrade it, or upgrade then upgrade and downgrade, then
@@ -1212,7 +1212,7 @@ static void runRemoteUnlock(
     size_t numSendingThreads,
     size_t numReceivingThreads) {
   Lock globalLock;
-  MPMCQueue<boost::optional<boost::optional<SharedMutexToken>>, Atom> queue(10);
+  MPMCQueue<std::optional<std::optional<SharedMutexToken>>, Atom> queue(10);
   auto queuePtr = &queue; // workaround for clang crash
 
   Atom<bool> go(false);
@@ -1260,7 +1260,7 @@ static void runRemoteUnlock(
           bool useToken = randVal >= 0.5;
           randVal = (randVal - (useToken ? 0.5 : 0.0)) * 2;
 
-          boost::optional<SharedMutexToken> maybeToken;
+          std::optional<SharedMutexToken> maybeToken;
 
           if (useToken) {
             SharedMutexToken token;
@@ -1299,7 +1299,7 @@ static void runRemoteUnlock(
           queuePtr->blockingWrite(maybeToken);
         }
         if (--*pendingSendersPtr == 0) {
-          queuePtr->blockingWrite(boost::none);
+          queuePtr->blockingWrite(std::nullopt);
         }
       });
     }
@@ -1311,7 +1311,7 @@ static void runRemoteUnlock(
   }
 }
 
-TEST(SharedMutex, deterministic_remote_write_prio) {
+TEST(SharedMutex, deterministicRemoteWritePrio) {
   // This test fails in an assertion in the TSAN library because there are too
   // many mutexes
   SKIP_IF(folly::kIsSanitizeThread);
@@ -1322,7 +1322,7 @@ TEST(SharedMutex, deterministic_remote_write_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_remote_read_prio) {
+TEST(SharedMutex, deterministicRemoteReadPrio) {
   for (int pass = 0; pass < 1; ++pass) {
     DSched sched(DSched::uniform(pass));
     runRemoteUnlock<DSharedMutexReadPriority, DeterministicAtomic>(
@@ -1330,7 +1330,7 @@ TEST(SharedMutex, deterministic_remote_read_prio) {
   }
 }
 
-TEST(SharedMutex, remote_write_prio) {
+TEST(SharedMutex, remoteWritePrio) {
   // This test fails in an assertion in the TSAN library because there are too
   // many mutexes
   SKIP_IF(folly::kIsSanitizeThread);
@@ -1339,7 +1339,7 @@ TEST(SharedMutex, remote_write_prio) {
   }
 }
 
-TEST(SharedMutex, remote_read_prio) {
+TEST(SharedMutex, remoteReadPrio) {
   // This test fails in an assertion in the TSAN library because there are too
   // many mutexes
   SKIP_IF(folly::kIsSanitizeThread);
@@ -1455,7 +1455,7 @@ static void timed_rd_pri_ping_pong(size_t n, size_t scale, size_t burnCount) {
       n / scale, burnCount);
 }
 
-TEST(SharedMutex, deterministic_ping_pong_write_prio) {
+TEST(SharedMutex, deterministicPingPongWritePrio) {
   // This test fails in TSAN because some mutexes are lock_shared() in one
   // thread and unlock_shared() in a different thread.
   SKIP_IF(folly::kIsSanitizeThread);
@@ -1465,14 +1465,14 @@ TEST(SharedMutex, deterministic_ping_pong_write_prio) {
   }
 }
 
-TEST(SharedMutex, deterministic_ping_pong_read_prio) {
+TEST(SharedMutex, deterministicPingPongReadPrio) {
   for (int pass = 0; pass < 1; ++pass) {
     DSched sched(DSched::uniform(pass));
     runPingPong<DSharedMutexReadPriority, DeterministicAtomic>(500, 0);
   }
 }
 
-TEST(SharedMutex, ping_pong_write_prio) {
+TEST(SharedMutex, pingPongWritePrio) {
   // This test fails in TSAN because some mutexes are lock_shared() in one
   // thread and unlock_shared() in a different thread.
   SKIP_IF(folly::kIsSanitizeThread);
@@ -1481,13 +1481,13 @@ TEST(SharedMutex, ping_pong_write_prio) {
   }
 }
 
-TEST(SharedMutex, ping_pong_read_prio) {
+TEST(SharedMutex, pingPongReadPrio) {
   for (int pass = 0; pass < 1; ++pass) {
     runPingPong<SharedMutexReadPriority, atomic>(50000, 0);
   }
 }
 
-TEST(SharedMutex, release_token) {
+TEST(SharedMutex, releaseToken) {
   {
     SharedMutex mutex;
     // Ensure sufficient contention that we get deferred locks.
@@ -1514,7 +1514,7 @@ TEST(SharedMutex, release_token) {
   }
 }
 
-TEST(SharedMutex, shared_lock_basic) {
+TEST(SharedMutex, sharedLockBasic) {
   SharedMutex mutex;
 
   std::shared_lock shared_lock{mutex};
@@ -1529,14 +1529,14 @@ TEST(SharedMutex, shared_lock_basic) {
   EXPECT_TRUE(unique_lock.owns_lock());
 }
 
-TEST(SharedMutex, shared_lock_default_constructor) {
+TEST(SharedMutex, sharedLockDefaultConstructor) {
   std::shared_lock<SharedMutex> lock;
   EXPECT_FALSE(lock.owns_lock());
   EXPECT_EQ(nullptr, lock.mutex());
   EXPECT_EQ(lock.release(), nullptr);
 }
 
-TEST(SharedMutex, shared_lock_mutex_constructor) {
+TEST(SharedMutex, sharedLockMutexConstructor) {
   SharedMutex mutex;
   std::shared_lock lock{mutex};
 
@@ -1544,7 +1544,7 @@ TEST(SharedMutex, shared_lock_mutex_constructor) {
   EXPECT_EQ(&mutex, lock.mutex());
 }
 
-TEST(SharedMutex, shared_lock_defer_constructor) {
+TEST(SharedMutex, sharedLockDeferConstructor) {
   SharedMutex mutex;
   std::shared_lock lock{mutex, std::defer_lock};
 
@@ -1554,7 +1554,7 @@ TEST(SharedMutex, shared_lock_defer_constructor) {
   EXPECT_EQ(&mutex, lock.release());
 }
 
-TEST(SharedMutex, shared_lock_try_to_constructor) {
+TEST(SharedMutex, sharedLockTryToConstructor) {
   SharedMutex mutex;
 
   {
@@ -1575,7 +1575,7 @@ TEST(SharedMutex, shared_lock_try_to_constructor) {
   }
 }
 
-TEST(SharedMutex, shared_lock_adopt_constructor) {
+TEST(SharedMutex, sharedLockAdoptConstructor) {
   SharedMutex mutex;
 
   {
@@ -1596,7 +1596,7 @@ TEST(SharedMutex, shared_lock_adopt_constructor) {
   }
 }
 
-TEST(SharedMutex, shared_lock_deadline_constructor) {
+TEST(SharedMutex, sharedLockDeadlineConstructor) {
   using namespace std::chrono_literals;
   const std::chrono::time_point<std::chrono::system_clock> deadline =
       std::chrono::system_clock::now() + 1ms;
@@ -1607,7 +1607,7 @@ TEST(SharedMutex, shared_lock_deadline_constructor) {
   EXPECT_EQ(&mutex, lock.mutex());
 }
 
-TEST(SharedMutex, shared_lock_timeout_constructor) {
+TEST(SharedMutex, sharedLockTimeoutConstructor) {
   using namespace std::chrono_literals;
   SharedMutex mutex;
   std::shared_lock lock{mutex, /* timeout = */ 1ms};
@@ -1616,7 +1616,7 @@ TEST(SharedMutex, shared_lock_timeout_constructor) {
   EXPECT_EQ(&mutex, lock.mutex());
 }
 
-TEST(SharedMutex, shared_lock_double_unlock) {
+TEST(SharedMutex, sharedLockDoubleUnlock) {
   SharedMutex mutex;
   std::shared_lock lock{mutex};
   lock.unlock();
@@ -1624,13 +1624,13 @@ TEST(SharedMutex, shared_lock_double_unlock) {
   EXPECT_THROW(lock.unlock(), std::system_error);
 }
 
-TEST(SharedMutex, shared_lock_lock_no_mutex) {
+TEST(SharedMutex, sharedLockLockNoMutex) {
   std::shared_lock<SharedMutex> lock;
 
   EXPECT_THROW(lock.lock(), std::system_error);
 }
 
-TEST(SharedMutex, shared_lock_lock_already_held) {
+TEST(SharedMutex, sharedLockLockAlreadyHeld) {
   SharedMutex mutex;
   std::shared_lock lock{mutex};
 

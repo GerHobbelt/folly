@@ -34,8 +34,6 @@
  * There are two classes here - ThreadLocal and ThreadLocalPtr.  ThreadLocalPtr
  * has semantics similar to boost::thread_specific_ptr. ThreadLocal is a thin
  * wrapper around ThreadLocalPtr that manages allocation automatically.
- *
- * @author Spencer Ahrens (sahrens)
  */
 
 #pragma once
@@ -433,10 +431,10 @@ class ThreadLocalPtr {
   ThreadLocalPtr& operator=(const ThreadLocalPtr&) = delete;
 
   static auto getAccessAllThreadsLockReadHolderIfEnabled() {
-    return SharedMutex::ReadHolder(
-        AccessAllThreadsEnabled::value
-            ? &StaticMeta::instance().accessAllThreadsLock_
-            : nullptr);
+    auto& mutex = StaticMeta::instance().accessAllThreadsLock_;
+    return AccessAllThreadsEnabled::value
+        ? std::shared_lock{mutex}
+        : std::shared_lock{mutex, std::defer_lock};
   }
 
   mutable typename StaticMeta::EntryID id_;

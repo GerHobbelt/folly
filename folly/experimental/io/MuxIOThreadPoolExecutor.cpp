@@ -14,95 +14,48 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/io/Epoll.h> // @manual
-
-#if FOLLY_HAS_EPOLL
-
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-
-#include <folly/String.h>
-#include <folly/experimental/io/EpollBackend.h>
 #include <folly/experimental/io/MuxIOThreadPoolExecutor.h>
 
-#include <glog/logging.h>
+#include <stdexcept>
+
+#include <fmt/format.h>
+#include <folly/container/Enumerate.h>
+#include <folly/experimental/io/EpollBackend.h>
+#include <folly/lang/Align.h>
+#include <folly/synchronization/Latch.h>
 
 namespace folly {
-void MuxIOThreadPoolExecutor::Stats::update(
-    int numEvents, std::chrono::microseconds wait) {
-  if (numEvents < minNumEvents || minNumEvents == -1) {
-    minNumEvents = numEvents;
+
+namespace {
+
+ThrottledLifoSem::Options throttledLifoSemOptions(
+    std::chrono::nanoseconds wakeUpInterval) {
+  ThrottledLifoSem::Options opts;
+  opts.wakeUpInterval = wakeUpInterval;
+  return opts;
+}
+
+} // namespace
+
+struct MuxIOThreadPoolExecutor::EvbState {
+  EvbState() : evb(evbOptions()) {}
+
+  EventBase evb;
+  std::unique_ptr<EventBasePoller::Handle> handle;
+
+  alignas(cacheline_align_v) std::atomic<size_t> pendingTasks = 0;
+
+ private:
+  static const EventBase::Options& evbOptions() {
+#if FOLLY_HAS_EPOLL
+    static const auto options = EventBase::Options{}.setBackendFactory(
+        [] { return std::make_unique<EpollBackend>(EpollBackend::Options{}); });
+    return options;
+#else
+    throw std::invalid_argument("EpollBackend not supported");
+#endif
   }
-
-  if (numEvents > maxNumEvents) {
-    maxNumEvents = numEvents;
-  }
-
-  totalNumEvents += static_cast<size_t>(numEvents);
-
-  ++totalWakeups;
-
-  totalWait += wait;
-
-  if ((wait.count() < minWait.count()) || (minWait.count() == 0)) {
-    minWait = wait;
-  }
-
-  if (wait.count() > maxWait.count()) {
-    maxWait = wait;
-  }
-}
-
-MuxIOThreadPoolExecutor::Handler::~Handler() {}
-
-MuxIOThreadPoolExecutor::EvbHandler::EvbHandler(folly::EventBase* e)
-    : Handler(false /*handleInline*/), evb(e) {
-  fd = evb->getBackend()->getPollableFd();
-}
-
-MuxIOThreadPoolExecutor::EvbHandler::~EvbHandler() {}
-
-void MuxIOThreadPoolExecutor::EvbHandler::handle(
-    MuxIOThreadPoolExecutor* /*parent*/) {
-  evb->loopPollSetup();
-  do {
-    evb->loopPoll();
-  } while (evb->getNumLoopCallbacks() > 0);
-  evb->loopPollCleanup();
-}
-
-MuxIOThreadPoolExecutor::EventFdHandler::EventFdHandler()
-    : Handler(true /*handleInline*/) {
-  fd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-  if (fd < 0) {
-    throw std::runtime_error(folly::errnoStr(errno));
-  }
-}
-
-MuxIOThreadPoolExecutor::EventFdHandler::~EventFdHandler() {
-  ::close(fd);
-}
-
-void MuxIOThreadPoolExecutor::EventFdHandler::notifyFd() {
-  uint64_t val = 1;
-  auto ret = ::write(fd, &val, sizeof(val));
-  if (ret != sizeof(val)) {
-    throw std::runtime_error(folly::errnoStr(errno));
-  }
-}
-
-void MuxIOThreadPoolExecutor::EventFdHandler::drainFd() {
-  uint64_t data = 0;
-  int ret;
-  do {
-    ret = ::read(fd, &data, sizeof(data));
-  } while (ret < 0 && errno == EINTR);
-}
-
-void MuxIOThreadPoolExecutor::EventFdHandler::handle(
-    MuxIOThreadPoolExecutor* parent) {
-  parent->handleDequeue();
-}
+};
 
 MuxIOThreadPoolExecutor::MuxIOThreadPoolExecutor(
     size_t numThreads,
@@ -111,119 +64,44 @@ MuxIOThreadPoolExecutor::MuxIOThreadPoolExecutor(
     EventBaseManager* ebm)
     : IOThreadPoolExecutorBase(
           numThreads, numThreads, std::move(threadFactory)),
-      options_(options),
-      nextEVB_(0),
-      eventBaseManager_(ebm) {
-  returnList_.arm();
-  epFd_ = ::epoll_create1(EPOLL_CLOEXEC);
-
-  if (epFd_ < 0) {
-    throw std::runtime_error(folly::errnoStr(errno));
-  }
-
-  addHandler(&returnEvfd_, true /*first*/, true /*persist*/);
-
-  if (options_.numEvbs == 0) {
-    options_.numEvbs = numThreads;
-  }
-
-  folly::ThrottledLifoSem::Options opts;
-  opts.wakeUpInterval = options_.wakeUpInterval;
-  queue_ = std::make_unique<
-      folly::UnboundedBlockingQueue<HandlerTask, folly::ThrottledLifoSem>>(
-      opts);
-
-  evbs_.reserve(options_.numEvbs);
-  for (size_t i = 0; i < options_.numEvbs; ++i) {
-    auto evb = makeEventBase();
-    auto handler = std::make_unique<EvbHandler>(evb.get());
-    evbs_.emplace_back(std::move(evb));
-    auto* ptr = handler.get();
-    ptr->evb->runInEventBaseThread([]() {});
-    // Run the first iteration to set up internal handlers.
-    handler->handle(this);
-
-    handlers_.emplace_back(std::move(handler));
-    addHandler(ptr, true /*first*/, false /*persist*/);
-  }
-
+      options_(std::move(options)),
+      numEventBases_(
+          options_.numEventBases == 0 ? numThreads : options_.numEventBases),
+      eventBaseManager_(ebm),
+      readyQueueSem_(throttledLifoSemOptions(options.wakeUpInterval)) {
   setNumThreads(numThreads);
+
+  fdGroup_ = EventBasePoller::get().makeFdGroup(
+      [this](Range<EventBasePoller::Handle**> readyHandles) noexcept {
+        for (auto* handle : readyHandles) {
+          readyQueue_.enqueue(handle);
+        }
+        readyQueueSem_.post(readyHandles.size());
+      });
+
+  evbStates_.reserve(numEventBases_);
+  Latch allEvbsRunning(numEventBases_);
+  for (size_t i = 0; i < numEventBases_; ++i) {
+    auto& evbState = evbStates_.emplace_back(std::make_unique<EvbState>());
+    evbState->evb.setStrictLoopThread();
+    evbState->evb.runInEventBaseThread([&] { allEvbsRunning.count_down(); });
+    // Keep the loop running until shutdown.
+    keepAlives_.emplace_back(&evbState->evb);
+    auto fd = evbState->evb.getBackend()->getPollableFd();
+    CHECK_GE(fd, 0);
+    evbState->handle = fdGroup_->add(fd, evbState.get());
+  }
+  allEvbsRunning.wait();
+
   registerThreadPoolExecutor(this);
-  if (options.enableThreadIdCollection) {
+  if (options_.enableThreadIdCollection) {
     threadIdCollector_ = std::make_unique<ThreadIdWorkerProvider>();
   }
-
-  mainThread_ = std::make_unique<std::thread>([this]() { mainThreadFunc(); });
 }
 
 MuxIOThreadPoolExecutor::~MuxIOThreadPoolExecutor() {
   deregisterThreadPoolExecutor(this);
   stop();
-  stop_ = true;
-  wakeup(1);
-  mainThread_->join();
-  queue_.reset();
-  ::close(epFd_);
-}
-
-void MuxIOThreadPoolExecutor::mainThreadFunc() {
-  std::vector<struct epoll_event> events(options_.maxEvents);
-  while (!stop_.load()) {
-    auto start = std::chrono::steady_clock::now();
-    auto ret = ::epoll_wait(epFd_, events.data(), events.size(), -1);
-    if (ret <= 0) {
-      continue;
-    }
-    auto end = std::chrono::steady_clock::now();
-    auto delta =
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    stats_.update(ret, delta);
-    for (int i = 0; i < ret; ++i) {
-      CHECK(events[i].data.ptr != nullptr);
-      auto* handler = static_cast<Handler*>(events[i].data.ptr);
-
-      if (handler->handleInline()) {
-        handler->handle(this);
-      } else {
-        queue_->add(HandlerTask(handler));
-      }
-    }
-  }
-}
-
-void MuxIOThreadPoolExecutor::addHandler(
-    MuxIOThreadPoolExecutor::Handler* handler, bool first, bool persist) {
-  CHECK(!(persist && !first));
-
-  epoll_event event = {};
-  event.data.ptr = handler;
-  event.events = (persist ? 0 : EPOLLONESHOT) | EPOLLIN;
-
-  int fd = handler->fd;
-
-  auto ret = first ? (::epoll_ctl(epFd_, EPOLL_CTL_ADD, fd, &event))
-                   : (::epoll_ctl(epFd_, EPOLL_CTL_MOD, fd, &event));
-
-  CHECK_EQ(ret, 0);
-}
-
-void MuxIOThreadPoolExecutor::enqueueHandler(Handler* handler) {
-  if (returnList_.insertHeadArm(handler)) {
-    notifyFd();
-  }
-}
-
-void MuxIOThreadPoolExecutor::handleDequeue() {
-  drainFd();
-
-  while (auto* handler = returnList_.arm()) {
-    while (handler) {
-      auto* next = handler->next();
-      handler->next() = nullptr;
-      addHandler(handler, false /*first*/, false /*persist*/);
-      handler = next;
-    }
-  }
 }
 
 void MuxIOThreadPoolExecutor::add(Func func) {
@@ -232,39 +110,38 @@ void MuxIOThreadPoolExecutor::add(Func func) {
 
 void MuxIOThreadPoolExecutor::add(
     Func func, std::chrono::milliseconds expiration, Func expireCallback) {
-  // ensureActiveThreads();
-  auto evb = pickEVB();
-
+  auto& evbState = pickEvbState();
   auto task = Task(std::move(func), expiration, std::move(expireCallback));
-  auto wrappedFunc = [this, task = std::move(task)]() mutable {
-    auto ioThread = *thisThread_;
+  registerTaskEnqueue(task);
+  auto wrappedFunc = [this, &evbState, task = std::move(task)]() mutable {
+    const auto& ioThread = *thisThread_;
     runTask(ioThread, std::move(task));
-    pendingTasks_--;
+    evbState.pendingTasks--;
   };
 
-  pendingTasks_++;
-  evb->runInEventBaseThread(std::move(wrappedFunc));
+  evbState.pendingTasks++;
+  evbState.evb.runInEventBaseThread(std::move(wrappedFunc));
+}
+
+void MuxIOThreadPoolExecutor::validateNumThreads(size_t numThreads) {
+  if (numThreads == 0 || numThreads > numEventBases_) {
+    throw std::invalid_argument(fmt::format(
+        "Unsupported number of threads: {} (with {} EventBases)",
+        numThreads,
+        numEventBases_));
+  }
 }
 
 std::shared_ptr<ThreadPoolExecutor::Thread>
 MuxIOThreadPoolExecutor::makeThread() {
-  return std::make_shared<IOThread>(this);
+  return std::make_shared<IOThread>();
 }
 
 void MuxIOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   this->threadPoolHook_.registerThread();
 
   const auto ioThread = std::static_pointer_cast<IOThread>(thread);
-  {
-    // we need to pick an EVB here for the IOThreadPoolDeadlockDetectorObserver
-    // TODO - fix the IOThreadPoolDeadlockDetectorObserver to support
-    // the MuxIOThreadPoolExecutor too
-    auto* evb = pickEVB();
-    ioThread->eventBase = evb;
-  }
   thisThread_.reset(new std::shared_ptr<IOThread>(ioThread));
-
-  eventBaseManager_->clearEventBase();
 
   auto tid = folly::getOSThreadID();
   if (threadIdCollector_) {
@@ -277,80 +154,123 @@ void MuxIOThreadPoolExecutor::threadRun(ThreadPtr thread) {
   };
   thread->startupBaton.post();
 
-  while (ioThread->shouldRun) {
-    auto entry = queue_->take();
-    auto* handler = entry.handler;
-    auto* evb = handler->getEventBase();
-    CHECK(!!evb);
-    eventBaseManager_->setEventBase(evb, false);
-    handler->handle(this);
-    eventBaseManager_->clearEventBase();
-    enqueueHandler(handler);
-  };
+  ExecutorBlockingGuard guard{
+      ExecutorBlockingGuard::TrackTag{}, this, getName()};
 
-  ioThread->eventBase = nullptr;
-  eventBaseManager_->clearEventBase();
+  while (true) {
+    readyQueueSem_.wait(WaitOptions{}.spin_max(options_.idleSpinMax));
+    auto handle = readyQueue_.dequeue();
+    if (handle == nullptr) {
+      break;
+    }
+    auto* evbState = handle->getUserData<EvbState>();
+    auto* evb = &evbState->evb;
+
+    ioThread->curEvbState = evbState;
+    eventBaseManager_->setEventBase(evb, false);
+
+    auto status = evb->loopWithSuspension();
+    CHECK(status != EventBase::LoopStatus::kError);
+
+    eventBaseManager_->clearEventBase();
+    ioThread->curEvbState = nullptr;
+
+    handle->handoff(status == EventBase::LoopStatus::kDone);
+  }
+
+  std::unique_lock w{threadListLock_};
+  for (auto& o : observers_) {
+    o->threadStopped(thread.get());
+  }
+  threadList_.remove(thread);
+  stoppedThreads_.add(thread);
 }
 
-folly::EventBase* MuxIOThreadPoolExecutor::pickEVB() {
-  auto& evb = evbs_[nextEVB_++ % evbs_.size()];
+MuxIOThreadPoolExecutor::EvbState& MuxIOThreadPoolExecutor::pickEvbState() {
+  if (auto ioThread = thisThread_.get_existing()) {
+    return *(*ioThread)->curEvbState;
+  }
 
-  return evb.get();
+  return *evbStates_[nextEvb_++ % evbStates_.size()];
 }
 
 size_t MuxIOThreadPoolExecutor::getPendingTaskCountImpl() const {
-  return pendingTasks_.load();
+  size_t ret = 0;
+  for (const auto& evbState : evbStates_) {
+    ret += evbState->pendingTasks.load();
+  }
+  return ret;
+}
+
+void MuxIOThreadPoolExecutor::addObserver(std::shared_ptr<Observer> o) {
+  if (auto ioObserver = dynamic_cast<IOObserver*>(o.get())) {
+    // All EventBases are created at construction time.
+    for (const auto& evbState : evbStates_) {
+      ioObserver->registerEventBase(evbState->evb);
+    }
+  }
+  ThreadPoolExecutor::addObserver(std::move(o));
+}
+
+void MuxIOThreadPoolExecutor::maybeUnregisterEventBases(Observer* o) {
+  if (auto ioObserver = dynamic_cast<IOObserver*>(o)) {
+    for (const auto& evbState : evbStates_) {
+      ioObserver->unregisterEventBase(evbState->evb);
+    }
+  }
+}
+
+void MuxIOThreadPoolExecutor::removeObserver(std::shared_ptr<Observer> o) {
+  maybeUnregisterEventBases(o.get());
+  ThreadPoolExecutor::addObserver(std::move(o));
 }
 
 std::vector<folly::Executor::KeepAlive<folly::EventBase>>
 MuxIOThreadPoolExecutor::getAllEventBases() {
-  std::vector<Executor::KeepAlive<EventBase>> evbs;
-  for (auto& evb : evbs_) {
-    evbs.emplace_back(evb.get());
-  }
-  return evbs;
+  return keepAlives_;
+}
+
+folly::EventBaseManager* MuxIOThreadPoolExecutor::getEventBaseManager() {
+  return eventBaseManager_;
 }
 
 EventBase* MuxIOThreadPoolExecutor::getEventBase() {
-  return pickEVB();
-}
-
-void MuxIOThreadPoolExecutor::wakeup(size_t num) {
-  for (size_t i = 0; i < num; ++i) {
-    auto& evb = evbs_[i % evbs_.size()];
-    evb->runInEventBaseThread([]() {});
-  }
+  return &pickEvbState().evb;
 }
 
 void MuxIOThreadPoolExecutor::stopThreads(size_t n) {
-  std::vector<ThreadPtr> stoppedThreads;
-  stoppedThreads.reserve(n);
   for (size_t i = 0; i < n; i++) {
-    const auto ioThread =
-        std::static_pointer_cast<IOThread>(threadList_.get()[i]);
-    for (auto& o : observers_) {
-      o->threadStopped(ioThread.get());
-    }
-    ioThread->shouldRun = false;
-    stoppedThreads.push_back(ioThread);
+    readyQueue_.enqueue(nullptr); // Poison.
   }
-  wakeup(n);
-  for (const auto& thread : stoppedThreads) {
-    stoppedThreads_.add(thread);
-    threadList_.remove(thread);
-  }
+  readyQueueSem_.post(n);
 }
 
-std::unique_ptr<folly::EventBase> MuxIOThreadPoolExecutor::makeEventBase() {
-  return std::make_unique<folly::EventBase>(
-      EventBase::Options{} //
-          .setBackendFactory([] {
-            return std::make_unique<EpollBackend>(EpollBackend::Options{});
-          }) //
-          .setStrictLoopThread(true) //
-          // To support IOThreadPoolDeadlockDetectorObserver.
-          .setEnableThreadIdCollection(true));
+void MuxIOThreadPoolExecutor::stop() {
+  join();
+}
+
+void MuxIOThreadPoolExecutor::join() {
+  if (!joinKeepAliveOnce()) {
+    return; // Already called.
+  }
+
+  {
+    std::shared_lock<folly::SharedMutex> lock{threadListLock_};
+    for (const auto& o : observers_) {
+      maybeUnregisterEventBases(o.get());
+    }
+  }
+
+  for (auto&& [i, evbState] : folly::enumerate(evbStates_)) {
+    // Release the keepalive so the loop can complete and the handle be
+    // reclaimed.
+    keepAlives_[i].reset();
+    fdGroup_->reclaim(std::move(evbState->handle));
+  }
+  fdGroup_.reset();
+  evbStates_.clear();
+
+  stopAndJoinAllThreads(/* isJoin */ true);
 }
 
 } // namespace folly
-#endif

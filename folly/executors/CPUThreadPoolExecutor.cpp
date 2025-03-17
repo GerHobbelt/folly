@@ -36,6 +36,18 @@ namespace folly {
 
 const size_t CPUThreadPoolExecutor::kDefaultMaxQueueSize = 1 << 14;
 
+CPUThreadPoolExecutor::CPUTask::CPUTask(
+    Func&& f,
+    std::chrono::milliseconds expiration,
+    Func&& expireCallback,
+    int8_t pri)
+    : Task(std::move(f), expiration, std::move(expireCallback), pri) {
+  DCHECK(func_); // Empty func reserved as poison.
+}
+
+CPUThreadPoolExecutor::CPUTask::CPUTask()
+    : Task(nullptr, std::chrono::milliseconds(0), nullptr) {}
+
 /* static */ auto CPUThreadPoolExecutor::makeDefaultQueue()
     -> std::unique_ptr<BlockingQueue<CPUTask>> {
   return std::make_unique<UnboundedBlockingQueue<CPUTask>>();
@@ -223,15 +235,22 @@ void CPUThreadPoolExecutor::addImpl(
     int8_t priority,
     std::chrono::milliseconds expiration,
     Func expireCallback) {
-  if (withPriority) {
-    CHECK(getNumPriorities() > 0);
+  if (!func) {
+    // Reserve empty funcs as poison by logging the error inline.
+    invokeCatchingExns("ThreadPoolExecutor: func", std::move(func));
+    return;
   }
+
+  if (withPriority) {
+    CHECK_GT(getNumPriorities(), 0);
+  }
+
   CPUTask task(
       std::move(func), expiration, std::move(expireCallback), priority);
   if (auto queueObserver = getQueueObserver(priority)) {
-    task.queueObserverPayload() =
-        queueObserver->onEnqueued(task.context_.get());
+    task.queueObserverPayload_ = queueObserver->onEnqueued(task.context_.get());
   }
+  registerTaskEnqueue(task);
 
   // It's not safe to expect that the executor is alive after a task is added to
   // the queue (this task could be holding the last KeepAlive and when finished
@@ -260,6 +279,10 @@ uint8_t CPUThreadPoolExecutor::getNumPriorities() const {
 
 size_t CPUThreadPoolExecutor::getTaskQueueSize() const {
   return taskQueue_->size();
+}
+
+WorkerProvider* CPUThreadPoolExecutor::getThreadIdCollector() {
+  return threadIdCollector_.get();
 }
 
 BlockingQueue<CPUThreadPoolExecutor::CPUTask>*
@@ -312,9 +335,9 @@ void CPUThreadPoolExecutor::threadRun(ThreadPtr thread) {
 
     // Handle thread stopping, either by task timeout, or
     // by 'poison' task added in join() or stop().
-    if (FOLLY_UNLIKELY(!task || task.value().poison)) {
+    if (FOLLY_UNLIKELY(!task || !task->func_)) {
       // Actually remove the thread from the list.
-      SharedMutex::WriteHolder w{&threadListLock_};
+      std::unique_lock w{threadListLock_};
       if (taskShouldStop(task)) {
         for (auto& o : observers_) {
           o->threadStopped(thread.get());
@@ -327,13 +350,13 @@ void CPUThreadPoolExecutor::threadRun(ThreadPtr thread) {
       }
     }
 
-    if (auto queueObserver = getQueueObserver(task->queuePriority())) {
-      queueObserver->onDequeued(task->queueObserverPayload());
+    if (auto queueObserver = getQueueObserver(task->priority())) {
+      queueObserver->onDequeued(task->queueObserverPayload_);
     }
     runTask(thread, std::move(task.value()));
 
     if (FOLLY_UNLIKELY(threadsToStop_ > 0 && !isJoin_)) {
-      SharedMutex::WriteHolder w{&threadListLock_};
+      std::unique_lock w{threadListLock_};
       if (tryDecrToStop()) {
         threadList_.remove(thread);
         stoppedThreads_.add(thread);

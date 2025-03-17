@@ -35,6 +35,8 @@ static constexpr auto seq_cst = std::memory_order_seq_cst;
 
 static_assert(
     std::is_same_v<int, folly::atomic_value_type_t<std::atomic<int>>>);
+static_assert(
+    std::is_same_v<int, folly::atomic_value_type<std::atomic<int>>::type>);
 
 namespace folly {
 
@@ -585,7 +587,7 @@ struct AtomicFetchModifyTest : testing::Test {};
 
 TEST_F(AtomicFetchModifyTest, example) {
   constexpr auto prime255 = 1619;
-  constexpr auto op = [](auto _) { return (_ + 3) % prime255; };
+  constexpr auto op = [=](auto _) { return (_ + 3) % prime255; };
   std::atomic<int> cell{2};
   auto const prev = folly::atomic_fetch_modify(cell, op, relaxed);
   EXPECT_EQ(2, prev);
@@ -602,7 +604,7 @@ TEST_F(AtomicFetchModifyTest, contention) {
     }
     return v;
   };
-  constexpr auto op_ = [](auto _) { return (_ + 3) % prime255; };
+  constexpr auto op_ = [=](auto _) { return (_ + 3) % prime255; };
 
   // run concurrent atomic-fetch-modify ops until enough contention is observed,
   // where contention observed is ~ number of times an op is repeated

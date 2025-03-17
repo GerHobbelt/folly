@@ -261,7 +261,6 @@ void checkArrayIndex(const T& array, size_t index) {
 ////////////////////////////////////////////////////////////////////////////////
 // Benchmarks for ASCII to int conversion
 ////////////////////////////////////////////////////////////////////////////////
-// @author: Rajat Goel (rajat)
 
 static int64_t handwrittenAtoi(const char* start, const char* end) {
   bool positive = true;
@@ -278,10 +277,10 @@ static int64_t handwrittenAtoi(const char* start, const char* end) {
   switch (*start) {
     case '-':
       positive = false;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     case '+':
       ++start;
-      FOLLY_FALLTHROUGH;
+      [[fallthrough]];
     default:
       break;
   }

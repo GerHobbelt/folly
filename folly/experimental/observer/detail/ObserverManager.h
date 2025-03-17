@@ -68,11 +68,11 @@ class ObserverManager {
 
     auto& instance = getInstance();
 
-    SharedMutexReadPriority::ReadHolder rh(instance.versionMutex_);
+    std::shared_lock rh(instance.versionMutex_);
 
     instance.scheduleCurrent([coreWeak = folly::to_weak_ptr(std::move(core)),
                               &instance,
-                              rh = std::move(rh)]() {
+                              rh_2 = std::move(rh)]() {
       if (auto coreShared = coreWeak.lock()) {
         coreShared->refresh(instance.version_);
       }
@@ -92,7 +92,7 @@ class ObserverManager {
       auto inManagerThread = std::exchange(inManagerThread_, true);
       SCOPE_EXIT { inManagerThread_ = inManagerThread; };
 
-      SharedMutexReadPriority::ReadHolder rh(instance.versionMutex_);
+      std::shared_lock rh(instance.versionMutex_);
 
       core->refresh(instance.version_);
     });
@@ -241,7 +241,7 @@ class ObserverManager {
    * happen if CurrentQueue is empty (notice that we use read-priority shared
    * mutex).
    */
-  SharedMutexReadPriority versionMutex_;
+  mutable SharedMutexReadPriority versionMutex_;
   std::atomic<size_t> version_{1};
 
   using CycleDetector = GraphCycleDetector<const Core*>;

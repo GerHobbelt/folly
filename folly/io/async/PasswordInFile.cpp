@@ -17,6 +17,7 @@
 #include <folly/io/async/PasswordInFile.h>
 
 #include <folly/FileUtil.h>
+#include <folly/portability/OpenSSL.h>
 
 using namespace std;
 

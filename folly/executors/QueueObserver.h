@@ -71,7 +71,7 @@ class WorkerProvider {
 class GetThreadIdCollector {
  public:
   virtual ~GetThreadIdCollector() = default;
-  virtual folly::WorkerProvider* getThreadIdCollector() = 0;
+  virtual WorkerProvider* getThreadIdCollector() = 0;
 };
 
 class ThreadIdWorkerProvider : public WorkerProvider {
@@ -84,7 +84,7 @@ class ThreadIdWorkerProvider : public WorkerProvider {
 
  private:
   Synchronized<std::unordered_set<pid_t>> osThreadIds_;
-  SharedMutex threadsExitMutex_;
+  mutable SharedMutex threadsExitMutex_;
 };
 
 class QueueObserver {

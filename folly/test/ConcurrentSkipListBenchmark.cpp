@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-// @author: Xin Liu <xliux@fb.com>
-
 #include <folly/ConcurrentSkipList.h>
 
 #include <map>
@@ -408,15 +406,15 @@ class ConcurrentAccessData {
   }
 
   inline bool setFind(int idx, ValueType val) {
-    RWSpinLock::ReadHolder g(locks_[idx]);
+    std::shared_lock g(*locks_[idx]);
     return sets_[idx].find(val) == sets_[idx].end();
   }
   inline void setInsert(int idx, ValueType val) {
-    RWSpinLock::WriteHolder g(locks_[idx]);
+    std::unique_lock g(*locks_[idx]);
     sets_[idx].insert(val);
   }
   inline void setErase(int idx, ValueType val) {
-    RWSpinLock::WriteHolder g(locks_[idx]);
+    std::unique_lock g(*locks_[idx]);
     sets_[idx].erase(val);
   }
 

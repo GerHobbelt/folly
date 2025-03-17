@@ -83,7 +83,6 @@ constexpr std::memory_order atomic_compare_exchange_succ(
 constexpr std::memory_order atomic_compare_exchange_succ(
     std::memory_order succ, std::memory_order fail) {
   constexpr auto const cond = false //
-      || (FOLLY_CPLUSPLUS < 201702L) //
       || (kGlibcxxVer && kGlibcxxVer < 12 && kGlibcxxAssertions) //
       || (kIsSanitizeThread && kIsClang) //
       || (kIsSanitize && !kIsClang && kGnuc) //
@@ -232,7 +231,7 @@ enum class atomic_fetch_bit_op_native_instr_mnem { bts, btr, btc };
 enum class atomic_fetch_bit_op_native_instr_suff { w, l, q };
 
 #define FOLLY_DETAIL_ATOMIC_BIT_OP_ONE(mnem, suff)                            \
-  if FOLLY_CXX17_CONSTEXPR (                                                  \
+  if constexpr (                                                              \
       Instr == mnem_t::mnem && sizeof(Int) == 1 << (int(suff_t::suff) + 1)) { \
     if (order == ::std::memory_order_relaxed) {                               \
       asm("lock " #mnem #suff " %[bit], %[ptr]"                               \

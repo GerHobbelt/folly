@@ -232,9 +232,6 @@ size_t allocationBytesForOverAligned(size_t n) {
 /**
  * For exception safety and consistency with make_shared. Erase me when
  * we have std::make_unique().
- *
- * @author Louis Brandy (ldbrandy@fb.com)
- * @author Xu Ning (xning@fb.com)
  */
 
 #if __cplusplus >= 201402L || __cpp_lib_make_unique >= 201304L || \
@@ -487,7 +484,7 @@ inline erased_unique_ptr empty_erased_unique_ptr() {
 //  reinterpret_pointer_cast
 //
 //  import or backport
-#if FOLLY_CPLUSPLUS >= 201703L && __cpp_lib_shared_ptr_arrays >= 201611
+#if __cpp_lib_shared_ptr_arrays >= 201611
 using std::reinterpret_pointer_cast;
 #else
 template <typename T, typename U>

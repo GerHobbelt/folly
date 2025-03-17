@@ -14,9 +14,6 @@
  * limitations under the License.
  */
 
-//
-// Author: andrei.alexandrescu@fb.com
-
 #include <folly/FBString.h>
 
 #include <atomic>
@@ -39,6 +36,45 @@
 
 using namespace std;
 using namespace folly;
+
+template <typename A, typename B>
+using detect_eq = decltype(FOLLY_DECLVAL(A) == FOLLY_DECLVAL(B));
+template <typename A, typename B>
+using detect_ne = decltype(FOLLY_DECLVAL(A) != FOLLY_DECLVAL(B));
+template <typename A, typename B>
+using detect_lt = decltype(FOLLY_DECLVAL(A) < FOLLY_DECLVAL(B));
+template <typename A, typename B>
+using detect_le = decltype(FOLLY_DECLVAL(A) <= FOLLY_DECLVAL(B));
+template <typename A, typename B>
+using detect_gt = decltype(FOLLY_DECLVAL(A) > FOLLY_DECLVAL(B));
+template <typename A, typename B>
+using detect_ge = decltype(FOLLY_DECLVAL(A) >= FOLLY_DECLVAL(B));
+#if FOLLY_CPLUSPLUS >= 202002
+template <typename A, typename B>
+using detect_3w = decltype(FOLLY_DECLVAL(A) <=> FOLLY_DECLVAL(B));
+#endif
+
+static_assert(!std::is_constructible_v<fbstring, nullptr_t>);
+static_assert(!std::is_assignable_v<fbstring, nullptr_t>);
+
+static_assert(!is_detected_v<detect_eq, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_ne, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_lt, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_le, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_gt, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_ge, fbstring, nullptr_t>);
+
+static_assert(!is_detected_v<detect_eq, nullptr_t, fbstring>);
+static_assert(!is_detected_v<detect_ne, nullptr_t, fbstring>);
+static_assert(!is_detected_v<detect_lt, nullptr_t, fbstring>);
+static_assert(!is_detected_v<detect_le, nullptr_t, fbstring>);
+static_assert(!is_detected_v<detect_gt, nullptr_t, fbstring>);
+static_assert(!is_detected_v<detect_ge, nullptr_t, fbstring>);
+
+#if FOLLY_CPLUSPLUS >= 202002
+static_assert(!is_detected_v<detect_3w, fbstring, nullptr_t>);
+static_assert(!is_detected_v<detect_3w, nullptr_t, fbstring>);
+#endif
 
 namespace {
 
@@ -283,8 +319,8 @@ void clause11_21_4_5(String& test) {
     test = test[i];
   }
 
-  EXPECT_THROW(test.at(test.size()), std::out_of_range);
-  EXPECT_THROW(as_const(test).at(test.size()), std::out_of_range);
+  EXPECT_THROW(void(test.at(test.size())), std::out_of_range);
+  EXPECT_THROW(void(as_const(test).at(test.size())), std::out_of_range);
 }
 
 template <class String>
@@ -1290,10 +1326,10 @@ TEST(FBString, testMoveOperatorPlusRhs) {
 //      other than libstdc++. Someday if we deem it important to present
 //      identical undefined behavior for other platforms, we can re-visit this.
 TEST(FBString, testConstructionFromLiteralZero) {
-  EXPECT_THROW(fbstring s(nullptr), std::logic_error);
+  EXPECT_THROW(fbstring s(static_cast<const char*>(nullptr)), std::logic_error);
 }
 
-TEST(FBString, testFixedBugs_D479397) {
+TEST(FBString, testFixedBugsD479397) {
   fbstring str(1337, 'f');
   fbstring cp = str;
   cp.clear();
@@ -1301,7 +1337,7 @@ TEST(FBString, testFixedBugs_D479397) {
   EXPECT_EQ(str.front(), 'f');
 }
 
-TEST(FBString, testFixedBugs_D481173) {
+TEST(FBString, testFixedBugsD481173) {
   fbstring str(1337, 'f');
   for (int i = 0; i < 2; ++i) {
     fbstring cp = str;
@@ -1311,30 +1347,30 @@ TEST(FBString, testFixedBugs_D481173) {
   }
 }
 
-TEST(FBString, testFixedBugs_D580267_push_back) {
+TEST(FBString, testFixedBugsD580267PushBack) {
   fbstring str(1337, 'f');
   fbstring cp = str;
   cp.push_back('f');
 }
 
-TEST(FBString, testFixedBugs_D580267_operator_add_assign) {
+TEST(FBString, testFixedBugsD580267OperatorAddAssign) {
   fbstring str(1337, 'f');
   fbstring cp = str;
   cp += "bb";
 }
 
-TEST(FBString, testFixedBugs_D661622) {
+TEST(FBString, testFixedBugsD661622) {
   folly::basic_fbstring<wchar_t> s;
   EXPECT_EQ(0, s.size());
 }
 
-TEST(FBString, testFixedBugs_D785057) {
+TEST(FBString, testFixedBugsD785057) {
   fbstring str(1337, 'f');
   std::swap(str, str);
   EXPECT_EQ(1337, str.size());
 }
 
-TEST(FBString, testFixedBugs_D1012196_allocator_malloc) {
+TEST(FBString, testFixedBugsD1012196AllocatorMalloc) {
   fbstring str(128, 'f');
   str.clear(); // Empty medium string.
   fbstring copy(str); // Medium string of 0 capacity.
@@ -1342,7 +1378,7 @@ TEST(FBString, testFixedBugs_D1012196_allocator_malloc) {
   EXPECT_GE(copy.capacity(), 1);
 }
 
-TEST(FBString, testFixedBugs_D2813713) {
+TEST(FBString, testFixedBugsD2813713) {
   fbstring s1("a");
   s1.reserve(8); // Trigger the optimized code path.
   auto test1 = '\0' + std::move(s1);
@@ -1354,11 +1390,11 @@ TEST(FBString, testFixedBugs_D2813713) {
   EXPECT_EQ(2, test2.size());
 }
 
-TEST(FBString, testFixedBugs_D3698862) {
+TEST(FBString, testFixedBugsD3698862) {
   EXPECT_EQ(fbstring().find(fbstring(), 4), fbstring::npos);
 }
 
-TEST(FBString, testFixedBugs_D4355440) {
+TEST(FBString, testFixedBugsD4355440) {
   SKIP_IF(!usingJEMalloc());
 
   fbstring str(1337, 'f');
@@ -1726,8 +1762,36 @@ TEST(WFBString, compareToStdWStringLong) {
 }
 #endif
 
-#if FOLLY_HAS_STRING_VIEW
 struct custom_traits : public std::char_traits<char> {};
+
+TEST(FBString, convertFromStringView) {
+  {
+    folly::fbstring test{std::string_view("foo")};
+    std::string control{std::string_view("foo")};
+    EXPECT_EQ(test, "foo");
+    EXPECT_EQ(test, control);
+  }
+  {
+    folly::fbstring test{std::string_view("abcfooabc"), 3, 3};
+    std::string control{std::string_view("abcfooabc"), 3, 3};
+    EXPECT_EQ(test, "foo");
+    EXPECT_EQ(test, control);
+  }
+  {
+    using sv_type = std::basic_string_view<char, custom_traits>;
+    folly::basic_fbstring<char, custom_traits> test{sv_type("foo")};
+    std::basic_string<char, custom_traits> control{sv_type("foo")};
+    EXPECT_EQ(test, "foo");
+    EXPECT_EQ(test, control);
+  }
+  {
+    using sv_type = std::basic_string_view<char, custom_traits>;
+    folly::basic_fbstring<char, custom_traits> test{sv_type("abcfooabc"), 3, 3};
+    std::basic_string<char, custom_traits> control{sv_type("abcfooabc"), 3, 3};
+    EXPECT_EQ(test, "foo");
+    EXPECT_EQ(test, control);
+  }
+}
 
 TEST(FBString, convertToStringView) {
   folly::fbstring s("foo");
@@ -1737,7 +1801,6 @@ TEST(FBString, convertToStringView) {
   std::basic_string_view<char, custom_traits> sv2 = s2;
   EXPECT_EQ(sv2, "bar");
 }
-#endif
 
 TEST(FBString, Format) {
   EXPECT_EQ("  foo", fmt::format("{:>5}", folly::fbstring("foo")));

@@ -24,6 +24,8 @@
 #include <type_traits>
 
 #include <folly/Portability.h>
+#include <folly/lang/CheckedMath.h>
+#include <folly/portability/Constexpr.h>
 
 namespace folly {
 
@@ -75,11 +77,6 @@ struct floating_point_integral_constant {
   constexpr operator value_type() const noexcept { return value; }
   constexpr value_type operator()() const noexcept { return value; }
 };
-#if FOLLY_CPLUSPLUS < 201703L
-template <typename T, typename S, S Value>
-constexpr typename floating_point_integral_constant<T, S, Value>::value_type
-    floating_point_integral_constant<T, S, Value>::value;
-#endif
 
 //  ----
 
@@ -225,11 +222,6 @@ struct constexpr_iterated_squares_desc {
     return {power, scale};
   }
 };
-#if FOLLY_CPLUSPLUS < 201703L
-template <typename T, std::size_t Size>
-constexpr typename constexpr_iterated_squares_desc<T, Size>::size_type
-    constexpr_iterated_squares_desc<T, Size>::size;
-#endif
 
 /// constexpr_iterated_squares_desc_v
 ///
@@ -420,7 +412,7 @@ template <typename T>
 constexpr T constexpr_ceil(T t, T round) {
   return round == T(0)
       ? t
-      : ((t + (t < T(0) ? T(0) : round - T(1))) / round) * round;
+      : ((t + (t <= T(0) ? T(0) : round - T(1))) / round) * round;
 }
 
 /// constexpr_mult
@@ -763,6 +755,22 @@ constexpr T constexpr_add_overflow_clamped(T a, T b) {
   static_assert(
       !std::is_integral<T>::value || sizeof(T) <= sizeof(M),
       "Integral type too large!");
+  if (!folly::is_constant_evaluated_or(true)) {
+    if constexpr (std::is_integral_v<T>) {
+      T ret{};
+      if (FOLLY_UNLIKELY(!checked_add(&ret, a, b))) {
+        if constexpr (std::is_signed_v<T>) {
+          // Could be either overflow or underflow for signed types.
+          // Can only be underflow if both inputs are negative.
+          if (a < 0 && b < 0) {
+            return L::min();
+          }
+        }
+        return L::max();
+      }
+      return ret;
+    }
+  }
   // clang-format off
   return
     // don't do anything special for non-integral types.
@@ -778,7 +786,7 @@ constexpr T constexpr_add_overflow_clamped(T a, T b) {
     // a < 0 && b >= 0, `a + b` will always be in valid range of type T.
     !(b < 0) ? a + b :
     // a < 0 && b < 0, keep the result >= MIN.
-               a + constexpr_max(b, T(L::min() - a));
+              a + constexpr_max(b, T(L::min() - a));
   // clang-format on
 }
 
