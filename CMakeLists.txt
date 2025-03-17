@@ -1108,8 +1108,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST file_test SOURCES FileTest.cpp
       # Open-source linux build can't handle running this.
       #TEST file_lock_test SOURCES FileLockTest.cpp
-      TEST file_util_test WINDOWS_DISABLED
-        SOURCES FileUtilTest.cpp
+      TEST file_util_test SOURCES FileUtilTest.cpp
       BENCHMARK fingerprint_benchmark SOURCES FingerprintBenchmark.cpp
       TEST fingerprint_test SOURCES FingerprintTest.cpp
       TEST fixed_string_test SOURCES FixedStringTest.cpp
@@ -1149,8 +1148,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST optional_test SOURCES OptionalTest.cpp
       TEST packed_sync_ptr_test HANGING
         SOURCES PackedSyncPtrTest.cpp
-      TEST padded_test WINDOWS_DISABLED
-        SOURCES PaddedTest.cpp
+      TEST padded_test SOURCES PaddedTest.cpp
       #TEST poly_test SOURCES PolyTest.cpp
       TEST portability_test SOURCES PortabilityTest.cpp
       # Turns out this benchmark uses Linux only API for setting CPU affinity i.e. cpu_set_t.
