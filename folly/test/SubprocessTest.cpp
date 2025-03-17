@@ -542,6 +542,54 @@ TEST(AfterForkCallbackSubprocessTest, TestAfterForkCallbackError) {
   EXPECT_FALSE(fs::exists(write_cob.filename_));
 }
 
+// DANGER: This class runs after fork in a child processes. Be fast, the
+// parent thread is waiting, but remember that other parent threads are
+// running and may mutate your state.  Avoid mutating any data belonging to
+// the parent.  Avoid interacting with non-POD data that originated in the
+// parent.  Avoid any libraries that may internally reference non-POD data.
+// Especially beware parent mutexes -- for example, glog's LOG() uses one.
+struct UpdateEnvAfterFork
+    : public folly::Subprocess::DangerousPostForkPreExecCallback {
+ public:
+  // [pidDest, pidDest + pidSpace] must store PID plus NUL terminator.
+  UpdateEnvAfterFork(char* pidDest, size_t pidSpace)
+      : pidDest_{pidDest}, pidSpace_{pidSpace} {}
+
+  int operator()() override {
+    size_t snprintfRes = snprintf(pidDest_, pidSpace_, "%d", getpid());
+    if (snprintfRes < 0) {
+      return errno;
+    }
+    if (snprintfRes >= pidSpace_) {
+      return ERANGE;
+    }
+    return 0;
+  }
+
+ private:
+  char* pidDest_;
+  size_t pidSpace_;
+};
+
+TEST(SubprocessEnvTest, TestEnvPointerRemainsValid) {
+  // This seems to be the only way to get the pid of the child process
+  // included in the environment of the child process.
+  const std::string pidEnvVarName = "SUBPROCESS_TEST_PID";
+  constexpr int nCharsBesidesNul = 15;
+  std::vector<std::string> env = {
+      pidEnvVarName + "=" + std::string(nCharsBesidesNul, '\0')};
+  UpdateEnvAfterFork cb(
+      env.back().data() + pidEnvVarName.size() + 1, nCharsBesidesNul + 1);
+  Subprocess proc(
+      std::vector<std::string>{"/bin/sh", "-c", "echo -n $SUBPROCESS_TEST_PID"},
+      Subprocess::Options().pipeStdout().dangerousPostForkPreExecCallback(&cb),
+      nullptr,
+      &env);
+  auto out = proc.communicate();
+  EXPECT_EQ(out.first, folly::to<std::string>(proc.pid()));
+  proc.waitChecked();
+}
+
 TEST(CommunicateSubprocessTest, SimpleRead) {
   Subprocess proc(
       std::vector<std::string>{"/bin/echo", "-n", "foo", "bar"},

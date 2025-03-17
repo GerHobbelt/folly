@@ -6,7 +6,6 @@ cpp_library(
     name = "access",
     headers = ["Access.h"],
     exported_deps = [
-        "//folly:portability",
         "//folly/functional:invoke",
     ],
 )
@@ -166,6 +165,20 @@ cpp_library(
     exported_deps = [
         "//folly:traits",
         "//folly:utility",
+    ],
+)
+
+cpp_library(
+    name = "span",
+    headers = ["span.h"],
+    exported_deps = [
+        "//folly:cpp_attributes",
+        "//folly:portability",
+        "//folly:traits",
+        "//folly:utility",
+        "//folly/container:access",
+        "//folly/functional:invoke",
+        "//folly/portability:constexpr",
     ],
 )
 
