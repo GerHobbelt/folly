@@ -58,10 +58,12 @@ namespace my_type {
 
 struct MoveInt : folly::MoveOnly {
   int x = 0;
+  explicit MoveInt(int x_) noexcept : x{x_} {}
 };
 
 struct NoMoveInt : folly::NonCopyableNonMovable {
   int x = 0;
+  explicit NoMoveInt(int x_) noexcept : x{x_} {}
 };
 
 template <class M>
@@ -74,11 +76,11 @@ int square(const M& m) {
 TEST_F(UtilityTest, NonCopyableAggregateInit) {
   // Ensure classes inheriting from folly::MoveOnly, etc, do not find all of
   // folly::* by ADL.
-  EXPECT_EQ(16, square(my_type::MoveInt{.x = 4}));
-  EXPECT_EQ(25, square(my_type::NoMoveInt{.x = 5}));
+  EXPECT_EQ(16, square(my_type::MoveInt{4}));
+  EXPECT_EQ(25, square(my_type::NoMoveInt{5}));
   using folly::square;
   EXPECT_EQ(36, square(6));
-  // Ambiguous: EXPECT_EQ(16, square(my_type::MoveInt{.x = 4}));
+  // Ambiguous: EXPECT_EQ(16, square(my_type::MoveInt{4}));
 }
 
 // Tests for FOLLY_DECLVAL macro:
@@ -136,8 +138,10 @@ static_assert(std::is_same_v<void, dec<void volatile>>);
 static_assert(std::is_same_v<void, dec<void const volatile>>);
 static_assert(std::is_same_v<incomplete, dec<incomplete>>);
 static_assert(std::is_same_v<incomplete, dec<incomplete const>>);
+#if !defined(_MSC_VER)
 static_assert(std::is_same_v<abstract, dec<abstract>>);
 static_assert(std::is_same_v<abstract, dec<abstract const>>);
+#endif
 static_assert(std::is_same_v<immobile, dec<immobile>>);
 static_assert(std::is_same_v<immobile, dec<immobile const>>);
 
