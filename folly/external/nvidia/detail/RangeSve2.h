@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Meta Platforms, Inc. and affiliates.
+ * Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,4 +14,17 @@
  * limitations under the License.
  */
 
-#include <folly/lang/BitsClass.h>
+#pragma once
+
+#include <cstddef>
+
+#include <folly/detail/RangeCommon.h>
+
+namespace folly {
+namespace detail {
+
+size_t qfind_first_byte_of_sve2(
+    const StringPieceLite haystack, const StringPieceLite needles);
+
+} // namespace detail
+} // namespace folly

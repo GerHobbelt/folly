@@ -386,12 +386,13 @@ InlineExecutor exe;
 template <class T>
 Future<T> fGen() {
   Promise<T> p;
-  auto f = p.getFuture()
-               .thenValue([](T&& t) { return std::move(t); })
-               .thenValue([](T&& t) { return makeFuture(std::move(t)); })
-               .via(&exe)
-               .thenValue([](T&& t) { return std::move(t); })
-               .thenValue([](T&& t) { return makeFuture(std::move(t)); });
+  auto f =
+      p.getFuture()
+          .thenValue([](T&& t) { return std::move(t); })
+          .thenValue([](T&& t) { return makeFuture(std::move(t)); })
+          .via(&exe)
+          .thenValue([](T&& t) { return std::move(t); })
+          .thenValue([](T&& t) { return makeFuture(std::move(t)); });
   p.setValue(T());
   return f;
 }
@@ -462,7 +463,7 @@ BENCHMARK_RELATIVE(complexBlob4096) {
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
   return 0;
 }

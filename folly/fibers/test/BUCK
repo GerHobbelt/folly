@@ -22,6 +22,7 @@ cpp_unittest(
     name = "fibers_test",
     srcs = ["FibersTest.cpp"],
     headers = [],
+    labels = ["heavyweight"],
     deps = [
         "//folly:conv",
         "//folly:memory",
@@ -70,5 +71,17 @@ cpp_binary(
     deps = [
         "//folly/fibers:fiber_manager_map",
         "//folly/init:init",
+    ],
+)
+
+cpp_unittest(
+    name = "semaphore_test",
+    srcs = ["SemaphoreTest.cpp"],
+    headers = [],
+    deps = [
+        "//folly/fibers:semaphore",
+        "//folly/portability:gtest",
+        "//folly/synchronization:relaxed_atomic",
+        "//folly/synchronization/detail:sleeper",
     ],
 )

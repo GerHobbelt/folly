@@ -14,4 +14,25 @@
  * limitations under the License.
  */
 
-#include <folly/coro/Accumulate.h>
+/**
+ * This file demonstrates the usage of folly/test/common:test_main_lib,
+ * which is a `main` implementation that initializes gtest & folly before
+ * running tests.
+ * @file
+ */
+
+#include <folly/Singleton.h>
+
+#include <gtest/gtest.h>
+
+using namespace ::testing;
+
+namespace {
+/// This is a singleton that demonstrates folly will be initialized by
+/// `//folly/test/common:test_main_lib`.
+folly::Singleton<int> DemoSingleton([]() { return new int(42); });
+} // namespace
+
+TEST(TestMainDemo, SingletonAccess) {
+  ASSERT_EQ(*DemoSingleton.try_get(), 42);
+}

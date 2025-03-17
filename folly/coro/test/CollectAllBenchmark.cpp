@@ -37,9 +37,10 @@ void collectAllFuture(size_t batchSize) {
 void collectAllFutureInline(size_t batchSize) {
   std::vector<folly::Future<folly::Unit>> futures;
   for (size_t i = 0; i < batchSize; ++i) {
-    futures.emplace_back(folly::via(&executor, [] {
-                           doWork();
-                         }).via(&folly::InlineExecutor::instance()));
+    futures.emplace_back(
+        folly::via(&executor, [] {
+          doWork();
+        }).via(&folly::InlineExecutor::instance()));
   }
   folly::collectAll(std::move(futures)).get();
 }
@@ -63,8 +64,9 @@ void collectAllCoro(size_t batchSize) {
 
 void collectAllBaton(size_t batchSize) {
   folly::Baton<> baton;
-  std::shared_ptr<folly::Baton<>> batonGuard(
-      &baton, [](folly::Baton<>* baton) { baton->post(); });
+  std::shared_ptr<folly::Baton<>> batonGuard(&baton, [](folly::Baton<>* baton) {
+    baton->post();
+  });
   for (size_t i = 0; i < batchSize; ++i) {
     executor.add([batonGuard]() { doWork(); });
   }
@@ -121,7 +123,7 @@ BENCHMARK(collectAllBaton100, iters) {
 }
 
 int main(int argc, char** argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
   folly::runBenchmarks();
   return 0;
 }

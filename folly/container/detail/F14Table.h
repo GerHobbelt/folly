@@ -250,7 +250,7 @@ class F14HashToken final {
 };
 #endif
 
-#if __cpp_concepts && __has_include(<concepts>)
+#if defined(__cpp_concepts) && __cpp_concepts && __has_include(<concepts>)
 static_assert(std::regular<F14HashToken>);
 #endif
 
@@ -354,15 +354,18 @@ std::pair<std::size_t, std::size_t> splitHashImpl(std::size_t hash) {
     // with less than 16.7 million entries, it's safe to have a 32-bit hash,
     // and use the bottom 24 bits for the index and leave the top 8 for the
     // tag.
+    //
+    // | 0x80 sets the top bit in the tag.
+    // We need to avoid 0 tag for a non-empty value.
+    // In some places we also rely on the top bit
+    // being 1 for all non-empty values.
     if (ShouldAssume32BitHash<Hasher>::value) {
-      // we don't trust the top bit
       tag = ((hash >> 24) | 0x80) & 0xFF;
       // Explicitly mask off the top 32-bits so that the compiler can
       // optimize away whatever is populating the top 32-bits, which is likely
       // just the lower 32-bits duplicated.
       hash = hash & 0xFFFF'FFFF;
     } else {
-      // we don't trust the top bit
       tag = (hash >> 56) | 0x80;
     }
   }
@@ -394,7 +397,10 @@ std::pair<std::size_t, std::size_t> splitHashImpl(std::size_t hash) {
     tag = static_cast<uint8_t>(~(hash >> 25));
 #endif
   } else {
-    // we don't trust the top bit
+    // | 0x80 sets the top bit in the tag.
+    // We need to avoid 0 tag for a non-empty value.
+    // In some places we also rely on the top bit
+    // being 1 for all non-empty values.
     tag = (hash >> 24) | 0x80;
   }
   return std::make_pair(hash, tag);
@@ -700,12 +706,8 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
     FOLLY_SAFE_DCHECK(needle >= 0x80 && needle < 0x100, "");
     auto tagV = static_cast<uint8_t const*>(&tags_[0]);
     MaskType mask = 0;
-#if defined(__GNUC__)
-#pragma GCC unroll 16
-#else
-#pragma unroll 16
-#endif
-    for (int i = 0; i < kCapacity; i++) {
+    FOLLY_PRAGMA_UNROLL_N(16)
+    for (auto i = 0u; i < kCapacity; i++) {
       mask |= ((tagV[i] == static_cast<uint8_t>(needle)) ? 1 : 0) << i;
     }
     return SparseMaskIter{mask & kFullMask};
@@ -714,12 +716,8 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
   MaskType occupiedMask() const {
     auto tagV = static_cast<uint8_t const*>(&tags_[0]);
     MaskType mask = 0;
-#if defined(__GNUC__)
-#pragma GCC unroll 16
-#else
-#pragma unroll 16
-#endif
-    for (int i = 0; i < kCapacity; i++) {
+    FOLLY_PRAGMA_UNROLL_N(16)
+    for (auto i = 0u; i < kCapacity; i++) {
       mask |= ((tagV[i] & 0x80) ? 1 : 0) << i;
     }
     return mask & kFullMask;
@@ -2491,8 +2489,9 @@ class F14Table : public Policy {
   // Get memory footprint, not including sizeof(*this).
   std::size_t getAllocatedMemorySize() const {
     std::size_t sum = 0;
-    visitAllocationClasses(
-        [&sum](std::size_t bytes, std::size_t n) { sum += bytes * n; });
+    visitAllocationClasses([&sum](std::size_t bytes, std::size_t n) {
+      sum += bytes * n;
+    });
     return sum;
   }
 

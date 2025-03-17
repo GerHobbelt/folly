@@ -133,6 +133,7 @@ cpp_unittest(
         "TransformTest.cpp",
         "UnboundedQueueTest.cpp",
     ],
+    labels = ["case-isolation-failure"],
     deps = [
         "//folly:cancellation_token",
         "//folly:chrono",
@@ -327,7 +328,7 @@ cpp_unittest(
         "//folly/coro:gtest_helpers",
         "//folly/coro:mutex",
         "//folly/coro:task",
-        "//folly/experimental/symbolizer:symbolizer",
+        "//folly/debugging/symbolizer:symbolizer",
         "//folly/lang:keep",
         "//folly/portability:gtest",
     ],
