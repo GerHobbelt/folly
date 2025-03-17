@@ -25,6 +25,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 
 #include <fmt/format.h>
@@ -532,14 +533,361 @@ TEST(Conv, VariadicToDelim) {
 template <class String>
 void testDoubleToString() {
   EXPECT_EQ(to<String>(0.0), "0");
+  EXPECT_EQ(to<String>(-0.0), "-0");
   EXPECT_EQ(to<String>(0.5), "0.5");
   EXPECT_EQ(to<String>(10.25), "10.25");
+  EXPECT_EQ(to<String>(0.000001), "0.000001");
+  EXPECT_EQ(to<String>(0.0000001), "1E-7");
+  EXPECT_EQ(
+      to<String>(111111111111111111111.0),
+      // These decimal strings both represent the same IEEE-754 value
+      detail::kConvFloatToStringImpl == detail::FloatToStringImpl::StdToChars
+          ? "111111111111111114752"
+          : "111111111111111110000");
+  EXPECT_EQ(to<String>(100000000000000000000.0), "100000000000000000000");
+  EXPECT_EQ(to<String>(100000000000000000000.1), "100000000000000000000");
+  EXPECT_EQ(
+      to<String>(1111111111111111111111.0),
+      // These decimal strings both represent the same IEEE-754 value
+      detail::kConvFloatToStringImpl == detail::FloatToStringImpl::StdToChars
+          ? "1111111111111111081984"
+          : "1.1111111111111111E21");
   EXPECT_EQ(to<String>(1.123e10), "11230000000");
+  EXPECT_EQ(to<String>(1E22), "1E22");
+
+  EXPECT_EQ(
+      to<String>(
+          899999999999999918767229449717619953810131273674690656206848.0),
+      "9E59");
+  EXPECT_EQ(to<String>(std::numeric_limits<double>::quiet_NaN()), "NaN");
+  EXPECT_EQ(to<String>(-std::numeric_limits<double>::quiet_NaN()), "NaN");
+  EXPECT_EQ(to<String>(std::numeric_limits<double>::infinity()), "Infinity");
+  EXPECT_EQ(to<String>(-std::numeric_limits<double>::infinity()), "-Infinity");
 }
 
 TEST(Conv, DoubleToString) {
   testDoubleToString<string>();
   testDoubleToString<fbstring>();
+}
+
+namespace {
+
+#if defined(FOLLY_CONV_USE_TO_CHARS) && FOLLY_CONV_USE_TO_CHARS == 1
+bool hasNoTrailingZero() {
+  return true;
+}
+#else
+/// NO_TRAILING_ZERO was added in double_conversion version 3.1.6
+/// centos stream 9 uses double_conversion 3.1.5
+template <typename T>
+using detect_no_trailing_zero = decltype(T::NO_TRAILING_ZERO);
+
+bool hasNoTrailingZero() {
+  return is_detected_v<
+      detect_no_trailing_zero,
+      double_conversion::DoubleToStringConverter::Flags>;
+}
+#endif
+
+} // namespace
+
+/// Simple macro to test toAppend.
+/// This is a macro so failures output the direct line that failed.
+#define EXPECT_EQ_TO_APPEND(expected, value, mode, numDigits, flags) \
+  {                                                                  \
+    std::string actual;                                              \
+    folly::toAppend(value, &actual, mode, numDigits, flags);         \
+    EXPECT_EQ(actual, expected);                                     \
+  }
+
+/// Shared tests for DtoaMode::SHORTEST and DtoaMode::SHORTEST_SINGLE.
+void testDoubleToStringShortest(DtoaMode mode) {
+  ASSERT_TRUE(mode == DtoaMode::SHORTEST || mode == DtoaMode::SHORTEST_SINGLE)
+      << static_cast<int>(mode);
+  EXPECT_EQ_TO_APPEND("123.456", 123.456, mode, 0, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND("123", 123.0, mode, 0, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "123.", 123.0, mode, 0, DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "123.0",
+      123.0,
+      mode,
+      0,
+      DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "123.0",
+      123.0,
+      mode,
+      0,
+      DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT |
+          DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND("0", 0.0, mode, 0, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND("-0", -0.0, mode, 0, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND("0", -0.0, mode, 0, DtoaFlags::UNIQUE_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.",
+      -0.0,
+      mode,
+      0,
+      DtoaFlags::UNIQUE_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+  EXPECT_EQ_TO_APPEND(
+      "0.0",
+      -0.0,
+      mode,
+      0,
+      DtoaFlags::UNIQUE_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+}
+
+/// Tests for DtoaMode::SHORTEST with various flags and numDigits.
+TEST(Conv, DoubleToAppendShortestFlags) {
+  testDoubleToStringShortest(DtoaMode::SHORTEST);
+}
+
+/// Tests for DtoaMode::SHORTEST_SINGLE with various flags and numDigits.
+TEST(Conv, DoubleToAppendShortestSingleFlags) {
+  testDoubleToStringShortest(DtoaMode::SHORTEST_SINGLE);
+}
+
+/// Tests for DtoaMode::FIXED with various flags and numDigits.
+TEST(Conv, DoubleToAppendFixedFlags) {
+  EXPECT_EQ_TO_APPEND(
+      "-0.00000", -0.0, DtoaMode::FIXED, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.00000", -0.0, DtoaMode::FIXED, 5, DtoaFlags::UNIQUE_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.123456791043281555175781250000000000000000000000000000000000",
+      123456789.123456789,
+      DtoaMode::FIXED,
+      60,
+      DtoaFlags::NO_FLAGS);
+
+  // the empty string is returned when numDigits is past the max.
+  EXPECT_EQ_TO_APPEND(
+      "",
+      123456789.123456789,
+      DtoaMode::FIXED,
+      detail::kConvMaxFixedDigitsAfterPoint + 1,
+      DtoaFlags::NO_FLAGS);
+}
+
+/// Tests for DtoaMode::FIXED with NO_TRAILING_ZERO.
+/// This is in its own separate test because versions of double_conversion
+/// < 3.1.6 do not have NO_TRAILING_ZERO.
+TEST(Conv, DoubleToAppendFixedNoTrailingZero) {
+  if (!hasNoTrailingZero()) {
+    GTEST_SKIP()
+        << "This version of double_conversion does not have NO_TRAILING_ZERO";
+  }
+
+  EXPECT_EQ_TO_APPEND(
+      "0.00000", 0.0, DtoaMode::FIXED, 5, DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.00000",
+      0.0,
+      DtoaMode::FIXED,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.00000",
+      0.0,
+      DtoaMode::FIXED,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.09877",
+      123456789.0987654321,
+      DtoaMode::FIXED,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.09870",
+      123456789.098705,
+      DtoaMode::FIXED,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.09871",
+      123456789.098706,
+      DtoaMode::FIXED,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789",
+      123456789.123456789,
+      DtoaMode::FIXED,
+      0,
+      DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.",
+      123456789.123456789,
+      DtoaMode::FIXED,
+      0,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456789.0",
+      123456789.123456789,
+      DtoaMode::FIXED,
+      0,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+}
+
+/// Tests for DtoaMode::PRECISION with various flags and numDigits.
+TEST(Conv, DoubleToAppendPrecisionFlags) {
+  EXPECT_EQ_TO_APPEND(
+      detail::kConvFloatToStringImpl == detail::FloatToStringImpl::StdToChars
+          ? "1.2E-6"
+          : "0.0000012",
+      0.0000012345,
+      DtoaMode::PRECISION,
+      2,
+      DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "1.2E9", 1234567890.0, DtoaMode::PRECISION, 2, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "9.000000000E59",
+      899999999999999918767229449717619953810131273674690656206848.0,
+      DtoaMode::PRECISION,
+      10,
+      DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.0000", 0.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "-0.0000", -0.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.0000", -0.0, DtoaMode::PRECISION, 5, DtoaFlags::UNIQUE_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "-0.0000", -0.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.12300", 0.123, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "1230.0", 1230.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.12300", 0.123, DtoaMode::PRECISION, 5, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "1E5", 123456.123456, DtoaMode::PRECISION, 1, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "", 123456.123456, DtoaMode::PRECISION, 0, DtoaFlags::NO_FLAGS);
+
+  EXPECT_EQ_TO_APPEND(
+      "123456.123456000001169741153717041015625000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      123456.123456,
+      DtoaMode::PRECISION,
+      detail::kConvMaxPrecisionDigits,
+      DtoaFlags::NO_FLAGS);
+
+  // max past is 120, past that it outputs an empty string.
+  EXPECT_EQ_TO_APPEND(
+      "",
+      123456.123456,
+      DtoaMode::PRECISION,
+      detail::kConvMaxPrecisionDigits + 1,
+      DtoaFlags::NO_FLAGS);
+}
+
+/// Tests for DtoaMode::PRECISION with NO_TRAILING_ZERO.
+/// NO_TRAILING_ZERO exists in versions of double_conversion >= 3.1.6
+TEST(Conv, DoubleToAppendPrecisionNoTrailingZero) {
+  if (!hasNoTrailingZero()) {
+    GTEST_SKIP()
+        << "This version of double_conversion does not have NO_TRAILING_ZERO";
+  }
+
+  EXPECT_EQ_TO_APPEND(
+      "0", 0.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.",
+      0.0,
+      DtoaMode::PRECISION,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.0",
+      0.0,
+      DtoaMode::PRECISION,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "-0", -0.0, DtoaMode::PRECISION, 5, DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "-0.",
+      -0.0,
+      DtoaMode::PRECISION,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "-0.0",
+      -0.0,
+      DtoaMode::PRECISION,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      detail::kConvFloatToStringImpl == detail::FloatToStringImpl::StdToChars
+          ? "1.2E-6"
+          : "0.0000012",
+      0.0000012345,
+      DtoaMode::PRECISION,
+      2,
+      DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.123", 0.123, DtoaMode::PRECISION, 5, DtoaFlags::NO_TRAILING_ZERO);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.123",
+      0.123,
+      DtoaMode::PRECISION,
+      5,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+
+  EXPECT_EQ_TO_APPEND(
+      "0.123",
+      0.123,
+      DtoaMode::PRECISION,
+      8,
+      DtoaFlags::NO_TRAILING_ZERO | DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
 }
 
 TEST(Conv, FBStringToString) {
@@ -1258,23 +1606,55 @@ TEST(Conv, TryStringToEnum) {
   EXPECT_EQ(static_cast<A>(50), rv3.value());
 }
 
+namespace {
+/// Simple pure virtual class used by tests to change the function that converts
+/// string to float.
 template <class String>
-void tryStringToFloat() {
-  auto rv1 = folly::tryTo<float>(String(""));
+class StrToFloat {
+ public:
+  virtual ~StrToFloat() = default;
+  /// Converts a string to a float.
+  /// The input string is expected to be a number in
+  /// decimal or exponential notation (e.g., "3.14", "3.14e-2").
+  virtual Expected<float, ConversionCode> operator()(String src) const = 0;
+
+  /// Returns true if `operator()` returns an error when the input string has
+  /// trailing junk.
+  /// e.g., when the input string is "3.14junk", `operator()` returns an error.
+  virtual bool returnsErrorOnTrailingJunk() const = 0;
+};
+
+/// Uses `folly::TryTo` to convert a string to a float.
+template <class String>
+class StrToFloatTryTo : public StrToFloat<String> {
+ public:
+  Expected<float, ConversionCode> operator()(String src) const override {
+    return folly::tryTo<float>(src);
+  }
+
+  bool returnsErrorOnTrailingJunk() const override { return true; }
+};
+} // namespace
+
+/// `strToFloat` is used to test out different implementations of string
+/// to float conversions.
+template <class String>
+void tryStringToFloat(const StrToFloat<String>& strToFloat) {
+  auto rv1 = strToFloat(String(""));
   EXPECT_FALSE(rv1.hasValue());
-  auto rv2 = folly::tryTo<float>(String("3.14"));
+  auto rv2 = strToFloat(String("3.14"));
   EXPECT_TRUE(rv2.hasValue());
   EXPECT_NEAR(rv2.value(), 3.14, 1e-5);
   // No trailing '\0' to expose 1-byte buffer over-read
   char x = '-';
-  auto rv3 = folly::tryTo<float>(folly::StringPiece(&x, 1));
+  auto rv3 = strToFloat(String(&x, 1));
   EXPECT_FALSE(rv3.hasValue());
 
   // Exact conversion at numeric limits (8+ decimal digits)
-  auto rv4 = folly::tryTo<float>(String("-3.4028235E38"));
+  auto rv4 = strToFloat(String("-3.4028235E38"));
   EXPECT_TRUE(rv4.hasValue());
   EXPECT_EQ(rv4.value(), numeric_limits<float>::lowest());
-  auto rv5 = folly::tryTo<float>(String("3.40282346E38"));
+  auto rv5 = strToFloat(String("3.40282346E38"));
   EXPECT_TRUE(rv5.hasValue());
   EXPECT_EQ(rv5.value(), numeric_limits<float>::max());
 
@@ -1287,7 +1667,7 @@ void tryStringToFloat() {
       "-3.4028236E38",
   }};
   for (const auto& input : kOversizedInputs) {
-    auto rv = folly::tryTo<float>(input);
+    auto rv = strToFloat(input);
     EXPECT_EQ(rv.value(), -numeric_limits<float>::infinity()) << input;
   }
 
@@ -1301,15 +1681,116 @@ void tryStringToFloat() {
       "-NAN",
   }};
   for (const auto& input : kNanInputs) {
-    auto rv = folly::tryTo<float>(input);
+    auto rv = strToFloat(input);
     EXPECT_TRUE(std::isnan(rv.value())) << input;
+  }
+
+  const std::array<String, 6> kInfinityInputs{{
+      "-inf",
+      "-INF",
+      "-iNf",
+      "-infinity",
+      "-INFINITY",
+      "-INFInITY",
+  }};
+  for (const auto& input : kInfinityInputs) {
+    {
+      auto rv = strToFloat(input);
+      EXPECT_EQ(rv.value(), -numeric_limits<float>::infinity()) << input;
+    }
+
+    {
+      auto positiveInput = input.substr(1);
+      auto rv = strToFloat(positiveInput);
+      EXPECT_EQ(rv.value(), numeric_limits<float>::infinity()) << positiveInput;
+    }
+  }
+
+  const std::array<String, 11> kScientificNotation{{
+      "123.4560e0",
+      "123.4560e+0",
+      "123.4560e-0",
+      "123456.0e-3",
+      "123456.0E-3",
+      "0.123456e3",
+      "0.123456e+3",
+      "0.123456E+3",
+      ".123456e3",
+      ".123456e+3",
+      ".123456E+3",
+  }};
+  for (const auto& input : kScientificNotation) {
+    auto rv = strToFloat(input);
+    EXPECT_EQ(rv.value(), 123.456f) << input;
+  }
+
+  const std::array<String, 8> kSurroundingWhitespace{{
+      " 123.456",
+      "\n123.456",
+      "\r123.456",
+      "\t123.456",
+      "\n123.456",
+      "123.456 ",
+      "123.456\n",
+      " 123.456 ",
+  }};
+  for (const auto& input : kSurroundingWhitespace) {
+    EXPECT_EQ(strToFloat(input).value(), 123.456f);
+  }
+
+  EXPECT_EQ(strToFloat("   ").error(), ConversionCode::EMPTY_INPUT_STRING);
+
+  const std::array<String, 2> kJunkValues{{"junk", "a123.456"}};
+  for (const auto& input : kJunkValues) {
+    EXPECT_EQ(strToFloat(input).error(), ConversionCode::STRING_TO_FLOAT_ERROR);
+  }
+
+  const std::array<String, 8> kNonWhitespaceAfterEnd{{
+      "123.456X",
+      "123.456e",
+      "123.456E",
+      "123.456E-",
+      "123.456E+",
+      "123.456E-2f",
+      "123.456E-f",
+      "123.456E~2",
+  }};
+  for (const auto& input : kNonWhitespaceAfterEnd) {
+    auto rv = strToFloat(input);
+    EXPECT_EQ(strToFloat.returnsErrorOnTrailingJunk(), rv.hasError())
+        << "input: " << input << " value " << rv.value();
+    if (rv.hasError()) {
+      EXPECT_EQ(rv.error(), ConversionCode::NON_WHITESPACE_AFTER_END)
+          << "input: " << input;
+    }
   }
 }
 
 TEST(Conv, TryStringToFloat) {
-  tryStringToFloat<std::string>();
-  tryStringToFloat<std::string_view>();
-  tryStringToFloat<folly::StringPiece>();
+  tryStringToFloat<std::string>(StrToFloatTryTo<std::string>());
+  tryStringToFloat<std::string_view>(StrToFloatTryTo<std::string_view>());
+  tryStringToFloat<folly::StringPiece>(StrToFloatTryTo<folly::StringPiece>());
+}
+
+/// Uses `folly::detail::str_to_floating_fast_float_from_chars` to convert a
+/// string to a float.
+template <class String>
+class StrToFloatFastFloatFromChars : public StrToFloat<String> {
+ public:
+  Expected<float, ConversionCode> operator()(String src) const override {
+    StringPiece sp{src};
+    return folly::detail::str_to_floating_fast_float_from_chars<float>(&sp);
+  }
+
+  bool returnsErrorOnTrailingJunk() const override { return false; }
+};
+
+TEST(Conv, TryStringToFloat_FastFloatFromChars) {
+  tryStringToFloat<std::string>(StrToFloatFastFloatFromChars<std::string>());
+  tryStringToFloat<std::string_view>(
+      StrToFloatFastFloatFromChars<std::string_view>());
+  tryStringToFloat<folly::StringPiece>(
+      StrToFloatFastFloatFromChars<folly::StringPiece>());
 }
 
 template <class String>
@@ -1492,6 +1973,191 @@ TEST(conv, TryIntToScopedEnumAndBack) {
   EXPECT_EQ(1, folly::tryTo<int>(ScopedEnum::Second).value());
 }
 
+#if defined(FOLLY_CONV_AVALIABILITY_TO_CHARS_FLOATING_POINT) && \
+    FOLLY_CONV_AVALIABILITY_TO_CHARS_FLOATING_POINT == 1
+TEST(Conv, DtoaFlagsSetSimple) {
+  {
+    detail::DtoaFlagsSet sut{DtoaFlags::NO_FLAGS};
+    EXPECT_FALSE(sut.emitPositiveExponentSign());
+    EXPECT_FALSE(sut.emitTrailingDecimalPoint());
+    EXPECT_FALSE(sut.emitTrailingZeroAfterPoint());
+    EXPECT_FALSE(sut.uniqueZero());
+    EXPECT_FALSE(sut.noTrailingZero());
+  }
+
+  {
+    detail::DtoaFlagsSet sut{
+        DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+        DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT |
+        DtoaFlags::NO_TRAILING_ZERO};
+    EXPECT_FALSE(sut.emitPositiveExponentSign());
+    EXPECT_TRUE(sut.emitTrailingDecimalPoint());
+    EXPECT_TRUE(sut.emitTrailingZeroAfterPoint());
+    EXPECT_FALSE(sut.uniqueZero());
+    EXPECT_TRUE(sut.noTrailingZero());
+  }
+}
+
+TEST(Conv, ParsedDecimalCtorOk) {
+  {
+    char input[] = "123";
+    detail::ParsedDecimal sut{input, input + sizeof(input) - 1};
+    EXPECT_EQ(sut.integerBegin, input);
+    EXPECT_EQ(sut.integerEnd, input + sizeof(input) - 1);
+    EXPECT_EQ(sut.decimalPoint, nullptr);
+    EXPECT_EQ(sut.fractionalBegin, nullptr);
+    EXPECT_EQ(sut.fractionalEnd, nullptr);
+    EXPECT_EQ(sut.exponentSymbol, nullptr);
+    EXPECT_EQ(sut.exponentSign, nullptr);
+    EXPECT_EQ(sut.exponentBegin, nullptr);
+    EXPECT_EQ(sut.exponentEnd, nullptr);
+  }
+
+  {
+    char input[] = "123.";
+    detail::ParsedDecimal sut{input, input + sizeof(input) - 1};
+    EXPECT_EQ(sut.integerBegin, input);
+    EXPECT_EQ(sut.integerEnd, input + 3);
+    EXPECT_EQ(sut.decimalPoint, input + 3);
+    EXPECT_EQ(sut.fractionalBegin, nullptr);
+    EXPECT_EQ(sut.fractionalEnd, nullptr);
+    EXPECT_EQ(sut.exponentSymbol, nullptr);
+    EXPECT_EQ(sut.exponentSign, nullptr);
+    EXPECT_EQ(sut.exponentBegin, nullptr);
+    EXPECT_EQ(sut.exponentEnd, nullptr);
+  }
+
+  {
+    char input[] = "123.456";
+    detail::ParsedDecimal sut{input, input + sizeof(input) - 1};
+    EXPECT_EQ(sut.integerBegin, input);
+    EXPECT_EQ(sut.integerEnd, input + 3);
+    EXPECT_EQ(sut.decimalPoint, input + 3);
+    EXPECT_EQ(sut.fractionalBegin, input + 4);
+    EXPECT_EQ(sut.fractionalEnd, input + 7);
+    EXPECT_EQ(sut.exponentSymbol, nullptr);
+    EXPECT_EQ(sut.exponentSign, nullptr);
+    EXPECT_EQ(sut.exponentBegin, nullptr);
+    EXPECT_EQ(sut.exponentEnd, nullptr);
+  }
+
+  {
+    char input[] = "123.456e+07";
+    detail::ParsedDecimal sut{input, input + sizeof(input) - 1};
+    EXPECT_EQ(sut.integerBegin, input);
+    EXPECT_EQ(sut.integerEnd, input + 3);
+    EXPECT_EQ(sut.decimalPoint, input + 3);
+    EXPECT_EQ(sut.fractionalBegin, input + 4);
+    EXPECT_EQ(sut.fractionalEnd, input + 7);
+    EXPECT_EQ(sut.exponentSymbol, input + 7);
+    EXPECT_EQ(sut.exponentSign, input + 8);
+    EXPECT_EQ(sut.exponentBegin, input + 9);
+    EXPECT_EQ(sut.exponentEnd, input + 11);
+  }
+}
+
+TEST(Conv, ParsedDecimalCtorErr) {
+  EXPECT_THROW(
+      { detail::ParsedDecimal sut(nullptr, nullptr); }, std::invalid_argument);
+  {
+    char input[] = "";
+    EXPECT_THROW(detail::ParsedDecimal d(input, input), std::invalid_argument);
+  }
+
+  using namespace std::literals;
+
+  std::string inputs[] = {
+      " "s,
+      "."s,
+      "-"s,
+      "1A"s,
+      "A1"s,
+      "-A"s,
+      "1-"s,
+      "1 "s,
+      " 1"s,
+      "1. 2"s,
+      "1 .2"s,
+      "1.2E"s,
+      "1.2eX07"s,
+  };
+
+  for (std::string input : inputs) {
+    EXPECT_THROW(
+        {
+          detail::ParsedDecimal d(input.data(), input.data() + input.length());
+        },
+        std::invalid_argument)
+        << "input: '" << input << "'";
+  }
+}
+
+/// Simple macro to test toAppendStdToChars.
+/// This is a macro so failures output the direct line that failed.
+#define EXPECT_EQ_TO_APPEND_STD_TO_CHARS(                                      \
+    expected, value, mode, numDigits, flags)                                   \
+  {                                                                            \
+    std::string actual;                                                        \
+    folly::detail::toAppendStdToChars(value, &actual, mode, numDigits, flags); \
+    EXPECT_EQ(actual, expected);                                               \
+  }
+
+TEST(Conv, toAppendStdToChars) {
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "123.4", 123.4, DtoaMode::SHORTEST, 0, DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      // "1.23E9",
+      "1230000000",
+      1230000000.0,
+      DtoaMode::SHORTEST,
+      0,
+      DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      // "1.23E+9",
+      "1230000000",
+      1230000000.0,
+      DtoaMode::SHORTEST,
+      0,
+      DtoaFlags::EMIT_POSITIVE_EXPONENT_SIGN);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "0.1234", 0.1234, DtoaMode::SHORTEST, 0, DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      // "1.234E-6",
+      "0.000001234",
+      0.000001234,
+      DtoaMode::SHORTEST,
+      0,
+      DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      // "-1.234E-6",
+      "-0.000001234",
+      -0.000001234,
+      DtoaMode::SHORTEST,
+      0,
+      DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "0", -0.0, DtoaMode::SHORTEST, 0, DtoaFlags::UNIQUE_ZERO);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "123.4560000", 123.456, DtoaMode::FIXED, 7, DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "123.4560", 123.456, DtoaMode::PRECISION, 7, DtoaFlags::NO_FLAGS);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "123.",
+      123.0,
+      DtoaMode::PRECISION,
+      3,
+      DtoaFlags::EMIT_TRAILING_DECIMAL_POINT);
+  EXPECT_EQ_TO_APPEND_STD_TO_CHARS(
+      "123.0",
+      123.0,
+      DtoaMode::PRECISION,
+      3,
+      DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |
+          DtoaFlags::EMIT_TRAILING_ZERO_AFTER_POINT);
+}
+#endif // FOLLY_CONV_AVALIABILITY_TO_CHARS_FLOATING_POINT
+
+#if !(defined(FOLLY_CONV_USE_TO_CHARS) && FOLLY_CONV_USE_TO_CHARS == 1)
 TEST(Conv, DtoaModeConverter) {
   double_conversion::DoubleToStringConverter::DtoaMode shortest =
       detail::convert(DtoaMode::SHORTEST);
@@ -1521,6 +2187,7 @@ TEST(Conv, DtoaFlagsConverter) {
           double_conversion::DoubleToStringConverter::
               EMIT_TRAILING_ZERO_AFTER_POINT);
 }
+#endif // FOLLY_CONV_USE_TO_CHARS
 
 TEST(Conv, DtoaFlags) {
   DtoaFlags combo = DtoaFlags::EMIT_TRAILING_DECIMAL_POINT |

@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/Select64.h>
+#include <folly/compression/Select64.h>
 
 #include <cstddef>
 #include <cstdint>
 
-#include <folly/experimental/Instructions.h>
+#include <folly/compression/Instructions.h>
 #include <folly/portability/GTest.h>
 
 // for disassembling

@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -57,6 +58,41 @@ namespace threadlocal_detail {
 
 constexpr uint32_t kEntryIDInvalid = std::numeric_limits<uint32_t>::max();
 
+//  as a memory-usage optimization, try to make this deleter fit in-situ in
+//  the deleter function storage rather than being heap-allocated separately
+//
+//  for libstdc++, specialization below of std::__is_location_invariant
+//
+//  TODO: ensure in-situ storage for other standard-library implementations
+struct SharedPtrDeleter {
+  mutable std::shared_ptr<void> ts_;
+  explicit SharedPtrDeleter(std::shared_ptr<void> const& ts) noexcept;
+  SharedPtrDeleter(SharedPtrDeleter const& that) noexcept;
+  void operator=(SharedPtrDeleter const& that) = delete;
+  ~SharedPtrDeleter();
+  void operator()(void* ptr, folly::TLPDestructionMode) const;
+};
+
+} // namespace threadlocal_detail
+
+} // namespace folly
+
+#if defined(__GLIBCXX__)
+
+namespace std {
+
+template <>
+struct __is_location_invariant<::folly::threadlocal_detail::SharedPtrDeleter>
+    : std::true_type {};
+
+} // namespace std
+
+#endif
+
+namespace folly {
+
+namespace threadlocal_detail {
+
 /**
  * POD wrapper around an element (a void*) and an associated deleter.
  * This must be POD, as we memset() it to 0 and memcpy() it around.
@@ -71,6 +107,9 @@ struct ElementWrapper {
       ;
 
   static_assert(alignof(DeleterObjType) > deleter_all_mask);
+
+  //  must be noinline and must launder: https://godbolt.org/z/bo6f7f6v6
+  FOLLY_NOINLINE static uintptr_t castForgetAlign(DeleterFunType*) noexcept;
 
   bool dispose(TLPDestructionMode mode) noexcept {
     if (ptr == nullptr) {
@@ -109,13 +148,25 @@ struct ElementWrapper {
     }
     auto const fun =
         +[](void* pt, TLPDestructionMode) { delete static_cast<Ptr>(pt); };
-    auto const raw = reinterpret_cast<uintptr_t>(fun);
+    auto const raw = castForgetAlign(fun);
     if (raw & deleter_all_mask) {
       return set(p, std::ref(*fun));
     }
     DCHECK_EQ(0, raw & deleter_all_mask);
     deleter = raw;
     ptr = p;
+  }
+
+  template <typename Ptr, typename Deleter>
+  static auto makeDeleter(const Deleter& d) {
+    return [d](void* pt, TLPDestructionMode mode) {
+      d(static_cast<Ptr>(pt), mode);
+    };
+  }
+
+  template <typename Ptr>
+  static decltype(auto) makeDeleter(const SharedPtrDeleter& d) {
+    return d;
   }
 
   template <class Ptr, class Deleter>
@@ -128,9 +179,7 @@ struct ElementWrapper {
     }
 
     auto guard = makeGuard([&] { d(p, TLPDestructionMode::THIS_THREAD); });
-    auto const obj = new DeleterObjType([d](void* pt, TLPDestructionMode mode) {
-      d(static_cast<Ptr>(pt), mode);
-    });
+    auto const obj = new DeleterObjType(makeDeleter<Ptr>(d));
     guard.dismiss();
     auto const raw = reinterpret_cast<uintptr_t>(obj);
     DCHECK_EQ(0, raw & deleter_all_mask);
@@ -444,16 +493,10 @@ struct StaticMetaBase {
    * be released, entry added under a WLockedPtr, and RLockedPtr reacquired
    * before returning.
    */
-  FOLLY_ALWAYS_INLINE void ensureThreadEntryIsInSet(
+  FOLLY_NOINLINE void ensureThreadEntryIsInSet(
       ThreadEntry* te,
-      uint32_t id,
-      SynchronizedThreadEntrySet::RLockedPtr& rlocked) {
-    if (rlocked->contains(te)) {
-      return;
-    }
-    auto scopedUnlock = rlocked.scopedUnlock();
-    allId2ThreadEntrySets_[id].wlock()->insert(te);
-  }
+      SynchronizedThreadEntrySet& set,
+      SynchronizedThreadEntrySet::RLockedPtr& rlock);
 
   /*
    * Remove a ThreadEntry* from the map of allId2ThreadEntrySets_
@@ -545,9 +588,10 @@ struct FakeUniqueInstance {
  */
 template <class Ptr>
 void ThreadEntry::resetElement(Ptr p, uint32_t id) {
-  auto rlocked = meta->allId2ThreadEntrySets_[id].rlock();
-  if (p != nullptr && !removed_) {
-    meta->ensureThreadEntryIsInSet(this, id, rlocked);
+  auto& set = meta->allId2ThreadEntrySets_[id];
+  auto rlock = set.rlock();
+  if (p != nullptr && !removed_ && !rlock->contains(this)) {
+    meta->ensureThreadEntryIsInSet(this, set, rlock);
   }
   cleanupElement(id);
   elements[id].set(p);
@@ -560,9 +604,10 @@ void ThreadEntry::resetElement(Ptr p, uint32_t id) {
  */
 template <class Ptr, class Deleter>
 void ThreadEntry::resetElement(Ptr p, Deleter& d, uint32_t id) {
-  auto rlocked = meta->allId2ThreadEntrySets_[id].rlock();
-  if (p != nullptr && !removed_) {
-    meta->ensureThreadEntryIsInSet(this, id, rlocked);
+  auto& set = meta->allId2ThreadEntrySets_[id];
+  auto rlock = set.rlock();
+  if (p != nullptr && !removed_ && !rlock->contains(this)) {
+    meta->ensureThreadEntryIsInSet(this, set, rlock);
   }
   cleanupElement(id);
   elements[id].set(p, d);

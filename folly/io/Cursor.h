@@ -22,6 +22,7 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <type_traits>
 
 #include <folly/Likely.h>
@@ -670,10 +671,21 @@ class CursorBase {
   ByteRange peekBytes() {
     // Ensure that we're pointing to valid data
     size_t available = length();
-    while (FOLLY_UNLIKELY(available == 0 && tryAdvanceBuffer())) {
-      available = length();
+    if (FOLLY_UNLIKELY(!available)) {
+      available = peekBytesSlow();
     }
     return ByteRange{data(), available};
+  }
+
+  /**
+   * Alternate version of peekBytes() that returns a std::basic_string_view
+   * instead of a ByteRage.
+   *
+   * @methodset Accessors
+   */
+  std::basic_string_view<uint8_t> peekView() {
+    auto bytes = peekBytes();
+    return {bytes.data(), bytes.size()};
   }
 
   /**
@@ -1011,6 +1023,14 @@ class CursorBase {
   }
 
   void advanceDone() {}
+
+  FOLLY_NOINLINE size_t peekBytesSlow() {
+    size_t available = 0;
+    while (available == 0 && tryAdvanceBuffer()) {
+      available = length();
+    }
+    return available;
+  }
 };
 
 namespace detail {

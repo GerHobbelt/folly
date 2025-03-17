@@ -38,9 +38,65 @@
 #include <folly/lang/Thunk.h>
 #include <folly/memory/Malloc.h>
 #include <folly/portability/Config.h>
+#include <folly/portability/Constexpr.h>
 #include <folly/portability/Malloc.h>
 
+#if __cpp_lib_span
+#include <span>
+#endif
+
 namespace folly {
+
+namespace access {
+
+/// to_address_fn
+/// to_address
+///
+/// mimic: std::to_address (C++20)
+///
+/// adapted from: https://en.cppreference.com/w/cpp/memory/to_address, CC-BY-SA
+struct to_address_fn {
+ private:
+  template <template <typename...> typename T, typename A, typename... B>
+  static tag_t<A> get_first_arg(tag_t<T<A, B...>>);
+  template <typename T>
+  using first_arg_of = type_list_element_t<0, decltype(get_first_arg(tag<T>))>;
+  template <typename T>
+  using detect_element_type = typename T::element_type;
+  template <typename T>
+  using element_type_of =
+      detected_or_t<first_arg_of<T>, detect_element_type, T>;
+
+  template <typename T>
+  using detect_to_address =
+      decltype(std::pointer_traits<T>::to_address(FOLLY_DECLVAL(T const&)));
+
+  template <typename T>
+  static inline constexpr bool use_pointer_traits_to_address = Conjunction<
+      is_detected<element_type_of, T>,
+      is_detected<detect_to_address, T>>::value;
+
+ public:
+  template <typename T>
+  constexpr T* operator()(T* p) const noexcept {
+    static_assert(!std::is_function_v<T>);
+    return p;
+  }
+
+  template <typename T>
+  constexpr auto operator()(T const& p) const noexcept {
+    if constexpr (use_pointer_traits_to_address<T>) {
+      static_assert(noexcept(std::pointer_traits<T>::to_address(p)));
+      return std::pointer_traits<T>::to_address(p);
+    } else {
+      static_assert(noexcept(operator()(p.operator->())));
+      return operator()(p.operator->());
+    }
+  }
+};
+inline constexpr to_address_fn to_address;
+
+} // namespace access
 
 #if (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L) || \
     (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600) ||         \
@@ -844,5 +900,89 @@ struct AllocatorHasDefaultObjectDestroy
 template <typename Value, typename T>
 struct AllocatorHasDefaultObjectDestroy<std::allocator<Value>, T>
     : std::true_type {};
+
+#if __cpp_lib_span
+
+namespace detail {
+
+struct span_cast_impl_fn {
+  template <typename U, typename T, std::size_t Extend>
+  constexpr auto operator()(std::span<T, Extend> in, U* castData) const {
+    assert(
+        static_cast<const void*>(in.data()) ==
+        static_cast<const void*>(castData));
+
+    // check alignment
+    if (!folly::is_constant_evaluated_or(true)) {
+      assert(reinterpret_cast<std::uintptr_t>(in.data()) % sizeof(U) == 0);
+    }
+
+    if constexpr (Extend == std::dynamic_extent) {
+      assert(in.size() * sizeof(T) % sizeof(U) == 0);
+      return std::span<U>(castData, in.size() * sizeof(T) / sizeof(U));
+    } else {
+      static_assert(in.size() * sizeof(T) % sizeof(U) == 0);
+      constexpr std::size_t kResSize = Extend * sizeof(T) / sizeof(U);
+      return std::span<U, kResSize>(castData, kResSize);
+    }
+  }
+
+} inline constexpr span_cast_impl;
+
+} // namespace detail
+
+/**
+ * static_span_cast
+ * static_span_cast_fn
+ * reinterpret_span_cast
+ * reinterpret_span_cast_fn
+ * const_span_cast
+ * const_span_cast_fn
+ *
+ * converting a span to a different span.
+ * (you get a span to the same bytes but treated as different type)
+ *
+ * Example:
+ *
+ *    enum class SomeEnum : int { ... };
+ *
+ *    std::span<SomeEnum> s = ...
+ *    std::span<int> as_ints = folly::reinterpret_span_cast<int>(s);
+ */
+
+template <typename U>
+struct static_span_cast_fn {
+  template <typename T, std::size_t Extend>
+  constexpr auto operator()(std::span<T, Extend> in) const {
+    return detail::span_cast_impl(in, static_cast<U*>(in.data()));
+  }
+};
+
+template <typename U>
+inline constexpr static_span_cast_fn<U> static_span_cast;
+
+template <typename U>
+struct reinterpret_span_cast_fn {
+  template <typename T, std::size_t Extend>
+  constexpr auto operator()(std::span<T, Extend> in) const {
+    return detail::span_cast_impl(in, reinterpret_cast<U*>(in.data()));
+  }
+};
+
+template <typename U>
+inline constexpr reinterpret_span_cast_fn<U> reinterpret_span_cast;
+
+template <typename U>
+struct const_span_cast_fn {
+  template <typename T, std::size_t Extend>
+  constexpr auto operator()(std::span<T, Extend> in) const {
+    return detail::span_cast_impl(in, const_cast<U*>(in.data()));
+  }
+};
+
+template <typename U>
+inline constexpr const_span_cast_fn<U> const_span_cast;
+
+#endif
 
 } // namespace folly

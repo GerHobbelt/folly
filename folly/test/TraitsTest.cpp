@@ -532,6 +532,27 @@ TEST(Traits, like) {
            value));
 }
 
+#if defined(__cpp_concepts)
+TEST(Traits, UncvrefSameAs) {
+  static_assert(folly::uncvref_same_as<std::vector<int>, std::vector<int>>);
+  static_assert(folly::uncvref_same_as<std::vector<int>&, std::vector<int>>);
+  static_assert(
+      folly::uncvref_same_as<const std::vector<int>&, std::vector<int>>);
+  static_assert(folly::uncvref_same_as<std::vector<int>&&, std::vector<int>>);
+
+  constexpr auto refersToExample =
+      [](folly::uncvref_same_as<std::vector<int>> auto&&) {};
+
+  static_assert(std::invocable<decltype(refersToExample), std::vector<int>>);
+  static_assert(
+      std::invocable<decltype(refersToExample), const std::vector<int>&>);
+  static_assert(std::invocable<decltype(refersToExample), std::vector<int>&&>);
+
+  static_assert(
+      !std::invocable<decltype(refersToExample), std::vector<char>&&>);
+}
+#endif
+
 TEST(Traits, isUnboundedArrayV) {
   EXPECT_FALSE((folly::is_unbounded_array_v<void>));
   EXPECT_FALSE((folly::is_unbounded_array_v<int>));
@@ -547,28 +568,33 @@ TEST(Traits, isBoundedArrayV) {
 }
 
 TEST(Traits, isInstantiationOfV) {
-  EXPECT_TRUE((detail::is_instantiation_of_v<A, A<int>>));
-  EXPECT_FALSE((detail::is_instantiation_of_v<A, B>));
+  EXPECT_TRUE((is_instantiation_of_v<A, A<int>>));
+  EXPECT_FALSE((is_instantiation_of_v<A, B>));
 }
 
 TEST(Traits, isInstantiationOf) {
-  EXPECT_TRUE((detail::is_instantiation_of<A, A<int>>::value));
-  EXPECT_FALSE((detail::is_instantiation_of<A, B>::value));
+  EXPECT_TRUE((is_instantiation_of<A, A<int>>::value));
+  EXPECT_FALSE((is_instantiation_of<A, B>::value));
 }
 
-TEST(Traits, isSimilarInstantiationV) {
-  EXPECT_TRUE((detail::is_similar_instantiation_v<A<int>, A<long>>));
-  EXPECT_FALSE((detail::is_similar_instantiation_v<A<int>, tag_t<int>>));
-  EXPECT_FALSE((detail::is_similar_instantiation_v<A<int>, B>));
-  EXPECT_FALSE((detail::is_similar_instantiation_v<B, B>));
-}
+#if defined(__cpp_concepts)
+TEST(Traits, InstantiationOf) {
+  static_assert(folly::instantiated_from<A<int>, A>);
+  static_assert(!folly::instantiated_from<A<int>&, A>);
+  static_assert(!folly::instantiated_from<A<int>, std::vector>);
 
-TEST(Traits, isSimilarInstantiation) {
-  EXPECT_TRUE((detail::is_similar_instantiation<A<int>, A<long>>::value));
-  EXPECT_FALSE((detail::is_similar_instantiation<A<int>, tag_t<int>>::value));
-  EXPECT_FALSE((detail::is_similar_instantiation<A<int>, B>::value));
-  EXPECT_FALSE((detail::is_similar_instantiation<B, B>::value));
+  static_assert(folly::uncvref_instantiated_from<A<int>, A>);
+  static_assert(folly::uncvref_instantiated_from<A<int>&, A>);
+  static_assert(!folly::uncvref_instantiated_from<A<int>&, std::vector>);
+
+  auto example = [](folly::uncvref_instantiated_from<std::vector> auto&&) {};
+
+  static_assert(std::invocable<decltype(example), std::vector<int>&&>);
+  static_assert(std::invocable<decltype(example), std::vector<int>&>);
+  static_assert(std::invocable<decltype(example), const std::vector<int>&>);
+  static_assert(std::invocable<decltype(example), std::vector<int>>);
 }
+#endif
 
 TEST(Traits, member_pointer_traits_data) {
   struct o {};
@@ -759,4 +785,29 @@ TEST(Traits, value_list) {
           int,
           folly::value_list_element_type_t<1, vtag_t<7u, 8, '9'>>>));
   EXPECT_EQ(8, (folly::value_list_element_v<1, vtag_t<7u, 8, '9'>>));
+}
+
+TEST(Traits, type_pack_find) {
+  EXPECT_EQ(0, folly::type_pack_find_v<int>);
+  EXPECT_EQ(0, folly::type_pack_find_t<int>{});
+  EXPECT_EQ(4, (folly::type_pack_find_v<long, char, short, int, float>));
+  EXPECT_EQ(4, (folly::type_pack_find_t<long, char, short, int, float>{}));
+  EXPECT_EQ(2, (folly::type_pack_find_v<int, char, short, int, float>));
+  EXPECT_EQ(2, (folly::type_pack_find_t<int, char, short, int, float>{}));
+}
+
+TEST(Traits, type_list_find) {
+  EXPECT_EQ(0, (folly::type_list_find_v<int, folly::tag_t<>>));
+  EXPECT_EQ(0, (folly::type_list_find_t<int, folly::tag_t<>>{}));
+  EXPECT_EQ(
+      4,
+      (folly::type_list_find_v<long, folly::tag_t<char, short, int, float>>));
+  EXPECT_EQ(
+      4,
+      (folly::type_list_find_t<long, folly::tag_t<char, short, int, float>>{}));
+  EXPECT_EQ(
+      2, (folly::type_list_find_v<int, folly::tag_t<char, short, int, float>>));
+  EXPECT_EQ(
+      2,
+      (folly::type_list_find_t<int, folly::tag_t<char, short, int, float>>{}));
 }

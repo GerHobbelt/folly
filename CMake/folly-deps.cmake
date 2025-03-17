@@ -52,6 +52,9 @@ find_package(DoubleConversion MODULE REQUIRED)
 list(APPEND FOLLY_LINK_LIBRARIES ${DOUBLE_CONVERSION_LIBRARY})
 list(APPEND FOLLY_INCLUDE_DIRECTORIES ${DOUBLE_CONVERSION_INCLUDE_DIR})
 
+find_package(FastFloat MODULE REQUIRED)
+list(APPEND FOLLY_INCLUDE_DIRECTORIES ${FASTFLOAT_INCLUDE_DIR})
+
 find_package(Gflags MODULE)
 set(FOLLY_HAVE_LIBGFLAGS ${LIBGFLAGS_FOUND})
 if(LIBGFLAGS_FOUND)
@@ -193,6 +196,7 @@ check_cxx_source_compiles("
 if(NOT FOLLY_CPP_ATOMIC_BUILTIN)
   list(APPEND CMAKE_REQUIRED_LIBRARIES atomic)
   list(APPEND FOLLY_LINK_LIBRARIES atomic)
+  set(ATOMIC_LIBRARY "atomic")
   check_cxx_source_compiles("
     #include <atomic>
     int main(int argc, char** argv) {

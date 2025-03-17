@@ -76,7 +76,7 @@ cpp_library(
     exported_deps = [
         "fbsource//third-party/zstd:zstd",
         ":compression_context_pool",
-        "//folly:config",
+        "//folly/portability:config",
     ],
 )
 
@@ -96,8 +96,8 @@ cpp_library(
         "//folly:format",
         "//folly:portability",
         "//folly:range",
-        "//folly/experimental:instructions",
-        "//folly/experimental:select64",
+        "//folly/compression:instructions",
+        "//folly/compression:select64",
         "//folly/io:iobuf",
         "//folly/lang:bits",
         "//folly/lang:bits_class",

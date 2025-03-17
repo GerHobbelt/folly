@@ -491,12 +491,13 @@ struct unsafe_default_initialized_cv {
   FOLLY_ERASE constexpr /* implicit */ operator T() const noexcept {
 #if defined(__cpp_lib_is_constant_evaluated)
 #if __cpp_lib_is_constant_evaluated >= 201811L
-#if !defined(__MSVC_RUNTIME_CHECKS)
+#if (defined(_MSC_VER) && !defined(__MSVC_RUNTIME_CHECKS)) || \
+    (defined(__clang__) && !defined(__GNUC__))
     if (!std::is_constant_evaluated()) {
       T uninit;
       return uninit;
     }
-#endif // !defined(__MSVC_RUNTIME_CHECKS)
+#endif
 #endif
 #endif
     return T();
@@ -504,6 +505,27 @@ struct unsafe_default_initialized_cv {
   FOLLY_POP_WARNING
 };
 inline constexpr unsafe_default_initialized_cv unsafe_default_initialized{};
+
+/// to_bool
+/// to_bool_fn
+///
+/// Constructs a boolean from the argument.
+///
+/// Particularly useful for testing sometimes-weak function declarations. They
+/// may be declared weak on some platforms but not on others. GCC likes to warn
+/// about them but the warning is unhelpful.
+struct to_bool_fn {
+  template <typename..., typename T>
+  FOLLY_ERASE constexpr auto operator()(T const& t) const noexcept
+      -> decltype(static_cast<bool>(t)) {
+    FOLLY_PUSH_WARNING
+    FOLLY_GCC_DISABLE_WARNING("-Waddress")
+    FOLLY_GCC_DISABLE_WARNING("-Wnonnull-compare")
+    return static_cast<bool>(t);
+    FOLLY_POP_WARNING
+  }
+};
+inline constexpr to_bool_fn to_bool{};
 
 struct to_signed_fn {
   template <typename..., typename T>

@@ -157,13 +157,13 @@ inline constexpr bool is_bounded_array_v<T[S]> = true;
 template <typename T>
 struct is_bounded_array : std::bool_constant<is_bounded_array_v<T>> {};
 
-namespace detail {
-
 /// is_instantiation_of_v
 /// is_instantiation_of
+/// instantiated_from
+/// uncvref_instantiated_from
 ///
 /// A trait variable and type to check if a given type is an instantiation of a
-/// class template.
+/// class template. And corresponding concepts.
 ///
 /// Note that this only works with type template parameters. It does not work
 /// with non-type template parameters, template template parameters, or alias
@@ -176,15 +176,16 @@ template <template <typename...> class C, typename... T>
 struct is_instantiation_of
     : std::bool_constant<is_instantiation_of_v<C, T...>> {};
 
-template <typename, typename>
-inline constexpr bool is_similar_instantiation_v = false;
-template <template <typename...> class C, typename... A, typename... B>
-inline constexpr bool is_similar_instantiation_v<C<A...>, C<B...>> = true;
-template <typename A, typename B>
-struct is_similar_instantiation
-    : std::bool_constant<is_similar_instantiation_v<A, B>> {};
+#if defined(__cpp_concepts)
 
-} // namespace detail
+template <typename T, template <typename...> class Templ>
+concept instantiated_from = is_instantiation_of_v<Templ, T>;
+
+template <typename T, template <typename...> class Templ>
+concept uncvref_instantiated_from =
+    is_instantiation_of_v<Templ, std::remove_cvref_t<T>>;
+
+#endif
 
 /// member_pointer_traits
 ///
@@ -312,6 +313,23 @@ template <typename Src, typename Dst>
 struct like {
   using type = like_t<Src, Dst>;
 };
+
+#if defined(__cpp_concepts)
+
+/**
+ *  Concept to check that a type is same as a given type,
+ *  when stripping qualifiers and refernces.
+ *  Especially useful for perfect forwarding of a specific type.
+ *
+ *  Example:
+ *
+ *    void foo(folly::uncvref_same_as<std::vector<int>> auto&& vec);
+ *
+ */
+template <typename Ref, typename To>
+concept uncvref_same_as = std::is_same_v<std::remove_cvref_t<Ref>, To>;
+
+#endif
 
 /**
  *  type_t
@@ -1239,6 +1257,59 @@ using value_list_element_type_t =
 template <std::size_t I, typename List>
 inline constexpr value_list_element_type_t<I, List> value_list_element_v =
     traits_detail::value_list_traits_<List>::template element<I>;
+
+namespace detail {
+
+template <typename V, typename... T>
+constexpr std::size_t type_pack_find_() {
+  bool eq[] = {std::is_same_v<V, T>..., true};
+  for (size_t i = 0; i < sizeof...(T); ++i) {
+    if (eq[i]) {
+      return i;
+    }
+  }
+  return sizeof...(T);
+}
+
+template <typename>
+struct type_list_find_;
+template <template <typename...> class List, typename... T>
+struct type_list_find_<List<T...>> {
+  template <typename V>
+  static inline constexpr std::size_t apply = type_pack_find_<V, T...>();
+};
+
+} // namespace detail
+
+/// type_pack_find_v
+///
+/// The index of the element of the type pack which is identical to the given
+/// type, or the size of the pack if there is no such element.
+template <typename V, typename... T>
+inline constexpr std::size_t type_pack_find_v =
+    detail::type_pack_find_<V, T...>();
+
+/// type_pack_find_t
+///
+/// The index of the element of the type pack which is identical to the given
+/// type, or the size of the pack if there is no such element.
+template <typename V, typename... T>
+using type_pack_find_t = index_constant<type_pack_find_v<V, T...>>;
+
+/// type_list_find_v
+///
+/// The index of the element of the type list which is identical to the given
+/// type, or the size of the list if there is no such element.
+template <typename V, typename List>
+inline constexpr std::size_t type_list_find_v =
+    detail::type_list_find_<List>::template apply<V>;
+
+/// type_list_find_t
+///
+/// The index of the element of the type list which is identical to the given
+/// type, or the size of the list if there is no such element.
+template <typename V, typename List>
+using type_list_find_t = index_constant<type_list_find_v<V, List>>;
 
 /**
  * Checks the requirements that the Hasher class must satisfy

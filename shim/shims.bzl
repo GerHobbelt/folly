@@ -351,13 +351,6 @@ def rust_protobuf_library(
         ] + (deps or []),
     )
 
-    # For python tests only
-    for proto in protos:
-        prelude.export_file(
-            name = proto,
-            visibility = ["PUBLIC"],
-        )
-
 def ocaml_binary(
         deps = [],
         visibility = ["PUBLIC"],
@@ -405,13 +398,29 @@ def _fix_dep(x: str) -> [
     None,
     str,
 ]:
+    def remove_version(x: str) -> str:
+        # When upgrading libraries we either suffix them as `-old` or with a version, e.g. `-1-08`
+        # Strip those so we grab the right one in open source.
+        if x.endswith(":md-5"):  # md-5 is the one exception
+            return x
+        xs = x.split("-")
+        for i in reversed(range(len(xs))):
+            s = xs[i]
+            if s == "old" or s.isdigit():
+                xs.pop(i)
+            else:
+                break
+        return "-".join(xs)
+
     if x == "//common/rust/shed/fbinit:fbinit":
         return "fbsource//third-party/rust:fbinit"
     elif x == "//common/rust/shed/sorted_vector_map:sorted_vector_map":
         return "fbsource//third-party/rust:sorted_vector_map"
     elif x == "//watchman/rust/watchman_client:watchman_client":
         return "fbsource//third-party/rust:watchman_client"
-    elif x.startswith("fbsource//third-party/rust:") or x.startswith(":"):
+    elif x.startswith("fbsource//third-party/rust:"):
+        return remove_version(x)
+    elif x.startswith(":"):
         return x
     elif x.startswith("//buck2/facebook/"):
         return None
@@ -458,3 +467,12 @@ def external_dep_to_target(t):
 
 def external_deps_to_targets(ts):
     return [external_dep_to_target(t) for t in ts]
+
+def _assert_eq(x, y):
+    if x != y:
+        fail("Expected {} == {}".format(x, y))
+
+def _test():
+    _assert_eq(_fix_dep("fbsource//third-party/rust:derive_more-1"), "fbsource//third-party/rust:derive_more")
+
+_test()

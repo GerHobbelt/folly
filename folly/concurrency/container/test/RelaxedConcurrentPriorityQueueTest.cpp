@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
+#include <iomanip>
 #include <thread>
 
 #include <boost/thread.hpp>
 
 #include <folly/Random.h>
 #include <folly/SpinLock.h>
-#include <folly/experimental/FlatCombiningPriorityQueue.h>
-#include <folly/experimental/RelaxedConcurrentPriorityQueue.h>
+#include <folly/concurrency/container/FlatCombiningPriorityQueue.h>
+#include <folly/concurrency/container/RelaxedConcurrentPriorityQueue.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/GTest.h>
 #include <folly/test/DeterministicSchedule.h>

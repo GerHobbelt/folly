@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <folly/detail/SimdForEach.h>
+#include <folly/algorithm/simd/detail/SimdForEach.h>
 
 #include <folly/portability/GTest.h>
 
@@ -71,7 +71,7 @@ struct TestDelegate {
           return step(
               unrolled[unrollI()],
               ignore_none{},
-              detail::UnrollStep<decltype(unrollI)::value + ('A' - 'a')>{});
+              folly::index_constant<decltype(unrollI)::value + ('A' - 'a')>{});
         });
   }
 };

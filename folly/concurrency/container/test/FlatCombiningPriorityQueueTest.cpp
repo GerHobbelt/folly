@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-#include <folly/experimental/FlatCombiningPriorityQueue.h>
+#include <folly/concurrency/container/FlatCombiningPriorityQueue.h>
 
 #include <condition_variable>
+#include <iomanip>
 #include <mutex>
 #include <queue>
 

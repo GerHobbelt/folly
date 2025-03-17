@@ -31,6 +31,22 @@ constexpr auto kBigGrowthFactor = 1.7;
 namespace folly {
 namespace threadlocal_detail {
 
+SharedPtrDeleter::SharedPtrDeleter(std::shared_ptr<void> const& ts) noexcept
+    : ts_{ts} {}
+SharedPtrDeleter::SharedPtrDeleter(SharedPtrDeleter const& that) noexcept
+    : ts_{that.ts_} {}
+SharedPtrDeleter::~SharedPtrDeleter() = default;
+void SharedPtrDeleter::operator()(
+    void* /* ptr */, folly::TLPDestructionMode) const {
+  ts_.reset();
+}
+
+uintptr_t ElementWrapper::castForgetAlign(DeleterFunType* f) noexcept {
+  auto const p = reinterpret_cast<char const*>(f);
+  auto const q = std::launder(p);
+  return reinterpret_cast<uintptr_t>(q);
+}
+
 bool ThreadEntrySet::basicSanity() const {
   return //
       threadEntries.size() == entryToVectorSlot.size() &&
@@ -421,6 +437,16 @@ void StaticMetaBase::reserve(EntryID* id) {
 
   meta.totalElementWrappers_ += (newCapacity - prevCapacity);
   free(reallocated);
+}
+
+FOLLY_NOINLINE void StaticMetaBase::ensureThreadEntryIsInSet(
+    ThreadEntry* te,
+    SynchronizedThreadEntrySet& set,
+    SynchronizedThreadEntrySet::RLockedPtr& rlock) {
+  rlock.unlock();
+  auto wlock = set.wlock();
+  wlock->insert(te);
+  rlock = wlock.moveFromWriteToRead();
 }
 
 /*
