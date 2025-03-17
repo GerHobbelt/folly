@@ -287,6 +287,17 @@ cpp_unittest(
 )
 
 cpp_unittest(
+    name = "serial_queue_runner_test",
+    srcs = ["SerialQueueRunnerTest.cpp"],
+    deps = [
+        "//folly/coro:async_scope",
+        "//folly/coro:gtest_helpers",
+        "//folly/coro:serial_queue_runner",
+        "//folly/portability:gtest",
+    ],
+)
+
+cpp_unittest(
     name = "shared_promise_test",
     srcs = [
         "SharedPromiseTest.cpp",
@@ -330,6 +341,21 @@ cpp_unittest(
         "//folly/coro:task",
         "//folly/debugging/symbolizer:symbolizer",
         "//folly/lang:keep",
+        "//folly/portability:gtest",
+    ],
+)
+
+cpp_unittest(
+    name = "synchronized_test",
+    srcs = ["SynchronizedTest.cpp"],
+    deps = [
+        "//folly/coro:baton",
+        "//folly/coro:blocking_wait",
+        "//folly/coro:gtest_helpers",
+        "//folly/coro:synchronized",
+        "//folly/coro:task",
+        "//folly/executors:cpu_thread_pool_executor",
+        "//folly/executors:manual_executor",
         "//folly/portability:gtest",
     ],
 )

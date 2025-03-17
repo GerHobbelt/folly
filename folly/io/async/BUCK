@@ -255,9 +255,6 @@ cpp_library(
 cpp_library(
     name = "async_transport_certificate",
     headers = ["AsyncTransportCertificate.h"],
-    exported_deps = [
-        "//folly:optional",
-    ],
 )
 
 cpp_library(
@@ -594,8 +591,8 @@ cpp_library(
         "linux",
         select({
             "DEFAULT": ["fbsource//third-party/liburing:uring"],
-            # @fb-only: "ovr_config//distro/constraints:conda": [], 
-            # @fb-only: "ovr_config//os:linux-sgx": [], 
+            # @fb-only[end= ]: "ovr_config//distro/constraints:conda": [],
+            # @fb-only[end= ]: "ovr_config//os:linux-sgx": [],
         }),
     )],
 )
@@ -776,6 +773,7 @@ cpp_library(
     ],
     modular_headers = False,
     deps = [
+        ":io_uring_provided_buffer_ring",
         "//folly:demangle",
         "//folly:file_util",
         "//folly:glog",
@@ -783,7 +781,6 @@ cpp_library(
         "//folly:spin_lock",
         "//folly:string",
         "//folly/container:f14_hash",
-        "//folly/io/async:io_uring_provided_buffer_ring",
         "//folly/lang:bits",
         "//folly/portability:gflags",
         "//folly/portability:sockets",
@@ -793,6 +790,10 @@ cpp_library(
         "//folly/tracing:static_tracepoint",
     ],
     exported_deps = [
+        ":async_base",
+        ":delayed_destruction",
+        ":io_uring_zero_copy_buffer_pool",
+        ":liburing",
         "//folly:c_portability",
         "//folly:conv",
         "//folly:cpp_attributes",
@@ -802,9 +803,6 @@ cpp_library(
         "//folly:range",
         "//folly:small_vector",
         "//folly/io:iobuf",
-        "//folly/io/async:async_base",
-        "//folly/io/async:delayed_destruction",
-        "//folly/io/async:liburing",
         "//folly/portability:asm",
     ],
     exported_external_deps = [
@@ -836,6 +834,27 @@ cpp_library(
     ],
     exported_external_deps = [
         "boost",
+    ],
+)
+
+cpp_library(
+    name = "io_uring_zero_copy_buffer_pool",
+    srcs = [
+        "IoUringZeroCopyBufferPool.cpp",
+    ],
+    headers = [
+        "IoUringZeroCopyBufferPool.h",
+    ],
+    modular_headers = False,
+    deps = [
+        "//folly:conv",
+        "//folly/lang:align",
+        "//folly/portability:sys_mman",
+    ],
+    exported_deps = [
+        ":liburing",
+        "//folly/io:iobuf",
+        "//folly/synchronization:distributed_mutex",
     ],
 )
 

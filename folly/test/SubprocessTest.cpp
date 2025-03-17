@@ -76,29 +76,6 @@ TEST(SimpleSubprocessTest, ExitsSuccessfullyChecked) {
   proc.waitChecked();
 }
 
-TEST(SimpleSubprocessTest, CloneFlagsWithVfork) {
-  Subprocess proc(
-      std::vector<std::string>{"/bin/true"},
-      Subprocess::Options().useCloneWithFlags(SIGCHLD | CLONE_VFORK));
-  EXPECT_EQ(0, proc.wait().exitStatus());
-}
-
-TEST(SimpleSubprocessTest, CloneFlagsWithFork) {
-  Subprocess proc(
-      std::vector<std::string>{"/bin/true"},
-      Subprocess::Options().useCloneWithFlags(SIGCHLD));
-  EXPECT_EQ(0, proc.wait().exitStatus());
-}
-
-TEST(SimpleSubprocessTest, CloneFlagsSubprocessCtorExitsAfterExec) {
-  Subprocess proc(
-      std::vector<std::string>{"/bin/sleep", "3600"},
-      Subprocess::Options().useCloneWithFlags(SIGCHLD));
-  checkUnixError(::kill(proc.pid(), SIGKILL), "kill");
-  auto retCode = proc.wait();
-  EXPECT_TRUE(retCode.killed());
-}
-
 TEST(SimpleSubprocessTest, ExitsWithError) {
   Subprocess proc(std::vector<std::string>{"/bin/false"});
   EXPECT_EQ(1, proc.wait().exitStatus());
@@ -118,6 +95,7 @@ TEST(SimpleSubprocessTest, MoveSubprocess) {
   Subprocess old_proc(std::vector<std::string>{"/bin/true"});
   EXPECT_TRUE(old_proc.returnCode().running());
   auto new_proc = std::move(old_proc);
+  // NOLINTNEXTLINE(bugprone-use-after-move)
   EXPECT_TRUE(old_proc.returnCode().notStarted());
   EXPECT_TRUE(new_proc.returnCode().running());
   EXPECT_EQ(0, new_proc.wait().exitStatus());
@@ -429,8 +407,9 @@ TEST(SimpleSubprocessTest, DetachExecFails) {
       "/no/such/file");
 }
 
-TEST(SimpleSubprocessTest, Affinity) {
 #ifdef __linux__
+
+TEST(SimpleSubprocessTest, Affinity) {
   cpu_set_t cpuSet0;
   CPU_ZERO(&cpuSet0);
   CPU_SET(1, &cpuSet0);
@@ -447,8 +426,9 @@ TEST(SimpleSubprocessTest, Affinity) {
   CHECK_EQ(::memcmp(&cpuSet0, &cpuSet1, sizeof(cpu_set_t)), 0);
   auto retCode = proc.waitOrTerminateOrKill(1s, 1s);
   EXPECT_TRUE(retCode.killed());
-#endif // __linux__
 }
+
+#endif // __linux__
 
 TEST(SimpleSubprocessTest, FromExistingProcess) {
   // Manually fork a child process using fork() without exec(), and test waiting
@@ -469,6 +449,8 @@ TEST(SimpleSubprocessTest, FromExistingProcess) {
   EXPECT_EQ(kReturnCode, retCode.exitStatus());
 }
 
+#ifdef __linux__
+
 TEST(ParentDeathSubprocessTest, ParentDeathSignal) {
   auto helper = folly::test::find_resource(
       "folly/test/subprocess_test_parent_death_helper");
@@ -487,6 +469,8 @@ TEST(ParentDeathSubprocessTest, ParentDeathSignal) {
 
   fs::remove(tempFile);
 }
+
+#endif
 
 TEST(PopenSubprocessTest, PopenRead) {
   Subprocess proc("ls /", Subprocess::Options().pipeStdout());

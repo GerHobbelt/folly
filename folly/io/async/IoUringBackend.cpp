@@ -163,9 +163,6 @@ void checkLogOverflow([[maybe_unused]] struct io_uring* ring) {
 #endif
 }
 
-} // namespace
-
-namespace {
 class SQGroupInfoRegistry {
  private:
   // a group is a collection of io_uring instances
@@ -344,6 +341,19 @@ IoUringBufferProviderBase::UniquePtr makeProvidedBufferRing(Args&&...) {
 
 #endif
 
+bool validateZeroCopyRxOptions(IoUringBackend::Options& options) {
+  if (options.zeroCopyRx &&
+      (options.zcRxIfname.empty() || options.zcRxIfindex <= 0 ||
+       options.zcRxQueueId == -1 || !options.resolveNapiId)) {
+    return false;
+  }
+
+  return true;
+}
+
+// Currently a 4K page size is required.
+constexpr size_t kZeroCopyPageSize = 4096;
+
 } // namespace
 
 IoUringBackend::SocketPair::SocketPair() {
@@ -498,23 +508,17 @@ FOLLY_ALWAYS_INLINE void IoUringBackend::setProcessSignals() {
 }
 
 void IoUringBackend::processPollIoSqe(
-    IoUringBackend* backend, IoSqe* ioSqe, int res, uint32_t flags) {
-  backend->processPollIo(ioSqe, res, flags);
+    IoUringBackend* backend, IoSqe* ioSqe, const io_uring_cqe* cqe) {
+  backend->processPollIo(ioSqe, cqe->res, cqe->flags);
 }
 
 void IoUringBackend::processTimerIoSqe(
-    IoUringBackend* backend,
-    IoSqe* /*sqe*/,
-    int /*res*/,
-    uint32_t /* flags */) {
+    IoUringBackend* backend, IoSqe* /*sqe*/, const io_uring_cqe* /*cqe*/) {
   backend->setProcessTimers();
 }
 
 void IoUringBackend::processSignalReadIoSqe(
-    IoUringBackend* backend,
-    IoSqe* /*sqe*/,
-    int /*res*/,
-    uint32_t /* flags */) {
+    IoUringBackend* backend, IoSqe* /*sqe*/, const io_uring_cqe* /*cqe*/) {
   backend->setProcessSignals();
 }
 
@@ -526,6 +530,9 @@ IoUringBackend::IoUringBackend(Options options)
   timerFd_ = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
   if (timerFd_ < 0) {
     throw std::runtime_error("timerfd_create error");
+  }
+  if (!validateZeroCopyRxOptions(options_)) {
+    throw std::runtime_error("invalid zero copy rx options");
   }
 
   ::memset(&ioRing_, 0, sizeof(ioRing_));
@@ -546,6 +553,17 @@ IoUringBackend::IoUringBackend(Options options)
     usingDeferTaskrun_ = true;
   }
 #endif
+
+  if (options_.zeroCopyRx) {
+    params_.flags |= IORING_SETUP_CQE32;
+    params_.flags |= IORING_SETUP_DEFER_TASKRUN;
+    params_.flags |= IORING_SETUP_SINGLE_ISSUER;
+    params_.flags |= IORING_SETUP_R_DISABLED;
+    params_.flags |= IORING_SETUP_COOP_TASKRUN;
+    params_.flags |= IORING_SETUP_SUBMIT_ALL;
+
+    napiId_ = options_.resolveNapiId(options.zcRxIfindex, options.zcRxQueueId);
+  }
 
   // poll SQ options
   if (options.flags & Options::Flags::POLL_SQ) {
@@ -1107,6 +1125,18 @@ void IoUringBackend::initSubmissionLinked() {
       throw NotAvailable(ex.what());
     }
   }
+
+  if (options_.zeroCopyRx) {
+    IoUringZeroCopyBufferPool::Params params = {
+        .ring = this->ioRingPtr(),
+        .numPages = static_cast<size_t>(options_.zcRxNumPages),
+        .pageSize = kZeroCopyPageSize,
+        .rqEntries = static_cast<uint32_t>(options_.zcRxRefillEntries),
+        .ifindex = static_cast<uint32_t>(options_.zcRxIfindex),
+        .queueId = static_cast<uint16_t>(options_.zcRxQueueId),
+    };
+    zcBufferPool_ = IoUringZeroCopyBufferPool::create(params);
+  }
 }
 
 void IoUringBackend::delayedInit() {
@@ -1258,6 +1288,7 @@ int IoUringBackend::eb_event_add(Event& event, const struct timeval* timeout) {
     auto* ioSqe = allocIoSqe(event.getCallback());
     CHECK(ioSqe);
     ioSqe->event_ = &event;
+    ioSqe->setEventBase(event.eb_ev_base());
 
     // just append it
     submitList_.push_back(*ioSqe);

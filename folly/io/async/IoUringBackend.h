@@ -39,6 +39,7 @@
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/EventBaseBackendBase.h>
 #include <folly/io/async/IoUringBase.h>
+#include <folly/io/async/IoUringZeroCopyBufferPool.h>
 #include <folly/io/async/Liburing.h>
 #include <folly/portability/Asm.h>
 #include <folly/small_vector.h>
@@ -50,6 +51,7 @@
 #if FOLLY_HAS_LIBURING
 
 #include <liburing.h> // @manual
+#include <net/if.h>
 
 namespace folly {
 
@@ -59,6 +61,9 @@ class IoUringBackend : public EventBaseBackendBase {
    public:
     using std::runtime_error::runtime_error;
   };
+
+  using ResolveNapiIdCallback =
+      std::function<int(int ifindex, uint32_t queueId)>;
 
   struct Options {
     enum Flags {
@@ -189,6 +194,50 @@ class IoUringBackend : public EventBaseBackendBase {
       return *this;
     }
 
+    Options& setZeroCopyRx(bool v) {
+      zeroCopyRx = v;
+
+      return *this;
+    }
+
+    Options& setZeroCopyRxInterface(std::string v) {
+      zcRxIfname = std::move(v);
+      zcRxIfindex = ::if_nametoindex(zcRxIfname.c_str());
+      if (zcRxIfindex == 0) {
+        throw std::runtime_error(folly::to<std::string>(
+            "invalid network interface name: ",
+            zcRxIfname,
+            ", errno: ",
+            errno));
+      }
+
+      return *this;
+    }
+
+    Options& setZeroCopyRxQueue(int queueId) {
+      zcRxQueueId = queueId;
+
+      return *this;
+    }
+
+    Options& setResolveNapiCallback(ResolveNapiIdCallback&& v) {
+      resolveNapiId = std::move(v);
+
+      return *this;
+    }
+
+    Options& setZeroCopyRxNumPages(int v) {
+      zcRxNumPages = v;
+
+      return *this;
+    }
+
+    Options& setZeroCopyRxRefillEntries(int v) {
+      zcRxRefillEntries = v;
+
+      return *this;
+    }
+
     ssize_t sqeSize{-1};
 
     size_t capacity{256};
@@ -220,6 +269,15 @@ class IoUringBackend : public EventBaseBackendBase {
     std::set<uint32_t> sqCpus;
 
     std::string sqGroupName;
+
+    // Zero copy receive
+    bool zeroCopyRx{false};
+    std::string zcRxIfname;
+    int zcRxQueueId{-1};
+    int zcRxIfindex{-1};
+    ResolveNapiIdCallback resolveNapiId;
+    int zcRxNumPages{-1};
+    int zcRxRefillEntries{-1};
   };
 
   explicit IoUringBackend(Options options);
@@ -237,6 +295,7 @@ class IoUringBackend : public EventBaseBackendBase {
 
   // from EventBaseBackendBase
   int getPollableFd() const override { return ioRing_.ring_fd; }
+  int getNapiId() const override { return napiId_; }
 
   event_base* getEventBase() override { return nullptr; }
 
@@ -359,6 +418,7 @@ class IoUringBackend : public EventBaseBackendBase {
   // built in buffer provider
   IoUringBufferProviderBase* bufferProvider() { return bufferProvider_.get(); }
   uint16_t nextBufferProviderGid() { return bufferProviderGidNext_++; }
+  IoUringZeroCopyBufferPool* zcBufferPool() { return zcBufferPool_.get(); }
 
  protected:
   enum class WaitForEventsMode { WAIT, DONT_WAIT };
@@ -436,17 +496,11 @@ class IoUringBackend : public EventBaseBackendBase {
   struct IoSqe;
 
   static void processPollIoSqe(
-      IoUringBackend* backend, IoSqe* ioSqe, int res, uint32_t flags);
+      IoUringBackend* backend, IoSqe* ioSqe, const io_uring_cqe* cqe);
   static void processTimerIoSqe(
-      IoUringBackend* backend,
-      IoSqe* /*sqe*/,
-      int /*res*/,
-      uint32_t /* flags */);
+      IoUringBackend* backend, IoSqe* /*sqe*/, const io_uring_cqe* /*cqe*/);
   static void processSignalReadIoSqe(
-      IoUringBackend* backend,
-      IoSqe* /*sqe*/,
-      int /*res*/,
-      uint32_t /* flags */);
+      IoUringBackend* backend, IoSqe* /*sqe*/, const io_uring_cqe* /*cqe*/);
 
   // signal handling
   void addSignalEvent(Event& event);
@@ -496,7 +550,7 @@ class IoUringBackend : public EventBaseBackendBase {
   };
 
   struct IoSqe : public IoSqeBase {
-    using BackendCb = void(IoUringBackend*, IoSqe*, int, uint32_t);
+    using BackendCb = void(IoUringBackend*, IoSqe*, const io_uring_cqe*);
     explicit IoSqe(
         IoUringBackend* backend = nullptr,
         bool poolAlloc = false,
@@ -504,7 +558,7 @@ class IoUringBackend : public EventBaseBackendBase {
         : backend_(backend), poolAlloc_(poolAlloc), persist_(persist) {}
 
     void callback(const io_uring_cqe* cqe) noexcept override {
-      backendCb_(backend_, this, cqe->res, cqe->flags);
+      backendCb_(backend_, this, cqe);
     }
     void callbackCancelled(const io_uring_cqe*) noexcept override { release(); }
     virtual void release() noexcept;
@@ -522,6 +576,7 @@ class IoUringBackend : public EventBaseBackendBase {
     FOLLY_ALWAYS_INLINE void resetEvent() {
       // remove it from the list
       unlink();
+      setEventBase(nullptr);
       if (event_) {
         event_->setUserData(nullptr);
         event_ = nullptr;
@@ -1032,8 +1087,8 @@ class IoUringBackend : public EventBaseBackendBase {
   void processFileOp(IoSqe* ioSqe, int res) noexcept;
 
   static void processFileOpCB(
-      IoUringBackend* backend, IoSqe* ioSqe, int res, uint32_t) {
-    static_cast<IoUringBackend*>(backend)->processFileOp(ioSqe, res);
+      IoUringBackend* backend, IoSqe* ioSqe, const io_uring_cqe* cqe) {
+    static_cast<IoUringBackend*>(backend)->processFileOp(ioSqe, cqe->res);
   }
 
   IoUringBackend::IoSqe* allocNewIoSqe(const EventCallback& /*cb*/) {
@@ -1064,6 +1119,7 @@ class IoUringBackend : public EventBaseBackendBase {
   std::unique_ptr<IoSqe> signalReadEntry_;
   IoSqeList freeList_;
   bool usingDeferTaskrun_{false};
+  int napiId_{-1};
 
   // timer related
   int timerFd_{-1};
@@ -1079,6 +1135,7 @@ class IoUringBackend : public EventBaseBackendBase {
   IoSqeBaseList submitList_;
   uint16_t bufferProviderGidNext_{0};
   IoUringBufferProviderBase::UniquePtr bufferProvider_;
+  IoUringZeroCopyBufferPool::UniquePtr zcBufferPool_;
 
   // loop related
   bool loopBreak_{false};

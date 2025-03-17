@@ -81,7 +81,7 @@ enum class CodecType {
 
   /**
    * Use ZSTD compression.
-   * Levels supported: 1 = fast, ..., 19 = best; default = 3
+   * Levels supported: 1 = fast, ..., 19 = best; default = 1
    * Use ZSTD_FAST for the fastest zstd compression (negative levels).
    * Streaming compression is supported.
    */
@@ -541,9 +541,5 @@ bool hasStreamCodec(CodecType type);
 } // namespace folly
 
 namespace folly::io {
-using folly::compression::Codec;
 using folly::compression::CodecType;
-using folly::compression::getAutoUncompressionCodec;
-using folly::compression::getCodec;
-using folly::compression::hasCodec;
 } // namespace folly::io

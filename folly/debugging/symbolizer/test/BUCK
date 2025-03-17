@@ -36,6 +36,7 @@ cpp_binary(
         "//folly/experimental/symbolizer:dwarf",
         "//folly/experimental/symbolizer:symbolized_frame",
         "//folly/experimental/symbolizer:symbolizer",
+        "//folly/lang:cast",
         "//folly/portability:gflags",
     ],
 )
@@ -70,8 +71,8 @@ cpp_unittest(
     srcs = ["ElfTest.cpp"],
     deps = [
         "//folly:file_util",
+        "//folly/debugging/symbolizer/detail:debug",
         "//folly/experimental/symbolizer:elf",
-        "//folly/experimental/symbolizer/detail:debug",
         "//folly/portability:gtest",
         "//folly/testing:test_util",
     ],

@@ -233,7 +233,7 @@ class F14HashToken final {
   template <typename Policy>
   friend class f14::detail::F14Table;
 
-  template <typename Key, typename Hasher>
+  template <typename Key, typename Hasher, typename KeyEqual>
   friend class F14HashedKey;
 };
 
@@ -410,14 +410,37 @@ std::pair<std::size_t, std::size_t> splitHashImpl(std::size_t hash) {
 } // namespace detail
 } // namespace f14
 
-template <typename TKeyType, typename Hasher = f14::DefaultHasher<TKeyType>>
+template <
+    typename TKeyType,
+    typename Hasher = f14::DefaultHasher<TKeyType>,
+    typename KeyEqual = f14::DefaultKeyEqual<TKeyType>>
 class F14HashedKey final {
+ private:
+  template <typename K>
+  using EligibleForHeterogeneousCompare =
+      detail::EligibleForHeterogeneousFind<TKeyType, Hasher, KeyEqual, K>;
+
+  template <typename K, typename T>
+  using EnableHeterogeneousCompare =
+      std::enable_if_t<EligibleForHeterogeneousCompare<K>::value, T>;
+
+  static constexpr void checkTemplateParamContract() {
+    static_assert(is_constexpr_default_constructible_v<Hasher>);
+    static_assert(is_constexpr_default_constructible_v<KeyEqual>);
+    static_assert(std::is_trivially_copyable_v<Hasher>);
+    static_assert(std::is_trivially_copyable_v<KeyEqual>);
+    static_assert(std::is_empty_v<Hasher>);
+    static_assert(std::is_empty_v<KeyEqual>);
+  }
+
  public:
 #if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
   template <typename... Args>
   explicit F14HashedKey(Args&&... args)
       : key_(std::forward<Args>(args)...),
-        hash_(f14::detail::splitHashImpl<Hasher, TKeyType>(Hasher{}(key_))) {}
+        hash_(f14::detail::splitHashImpl<Hasher, TKeyType>(Hasher{}(key_))) {
+    checkTemplateParamContract();
+  }
 #else
   F14HashedKey() = delete;
 #endif
@@ -429,10 +452,44 @@ class F14HashedKey final {
   /* implicit */ operator const TKeyType&() const { return key_; }
   explicit operator const F14HashToken&() const { return hash_; }
 
-  bool operator==(const F14HashedKey& other) const {
-    return key_ == other.key_;
+  friend bool operator==(const F14HashedKey& a, const F14HashedKey& b) {
+    return KeyEqual{}(a.key_, b.key_);
   }
-  bool operator==(const TKeyType& other) const { return key_ == other; }
+  friend bool operator!=(const F14HashedKey& a, const F14HashedKey& b) {
+    return !(a == b);
+  }
+  friend bool operator==(const F14HashedKey& a, const TKeyType& b) {
+    return KeyEqual{}(a.key_, b);
+  }
+  friend bool operator!=(const F14HashedKey& a, const TKeyType& b) {
+    return !(a == b);
+  }
+  friend bool operator==(const TKeyType& a, const F14HashedKey& b) {
+    return KeyEqual{}(a, b.key_);
+  }
+  friend bool operator!=(const TKeyType& a, const F14HashedKey& b) {
+    return !(a == b);
+  }
+  template <typename K>
+  friend EnableHeterogeneousCompare<K, bool> operator==(
+      const F14HashedKey& a, const K& b) {
+    return KeyEqual{}(a.key_, b);
+  }
+  template <typename K>
+  friend EnableHeterogeneousCompare<K, bool> operator!=(
+      const F14HashedKey& a, const K& b) {
+    return !(a == b);
+  }
+  template <typename K>
+  friend EnableHeterogeneousCompare<K, bool> operator==(
+      const K& a, const F14HashedKey& b) {
+    return KeyEqual{}(a, b.key_);
+  }
+  template <typename K>
+  friend EnableHeterogeneousCompare<K, bool> operator!=(
+      const K& a, const F14HashedKey& b) {
+    return !(a == b);
+  }
 
  private:
   TKeyType key_;
@@ -1556,8 +1613,6 @@ class F14Table : public Policy {
 
   std::size_t probeDelta(HashPair hp) const { return 2 * hp.second + 1; }
 
-#if FOLLY_NEON
-
   // TRICKY!  It may seem strange to have a std::size_t needle and narrow
   // it at the last moment, rather than making HashPair::second be a
   // uint8_t, but the latter choice sometimes leads to a performance
@@ -1575,18 +1630,15 @@ class F14Table : public Policy {
   // a microbenchmark).  Keeping needle >= 4 bytes avoids the problem
   // and also happens to result in slightly more compact assembly.
 
-  FOLLY_ALWAYS_INLINE uint8x16_t loadNeedleV(std::size_t needle) const {
+  FOLLY_ALWAYS_INLINE auto loadNeedleV(std::size_t needle) const {
+#if FOLLY_NEON
     return vdupq_n_u8(static_cast<uint8_t>(needle));
-  }
 #elif FOLLY_SSE >= 2
-  FOLLY_ALWAYS_INLINE __m128i loadNeedleV(std::size_t needle) const {
     return _mm_set1_epi8(static_cast<uint8_t>(needle));
-  }
 #else
-  FOLLY_ALWAYS_INLINE std::size_t loadNeedleV(std::size_t needle) const {
     return needle;
-  }
 #endif
+  }
 
   enum class Prefetch { DISABLED, ENABLED };
 
@@ -1597,7 +1649,7 @@ class F14Table : public Policy {
     std::size_t index = hp.first;
     std::size_t step = probeDelta(hp);
     auto needleV = loadNeedleV(hp.second);
-    for (std::size_t tries = 0; tries >> chunkShift() == 0; ++tries) {
+    for (std::size_t tries = chunkCount(); tries > 0; --tries) {
       ChunkPtr chunk = chunks_ + moduloByChunkCount(index);
       if (prefetch == Prefetch::ENABLED && sizeof(Chunk) > 64) {
         prefetchAddr(chunk->itemAddr(8));
@@ -1674,7 +1726,7 @@ class F14Table : public Policy {
     std::size_t index = hp.first;
     auto needleV = loadNeedleV(hp.second);
     std::size_t step = probeDelta(hp);
-    for (std::size_t tries = 0; tries >> chunkShift() == 0; ++tries) {
+    for (std::size_t tries = chunkCount(); tries > 0; --tries) {
       ChunkPtr chunk = chunks_ + moduloByChunkCount(index);
       if (sizeof(Chunk) > 64) {
         prefetchAddr(chunk->itemAddr(8));

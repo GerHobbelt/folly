@@ -460,6 +460,17 @@ cpp_library(
 )
 
 cpp_library(
+    name = "serial_queue_runner",
+    srcs = ["SerialQueueRunner.cpp"],
+    headers = ["SerialQueueRunner.h"],
+    exported_deps = [
+        ":baton",
+        ":task",
+        "//folly:exception_wrapper",
+    ],
+)
+
+cpp_library(
     name = "shared_lock",
     headers = ["SharedLock.h"],
     exported_deps = [
@@ -507,6 +518,18 @@ cpp_library(
         "//folly/coro:mutex",
         "//folly/coro:task",
         "//folly/experimental/channels/detail:atomic_queue",
+    ],
+)
+
+cpp_library(
+    name = "synchronized",
+    headers = ["Synchronized.h"],
+    exported_deps = [
+        ":shared_lock",
+        ":shared_mutex",
+        ":task",
+        ":traits",
+        "//folly:utility",
     ],
 )
 
