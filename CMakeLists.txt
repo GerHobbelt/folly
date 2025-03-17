@@ -607,6 +607,8 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
 
     DIRECTORY compression/test/
       TEST compression_test SLOW SOURCES CompressionTest.cpp
+      TEST quotient_multiset_test SOURCES QuotientMultiSetTest.cpp
+      TEST select64_test SOURCES Select64Test.cpp
 
     DIRECTORY compression/elias_fano/test/
       TEST bitvector_test SOURCES BitVectorCodingTest.cpp
@@ -714,12 +716,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST bits_test_2 SOURCES BitsTest.cpp
       #TEST nested_command_line_app_test SOURCES NestedCommandLineAppTest.cpp
       #TEST program_options_test SOURCES ProgramOptionsTest.cpp
-      TEST quotient_multiset_test SOURCES QuotientMultiSetTest.cpp
       # Depends on liburcu
       #TEST read_mostly_shared_ptr_test SOURCES ReadMostlySharedPtrTest.cpp
       #TEST ref_count_test SOURCES RefCountTest.cpp
-      TEST select64_test SOURCES Select64Test.cpp
-      TEST test_util_test SOURCES TestUtilTest.cpp
 
     DIRECTORY experimental/io/test/
       TEST fs_util_test SOURCES FsUtilTest.cpp
@@ -913,7 +912,6 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK lang_to_ascii_benchmark SOURCES ToAsciiBench.cpp
       TEST lang_to_ascii_test SOURCES ToAsciiTest.cpp
       TEST lang_type_info_test SOURCES TypeInfoTest.cpp
-      TEST lang_uncaught_exceptions_test SOURCES UncaughtExceptionsTest.cpp
 
     DIRECTORY memory/test/
       TEST arena_test WINDOWS_DISABLED SOURCES ArenaTest.cpp
@@ -1096,6 +1094,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK uri_benchmark SOURCES UriBenchmark.cpp
       TEST uri_test SOURCES UriTest.cpp
       TEST varint_test SOURCES VarintTest.cpp
+
+    DIRECTORY testing/test/
+      TEST test_util_test SOURCES TestUtilTest.cpp
 
     DIRECTORY json/test/
       TEST dynamic_converter_test SOURCES DynamicConverterTest.cpp

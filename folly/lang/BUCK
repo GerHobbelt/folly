@@ -123,6 +123,7 @@ cpp_library(
     exported_deps = [
         ":assume",
         ":safe_assert",
+        ":thunk",
         ":type_info",
         "//folly:c_portability",
         "//folly:cpp_attributes",
@@ -264,8 +265,6 @@ cpp_library(
     srcs = ["UncaughtExceptions.cpp"],
     headers = ["UncaughtExceptions.h"],
     exported_deps = [
-        "//folly:cpp_attributes",
-        "//folly:likely",
-        "//folly:portability",
+        ":exception",
     ],
 )

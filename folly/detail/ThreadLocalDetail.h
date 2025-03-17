@@ -35,6 +35,8 @@
 #include <folly/Portability.h>
 #include <folly/ScopeGuard.h>
 #include <folly/SharedMutex.h>
+#include <folly/Synchronized.h>
+#include <folly/concurrency/container/atomic_grow_array.h>
 #include <folly/container/Foreach.h>
 #include <folly/detail/StaticSingletonManager.h>
 #include <folly/detail/UniqueInstance.h>
@@ -254,11 +256,10 @@ struct ThreadEntrySet {
   EntryVector threadEntries;
   // Map from ThreadEntry* to its slot in the threadEntries vector to be able
   // to remove an entry quickly.
-  std::unordered_map<ThreadEntry*, EntryVector::size_type> entryToVectorSlot;
+  using EntryIndex = std::unordered_map<ThreadEntry*, EntryVector::size_type>;
+  EntryIndex entryToVectorSlot;
 
-  bool basicSanity() {
-    return threadEntries.size() == entryToVectorSlot.size();
-  }
+  bool basicSanity() const;
 
   void clear() {
     DCHECK(basicSanity());
@@ -266,7 +267,7 @@ struct ThreadEntrySet {
     threadEntries.clear();
   }
 
-  bool contains(ThreadEntry* entry) {
+  bool contains(ThreadEntry* entry) const {
     DCHECK(basicSanity());
     return entryToVectorSlot.find(entry) != entryToVectorSlot.end();
   }
@@ -302,8 +303,29 @@ struct ThreadEntrySet {
     }
     threadEntries.pop_back();
     DCHECK(basicSanity());
+    if (compressible()) {
+      compress();
+    }
+    DCHECK(basicSanity());
     return true;
   }
+
+  /// compressible
+  ///
+  /// If many elements have been removed, then size might be much less than
+  /// capacity and it becomes possible to reduce memory usage.
+  bool compressible() const {
+    // We choose a sufficiently-large multiplier so that there is no risk of a
+    // following insert growing the vector and then a following erase shrinking
+    // the vector, since that way lies non-amortized-O(N)-complexity costs for
+    // both insert and erase ops.
+    constexpr size_t const mult = 4;
+    return threadEntries.size() * mult <= threadEntries.capacity();
+  }
+  /// compress
+  ///
+  /// Attempt to reduce the memory usage of the data structure.
+  void compress();
 };
 
 struct StaticMetaBase {
@@ -331,6 +353,7 @@ struct StaticMetaBase {
 
     EntryID& operator=(EntryID&& other) noexcept {
       assert(this != &other);
+      DCHECK(value.load() == kEntryIDInvalid);
       value = other.value.load();
       other.value = kEntryIDInvalid;
       return *this;
@@ -381,101 +404,55 @@ struct StaticMetaBase {
 
   /*
    * Helper inline methods to add/remove/clear ThreadEntry* from
-   * allThreadEntryMap_
+   * allId2ThreadEntrySets_
    */
-
-  /*
-   * Add a ThreadEntry* to the map of allThreadEntryMap_
-   * for a given slot @id in ThreadEntry::elements that is
-   * used. This should be called under a lock by the owning thread.
-   */
-  FOLLY_ALWAYS_INLINE void addThreadEntryToMapLocked(
-      ThreadEntry* te, uint32_t id) {
-    DCHECK_NE(te->removed_, true);
-    allThreadEntryMap_[id].insert(te);
-  }
 
   /*
    * Return true if given ThreadEntry is already present in the ThreadEntrySet
    * for the given id.
    */
   FOLLY_ALWAYS_INLINE bool isThreadEntryInSet(ThreadEntry* te, uint32_t id) {
-    std::lock_guard<std::mutex> g(lock_);
-    return allThreadEntryMap_[id].contains(te);
+    return allId2ThreadEntrySets_[id].rlock()->contains(te);
   }
 
   /*
-   * Add a ThreadEntry* to the map of allThreadEntryMap_
+   * Add a ThreadEntry* to the map of allId2ThreadEntrySets_
    * for a given slot @id in ThreadEntry::elements that is
-   * used. This the locked version.
+   * used.
    */
   FOLLY_ALWAYS_INLINE void addThreadEntryToMap(ThreadEntry* te, uint32_t id) {
     if (te->elements[id].isLinked) {
       DCHECK(isThreadEntryInSet(te, id));
     } else {
       te->elements[id].isLinked = true;
-      std::lock_guard<std::mutex> g(lock_);
-      addThreadEntryToMapLocked(te, id);
+      DCHECK_NE(te->removed_, true);
+      // StaticMetaBase::allocate() always initializes a ThreadEntrySet
+      // when ever a new @id is allocated. Enabling faster and less contentious
+      // addThreadEntryToMap.
+      allId2ThreadEntrySets_[id].wlock()->insert(te);
     }
   }
 
   /*
-   * Remove a ThreadEntry* from the map of allThreadEntryMap_
-   * for a all slot @id's in ThreadEntry::elements that are
+   * Remove a ThreadEntry* from the map of allId2ThreadEntrySets_
+   * for all slot @id's in ThreadEntry::elements that are
    * used. This is essentially clearing out a ThreadEntry entirely
-   * from the allThreadEntryMap_.
-   * This should be called under a lock by the owning thread.
-   * The unlocked version is used in place where the meta
-   * lock_ is already held.
-   */
-  FOLLY_ALWAYS_INLINE void removeThreadEntryFromAllInMapLocked(
-      ThreadEntry* te) {
-    for (auto& [e, teSet] : allThreadEntryMap_) {
-      teSet.erase(te);
-    }
-  }
-
-  /*
-   * Remove a ThreadEntry* from the map of allThreadEntryMap_
-   * for a all slot @id's in ThreadEntry::elements that are
-   * used. This is essentially clearing out a ThreadEntry entirely
-   * from the allThreadEntryMap_. This is the locked version.
+   * from the allId2ThreadEntrySets_.
    */
   FOLLY_ALWAYS_INLINE void removeThreadEntryFromAllInMap(ThreadEntry* te) {
-    std::lock_guard<std::mutex> g(lock_);
-    removeThreadEntryFromAllInMapLocked(te);
-  }
-
-  /*
-   * Remove a ThreadEntry* from the map of allThreadEntryMap_
-   * for a given slot @id in ThreadEntry::elements that is
-   * being freed. We only need the locked version.
-   */
-  FOLLY_ALWAYS_INLINE void removeThreadEntryFromIdInMapLocked(
-      ThreadEntry* te, uint32_t id) {
-    std::lock_guard<std::mutex> g(lock_);
-    if (auto ptr = get_ptr(allThreadEntryMap_, id)) {
-      ptr->erase(te);
+    uint32_t maxId = nextId_.load();
+    for (uint32_t i = 0; i < maxId; ++i) {
+      allId2ThreadEntrySets_[i].wlock()->erase(te);
     }
-  }
-
-  /*
-   * Clear the Set containing all ThreadEntry*'s for a given slot @id.
-   * This is always called in a locked context. Do not use this directly
-   * without holding the meta lock_.
-   */
-  FOLLY_ALWAYS_INLINE void clearSetforIdInMapLocked(uint32_t id) {
-    allThreadEntryMap_[id].clear();
   }
 
   /*
    * Check if ThreadEntry* is present in the map for all slots of @ids.
-   * This is always called in a locked context, if not results in data races
    */
   FOLLY_ALWAYS_INLINE bool isThreadEntryRemovedFromAllInMap(ThreadEntry* te) {
-    std::lock_guard<std::mutex> g(lock_);
-    for (auto& [e, teSet] : allThreadEntryMap_) {
-      if (teSet.contains(te)) {
+    uint32_t maxId = nextId_.load();
+    for (uint32_t i = 0; i < maxId; ++i) {
+      if (allId2ThreadEntrySets_[i].rlock()->contains(te)) {
         return false;
       }
     }
@@ -503,7 +480,8 @@ struct StaticMetaBase {
   relaxed_atomic_int64_t totalElementWrappers_{0};
   // This is a map of all thread entries mapped to index i with active
   // elements[i];
-  std::unordered_map<uint32_t, ThreadEntrySet> allThreadEntryMap_;
+  using SynchronizedThreadEntrySet = folly::Synchronized<ThreadEntrySet>;
+  folly::atomic_grow_array<SynchronizedThreadEntrySet> allId2ThreadEntrySets_;
 };
 
 struct FakeUniqueInstance {
@@ -572,6 +550,18 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
     return detail::createGlobal<StaticMeta<Tag, AccessMode>, void>();
   }
 
+  struct LocalCache {
+    ThreadEntry* threadEntry;
+    size_t capacity;
+  };
+  static_assert(std::is_standard_layout_v<LocalCache>);
+  static_assert(std::is_trivial_v<LocalCache>);
+
+  FOLLY_EXPORT FOLLY_ALWAYS_INLINE static LocalCache& getLocalCache() {
+    static thread_local LocalCache instance;
+    return instance;
+  }
+
   FOLLY_EXPORT FOLLY_ALWAYS_INLINE static ElementWrapper& get(EntryID* ent) {
     // Eliminate as many branches and as much extra code as possible in the
     // cached fast path, leaving only one branch here and one indirection
@@ -586,10 +576,10 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
 
   /*
    * In order to facilitate adding/clearing ThreadEntry* to
-   * StaticMetaBase::allThreadEntryMap_ during ThreadLocalPtr reset()/release()
-   * we need access to the ThreadEntry* directly. This allows for direct
-   * interaction with StaticMetaBase::allThreadEntryMap_. We keep
-   * StaticMetaBase::allThreadEntryMap_ updated with ThreadEntry* whenever a
+   * StaticMetaBase::allId2ThreadEntrySets_ during ThreadLocalPtr
+   * reset()/release() we need access to the ThreadEntry* directly. This allows
+   * for direct interaction with StaticMetaBase::allId2ThreadEntrySets_. We keep
+   * StaticMetaBase::allId2ThreadEntrySets_ updated with ThreadEntry* whenever a
    * ThreadLocal is set/released.
    */
   FOLLY_EXPORT FOLLY_ALWAYS_INLINE static ThreadEntry* getThreadEntry(
@@ -597,22 +587,21 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
     // Eliminate as many branches and as much extra code as possible in the
     // cached fast path, leaving only one branch here and one indirection below.
     uint32_t id = ent->getOrInvalid();
-    static thread_local ThreadEntry* threadEntryTL{};
-    ThreadEntry* threadEntryNonTL{};
-    auto& threadEntry = kUseThreadLocal ? threadEntryTL : threadEntryNonTL;
+    LocalCache cacheNonTL{};
+    auto& cache = kUseThreadLocal ? getLocalCache() : cacheNonTL;
 
-    static thread_local size_t capacityTL{};
-    size_t capacityNonTL{};
-    auto& capacity = kUseThreadLocal ? capacityTL : capacityNonTL;
-
-    if (FOLLY_UNLIKELY(capacity <= id)) {
-      getSlowReserveAndCache(ent, id, threadEntry, capacity);
+    if (FOLLY_UNLIKELY(cache.capacity <= id)) {
+      getSlowReserveAndCache(ent, cache);
     }
-    return threadEntry;
+    return cache.threadEntry;
   }
 
   FOLLY_NOINLINE static void getSlowReserveAndCache(
-      EntryID* ent, uint32_t& id, ThreadEntry*& threadEntry, size_t& capacity) {
+      EntryID* ent, LocalCache& cache) {
+    auto id = ent->getOrInvalid();
+    auto& threadEntry = cache.threadEntry;
+    auto& capacity = cache.capacity;
+
     auto& inst = instance();
     threadEntry = inst.threadEntry_();
     if (FOLLY_UNLIKELY(threadEntry->getElementsCapacity() <= id)) {
@@ -666,15 +655,27 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
     // only the current thread survives
     auto& meta = instance();
     auto threadEntry = meta.threadEntry_();
-    // Loop through allThreadEntryMap_; Only keep ThreadEntry* in the map
+    // Loop through allId2ThreadEntrySets_; Only keep ThreadEntry* in the map
     // for ThreadEntry::elements that are still in use by the current thread.
     // Evict all of the ThreadEntry* from other threads.
-    for (auto& [e, te] : meta.allThreadEntryMap_) {
-      if (te.contains(threadEntry)) {
-        meta.clearSetforIdInMapLocked(e);
-        meta.addThreadEntryToMapLocked(threadEntry, e);
+    // Since the map structure is untouched and only map entries are modified,
+    // rlock() with asNonConstUnsafe() access is used, so that an exclusive lock
+    // can be acquired on the threadEntrySet.
+    uint32_t maxId = meta.nextId_.load();
+    for (uint32_t id = 0; id < maxId; ++id) {
+      auto wlockedSet = meta.allId2ThreadEntrySets_[id].wlock();
+      if (wlockedSet->contains(threadEntry)) {
+        DCHECK(threadEntry->elements[id].isLinked);
+        wlockedSet->clear();
+        wlockedSet->insert(threadEntry);
       } else {
-        meta.clearSetforIdInMapLocked(e);
+        // DCHECK if elements[id] is unlinked for this
+        // threadEntry only (id < threadEntry->getElementsCapacity()).
+        // The rest can be cleared regardless.
+        if (id < threadEntry->getElementsCapacity()) {
+          DCHECK(!threadEntry->elements[id].isLinked);
+        }
+        wlockedSet->clear();
       }
     }
     instance().lock_.unlock();

@@ -351,6 +351,8 @@ cpp_library(
         "//folly:portability",
         "//folly:scope_guard",
         "//folly:shared_mutex",
+        "//folly:synchronized",
+        "//folly/concurrency/container:atomic_grow_array",
         "//folly/container:foreach",
         "//folly/lang:exception",
         "//folly/memory:malloc",

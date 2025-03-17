@@ -15,7 +15,7 @@ cpp_library(
     ],
     exported_deps = [
         "//folly:indestructible",
-        "//folly/experimental:read_mostly_shared_ptr",
+        "//folly/concurrency/memory:read_mostly_shared_ptr",
         "//folly/synchronization:rcu",
     ],
 )
@@ -26,5 +26,28 @@ cpp_library(
     exported_deps = [
         "//folly:function",
         "//folly/experimental:tl_ref_count",
+    ],
+)
+
+cpp_library(
+    name = "primary_ptr",
+    headers = ["PrimaryPtr.h"],
+    exported_deps = [
+        "//folly:function",
+        "//folly/futures:cleanup",
+        "//folly/futures:core",
+    ],
+    exported_external_deps = [
+        "glog",
+    ],
+)
+
+cpp_library(
+    name = "tl_ref_count",
+    headers = ["TLRefCount.h"],
+    exported_deps = [
+        "//folly:thread_local",
+        "//folly/synchronization:asymmetric_thread_fence",
+        "//folly/synchronization/detail:sleeper",
     ],
 )

@@ -3,16 +3,6 @@ load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
 oncall("fbcode_entropy_wardens_folly")
 
 cpp_library(
-    name = "atomic_read_mostly_main_ptr",
-    headers = [
-        "AtomicReadMostlyMainPtr.h",
-    ],
-    exported_deps = [
-        "//folly/concurrency/memory:atomic_read_mostly_main_ptr",
-    ],
-)
-
-cpp_library(
     name = "auto_timer",
     headers = [
         "AutoTimer.h",
@@ -88,13 +78,11 @@ cpp_library(
 
 cpp_library(
     name = "execution_observer",
-    srcs = ["ExecutionObserver.cpp"],
-    headers = ["ExecutionObserver.h"],
-    deps = [
-        "//folly/tracing:static_tracepoint",
+    headers = [
+        "ExecutionObserver.h",
     ],
-    exported_external_deps = [
-        "boost",
+    exported_deps = [
+        "//folly/executors:execution_observer",
     ],
 )
 
@@ -133,15 +121,11 @@ cpp_library(
 
 cpp_library(
     name = "instructions",
-    headers = ["Instructions.h"],
-    exported_deps = [
-        "//folly:cpu_id",
-        "//folly:portability",
-        "//folly/lang:assume",
-        "//folly/portability:builtins",
+    headers = [
+        "Instructions.h",
     ],
-    exported_external_deps = [
-        "glog",
+    exported_deps = [
+        "//folly/compression:instructions",
     ],
 )
 
@@ -167,25 +151,21 @@ cpp_library(
 
 cpp_library(
     name = "cleanup",
-    headers = ["Cleanup.h"],
-    exported_deps = [
-        "//folly/futures:core",
+    headers = [
+        "Cleanup.h",
     ],
-    exported_external_deps = [
-        "glog",
+    exported_deps = [
+        "//folly/futures:cleanup",
     ],
 )
 
 cpp_library(
     name = "primary_ptr",
-    headers = ["PrimaryPtr.h"],
-    exported_deps = [
-        ":cleanup",
-        "//folly:function",
-        "//folly/futures:core",
+    headers = [
+        "PrimaryPtr.h",
     ],
-    exported_external_deps = [
-        "glog",
+    exported_deps = [
+        "//folly/concurrency/memory:primary_ptr",
     ],
 )
 
@@ -212,18 +192,11 @@ cpp_library(
 
 cpp_library(
     name = "select64",
-    srcs = ["Select64.cpp"],
-    headers = ["Select64.h"],
-    deps = [
-        "//folly:constexpr_math",
-        "//folly:utility",
+    headers = [
+        "Select64.h",
     ],
     exported_deps = [
-        ":instructions",
-        "//folly:portability",
-    ],
-    exported_external_deps = [
-        "glog",
+        "//folly/compression:select64",
     ],
 )
 
@@ -252,26 +225,11 @@ cpp_library(
 
 cpp_library(
     name = "test_util",
-    srcs = ["TestUtil.cpp"],
-    headers = ["TestUtil.h"],
-    deps = [
-        "//folly:exception",
-        "//folly:file",
-        "//folly:file_util",
-        "//folly:memory",
-        "//folly:string",
-        "//folly/ext:test_ext",
-        # @fb-only: "//folly/facebook:test_ext", 
-        "//folly/portability:fcntl",
+    headers = [
+        "TestUtil.h",
     ],
     exported_deps = [
-        "//folly:range",
-        "//folly:scope_guard",
-        "//folly/experimental/io:fs_util",
-    ],
-    external_deps = [
-        "glog",
-        ("boost", None, "boost_regex"),
+        "//folly/testing:test_util",
     ],
 )
 
@@ -299,53 +257,31 @@ cpp_library(
 
 cpp_library(
     name = "threaded_repeating_function_runner",
-    srcs = ["ThreadedRepeatingFunctionRunner.cpp"],
-    headers = ["ThreadedRepeatingFunctionRunner.h"],
-    deps = [
-        "//folly/system:thread_name",
+    headers = [
+        "ThreadedRepeatingFunctionRunner.h",
     ],
     exported_deps = [
-        "//folly:function",
-    ],
-    external_deps = [
-        "glog",
+        "//folly/executors:threaded_repeating_function_runner",
     ],
 )
 
 cpp_library(
     name = "tl_ref_count",
-    headers = ["TLRefCount.h"],
+    headers = [
+        "TLRefCount.h",
+    ],
     exported_deps = [
-        "//folly:thread_local",
-        "//folly/synchronization:asymmetric_thread_fence",
-        "//folly/synchronization/detail:sleeper",
+        "//folly/concurrency/memory:tl_ref_count",
     ],
 )
 
 cpp_library(
     name = "quotient_multiset",
-    srcs = [
-        "QuotientMultiSet.cpp",
-    ],
     headers = [
         "QuotientMultiSet.h",
         "QuotientMultiSet-inl.h",
     ],
-    deps = [
-        "//folly:math",
-    ],
     exported_deps = [
-        ":bits",
-        ":instructions",
-        ":select64",
-        "//folly:format",
-        "//folly:portability",
-        "//folly:range",
-        "//folly/io:iobuf",
-        "//folly/lang:bits",
-        "//folly/lang:safe_assert",
-    ],
-    exported_external_deps = [
-        "glog",
+        "//folly/compression:quotient_multiset",
     ],
 )

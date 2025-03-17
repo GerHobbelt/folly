@@ -239,11 +239,14 @@ class ThreadLocalPtr {
     std::mutex* lock_;
     uint32_t id_;
 
+    threadlocal_detail::StaticMetaBase::SynchronizedThreadEntrySet::RLockedPtr
+        rLockedThreadEntrySet_;
+
    public:
     class Iterator;
     friend class Iterator;
 
-    // The iterators obtained from Accessor are forward iterators.
+    // The iterators obtained from Accessor are bidirectional iterators.
     class Iterator {
       friend class Accessor;
       const Accessor* accessor_{nullptr};
@@ -283,11 +286,13 @@ class ThreadLocalPtr {
 
       explicit Iterator(const Accessor* accessor, bool toEnd = false)
           : accessor_(accessor),
-            vec_(accessor_->meta_.allThreadEntryMap_[accessor_->id_]
+            vec_(accessor_->rLockedThreadEntrySet_.asNonConstUnsafe()
                      .threadEntries),
             iter_(vec_.begin()) {
         if (toEnd) {
           setToEnd();
+        } else {
+          incrementToValid();
         }
       }
 
@@ -372,6 +377,7 @@ class ThreadLocalPtr {
       other.id_ = 0;
       other.accessAllThreadsLock_ = nullptr;
       other.lock_ = nullptr;
+      rLockedThreadEntrySet_ = std::move(other.rLockedThreadEntrySet_);
     }
 
     Accessor& operator=(Accessor&& other) noexcept {
@@ -387,13 +393,17 @@ class ThreadLocalPtr {
       swap(accessAllThreadsLock_, other.accessAllThreadsLock_);
       swap(lock_, other.lock_);
       swap(id_, other.id_);
+      rLockedThreadEntrySet_.unlock();
+      swap(rLockedThreadEntrySet_, other.rLockedThreadEntrySet_);
     }
 
     Accessor()
         : meta_(threadlocal_detail::StaticMeta<Tag, AccessMode>::instance()),
           accessAllThreadsLock_(nullptr),
           lock_(nullptr),
-          id_(0) {}
+          id_(0) {
+      rLockedThreadEntrySet_ = meta_.allId2ThreadEntrySets_[id_].rlock();
+    }
 
    private:
     explicit Accessor(uint32_t id)
@@ -403,6 +413,7 @@ class ThreadLocalPtr {
       accessAllThreadsLock_->lock();
       lock_->lock();
       id_ = id;
+      rLockedThreadEntrySet_ = meta_.allId2ThreadEntrySets_[id_].rlock();
     }
 
     void release() {

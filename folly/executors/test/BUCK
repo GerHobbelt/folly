@@ -57,6 +57,7 @@ cpp_unittest(
         "//folly/executors:manual_executor",
         "//folly/executors:queued_immediate_executor",
         "//folly/futures:core",
+        "//folly/io/async:request_context",
         "//folly/portability:gtest",
         "//folly/synchronization:baton",
     ],
@@ -305,12 +306,22 @@ cpp_unittest(
     headers = [],
     deps = [
         "//folly:random",
-        "//folly/experimental:function_scheduler",
+        "//folly/executors:function_scheduler",
         "//folly/portability:gtest",
         "//folly/synchronization:baton",
     ],
     external_deps = [
         "glog",
         ("boost", None, "boost_thread"),
+    ],
+)
+
+cpp_unittest(
+    name = "threaded_repeating_function_runner_test",
+    srcs = ["ThreadedRepeatingFunctionRunnerTest.cpp"],
+    headers = [],
+    deps = [
+        "//folly/experimental:threaded_repeating_function_runner",
+        "//folly/portability:gtest",
     ],
 )

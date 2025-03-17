@@ -90,7 +90,9 @@ cpp_unittest(
     name = "exception_test",
     srcs = ["ExceptionTest.cpp"],
     deps = [
+        "fbsource//third-party/fmt:fmt",
         "//folly:portability",
+        "//folly/lang:align",
         "//folly/lang:exception",
         "//folly/lang:keep",
         "//folly/lang:pretty",
@@ -215,30 +217,6 @@ cpp_unittest(
     srcs = ["PrettyTest.cpp"],
     deps = [
         "//folly/lang:pretty",
-        "//folly/portability:gtest",
-    ],
-)
-
-cpp_benchmark(
-    name = "uncaught_exceptions_bench",
-    srcs = ["UncaughtExceptionsBench.cpp"],
-    deps = [
-        "//folly:benchmark",
-        "//folly/lang:hint",
-        "//folly/lang:keep",
-        "//folly/lang:uncaught_exceptions",
-    ],
-)
-
-cpp_unittest(
-    name = "uncaught_exceptions_test",
-    srcs = ["UncaughtExceptionsTest.cpp"],
-    headers = [],
-    supports_static_listing = False,
-    deps = [
-        "//folly:conv",
-        "//folly/functional:invoke",
-        "//folly/lang:uncaught_exceptions",
         "//folly/portability:gtest",
     ],
 )
