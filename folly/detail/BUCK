@@ -250,7 +250,7 @@ cpp_library(
     exported_deps = [
         "//folly:range",
         "//folly/algorithm/simd/detail:simd_any_of",
-        "//folly/algorithm/simd/detail:simd_char_platform",
+        "//folly/algorithm/simd/detail:simd_platform",
     ],
 )
 
@@ -269,8 +269,10 @@ cpp_library(
     exported_deps = [
         "//folly:portability",
         "//folly:range",
-        "//folly/algorithm/simd/detail:simd_char_platform",
+        "//folly/algorithm/simd:ignore",
+        "//folly/algorithm/simd:movemask",
         "//folly/algorithm/simd/detail:simd_for_each",
+        "//folly/algorithm/simd/detail:simd_platform",
         "//folly/lang:bits",
     ],
 )

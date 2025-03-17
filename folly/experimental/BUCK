@@ -13,16 +13,6 @@ cpp_library(
 )
 
 cpp_library(
-    name = "bit_vector_coding",
-    headers = [
-        "BitVectorCoding.h",
-    ],
-    exported_deps = [
-        "//folly/compression/elias_fano:bit_vector_coding",
-    ],
-)
-
-cpp_library(
     name = "bits",
     headers = ["Bits.h"],
     exported_deps = [
@@ -122,16 +112,6 @@ cpp_library(
 )
 
 cpp_library(
-    name = "json_schema",
-    headers = [
-        "JSONSchema.h",
-    ],
-    exported_deps = [
-        "//folly/json:json_schema",
-    ],
-)
-
-cpp_library(
     name = "lock_free_ring_buffer",
     headers = [
         "LockFreeRingBuffer.h",
@@ -179,16 +159,6 @@ cpp_library(
     ],
     exported_deps = [
         "//folly/concurrency/memory:read_mostly_shared_ptr",
-    ],
-)
-
-cpp_library(
-    name = "select64",
-    headers = [
-        "Select64.h",
-    ],
-    exported_deps = [
-        "//folly/compression:select64",
     ],
 )
 

@@ -648,10 +648,12 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
   folly_define_tests(
     DIRECTORY algorithm/simd/detail/test/
       TEST algorithm_simd_detail_simd_any_of_test SOURCES SimdAnyOfTest.cpp
-      TEST algorithm_simd_detail_unroll_utils_test SOURCES UnrollUtilsTest.cpp
       TEST algorithm_simd_detail_simd_for_each_test SOURCES SimdForEachTest.cpp
+      TEST algorithm_simd_detail_simd_traits_test SOURCES TraitsTest.cpp
+      TEST algorithm_simd_detail_unroll_utils_test SOURCES UnrollUtilsTest.cpp
 
     DIRECTORY algorithm/simd/test/
+      TEST algorithm_simd_contains_test SOURCES ContainsTest.cpp
       TEST algorithm_simd_find_fixed_test SOURCES FindFixedTest.cpp
       TEST algorithm_simd_movemask_test SOURCES MovemaskTest.cpp
 
@@ -691,6 +693,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST container_heap_vector_types_test SOURCES heap_vector_types_test.cpp
       TEST container_map_util_test WINDOWS_DISABLED SOURCES MapUtilTest.cpp
       TEST container_merge_test SOURCES MergeTest.cpp
+      TEST container_regex_match_cache_test SOURCES RegexMatchCacheTest.cpp
       TEST container_small_vector_test WINDOWS_DISABLED
         SOURCES small_vector_test.cpp
       TEST container_sorted_vector_types_test SOURCES sorted_vector_test.cpp
@@ -1144,6 +1147,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST range_test SOURCES RangeTest.cpp
       TEST replaceable_test WINDOWS_DISABLED SOURCES ReplaceableTest.cpp
       TEST scope_guard_test WINDOWS_DISABLED SOURCES ScopeGuardTest.cpp
+      TEST sdt_test SOURCES SdtTest.cpp
       # Heavily dependent on drand and srand48
       #TEST shared_mutex_test SOURCES SharedMutexTest.cpp
       # SingletonTest requires Subprocess
