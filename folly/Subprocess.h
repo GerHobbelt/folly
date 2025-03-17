@@ -104,6 +104,7 @@
 #include <chrono>
 #include <exception>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <boost/container/flat_map.hpp>
@@ -117,11 +118,40 @@
 #include <folly/Optional.h>
 #include <folly/Portability.h>
 #include <folly/Range.h>
+#include <folly/container/span.h>
 #include <folly/gen/String.h>
 #include <folly/io/IOBufQueue.h>
 #include <folly/portability/SysResource.h>
 
 namespace folly {
+
+namespace detail {
+
+/// SubprocessFdActionsList
+///
+/// A sorted vector-map with a binary search. Declared in the header so that the
+/// binary search can be unit-tested.
+///
+/// Not using a library container type since this binary search is done in the
+/// child process after a vfork(), including in sanitized builds. Relevant
+/// member functions are explicitly marked non-sanitized (under clang).
+class SubprocessFdActionsList {
+ private:
+  using value_type = std::pair<int, int>;
+
+  value_type const* begin_;
+  value_type const* end_;
+
+ public:
+  explicit SubprocessFdActionsList(span<value_type const> rep) noexcept;
+
+  value_type const* begin() const noexcept;
+  value_type const* end() const noexcept;
+
+  int const* find(int fd) const noexcept;
+};
+
+} // namespace detail
 
 /**
  * Class to wrap a process return code.
@@ -269,6 +299,7 @@ class Subprocess {
   static const int PIPE_IN = -3;
   static const int PIPE_OUT = -4;
   static const int DEV_NULL = -5;
+  static const int NO_CLOEXEC = -6;
 
   /**
    * See Subprocess::Options::dangerousPostForkPreExecCallback() for usage.
@@ -299,6 +330,15 @@ class Subprocess {
     friend class Subprocess;
 
    public:
+    // digits10 is the maximum number of decimal digits such that any number
+    // up to this many decimal digits can always be represented in the given
+    // integer type
+    // but we need to have storage for the decimal representation of any
+    // integer, so +1, and we need to have storage for the terminal null, so
+    // again +1.
+    static inline constexpr size_t kPidBufferMinSize =
+        std::numeric_limits<pid_t>::digits10 + 2;
+
     Options() {} // E.g. https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58328
 
     /**
@@ -401,17 +441,15 @@ class Subprocess {
      * Detach the spawned process, to allow destroying the Subprocess object
      * without waiting for the child process to finish.
      *
-     * This causes the code to fork twice before executing the command.
-     * The intermediate child process will exit immediately, causing the process
-     * running the executable to be reparented to init (pid 1).
+     * This causes the code to vfork twice before executing the command. The
+     * intermediate child process will exit immediately after execve, causing
+     * the process running the executable to be reparented to init (pid 1).
      *
      * Subprocess objects created with detach() enabled will already be in an
      * "EXITED" state when the constructor returns.  The caller should not call
      * wait() or poll() on the Subprocess, and pid() will return -1.
      */
-    [[deprecated(
-        "detach() forks the current process, which is considered dangerous")]] Options&
-    detach() {
+    Options& detach() {
       detach_ = true;
       return *this;
     }
@@ -509,7 +547,37 @@ class Subprocess {
     }
 #endif
 
+    Options& setUid(uid_t uid, int* errout = nullptr) {
+      uid_ = AttrWithMeta<uid_t>{uid, errout};
+      return *this;
+    }
+    Options& setGid(gid_t gid, int* errout = nullptr) {
+      gid_ = AttrWithMeta<gid_t>{gid, errout};
+      return *this;
+    }
+    Options& setEUid(uid_t uid, int* errout = nullptr) {
+      euid_ = AttrWithMeta<uid_t>{uid, errout};
+      return *this;
+    }
+    Options& setEGid(gid_t gid, int* errout = nullptr) {
+      egid_ = AttrWithMeta<gid_t>{gid, errout};
+      return *this;
+    }
+
+    Options& setSignalMask(sigset_t sigmask) {
+      sigmask_ = sigmask;
+      return *this;
+    }
+
+    Options& addPrintPidToBuffer(span<char> buf);
+
    private:
+    template <typename T>
+    struct AttrWithMeta {
+      T value{};
+      int* errout{}; // nullptr if required, ptr if optional to report failure
+    };
+
     typedef boost::container::flat_map<int, int> FdMap;
     FdMap fdActions_;
     bool closeOtherFds_{false};
@@ -530,6 +598,12 @@ class Subprocess {
 #if defined(__linux__)
     Optional<cpu_set_t> cpuSet_;
 #endif
+    Optional<AttrWithMeta<uid_t>> uid_;
+    Optional<AttrWithMeta<gid_t>> gid_;
+    Optional<AttrWithMeta<uid_t>> euid_;
+    Optional<AttrWithMeta<gid_t>> egid_;
+    Optional<sigset_t> sigmask_;
+    std::unordered_set<char*> setPrintPidToBuffer_;
   };
 
   // Non-copyable, but movable
@@ -951,6 +1025,10 @@ class Subprocess {
   std::vector<ChildPipe> takeOwnershipOfPipes();
 
  private:
+  struct LibcReal;
+  struct SpawnRawArgs;
+  struct ChildErrorInfo;
+
   // spawn() sets up a pipe to read errors from the child,
   // then calls spawnInternal() to do the bulk of the work.  Once
   // spawnInternal() returns it reads the error pipe to see if the child
@@ -965,27 +1043,26 @@ class Subprocess {
       const char* executable,
       Options& options,
       const std::vector<std::string>* env,
-      int errFd);
+      ChildErrorInfo* err);
+
+  static pid_t spawnInternalDoFork(SpawnRawArgs const& args);
+  [[noreturn]] static void childError(
+      SpawnRawArgs const& args, int errCode, int errnoValue);
 
   // Actions to run in child.
   // Note that this runs after vfork(), so tread lightly.
   // Returns 0 on success, or an errno value on failure.
-  int prepareChild(
-      const Options& options,
-      const sigset_t* sigmask,
-      const char* childDir) const;
-  int runChild(
-      const char* executable, char** argv, char** env, const Options& options)
-      const;
+  static int prepareChild(SpawnRawArgs const& args);
+  static int runChild(SpawnRawArgs const& args);
 
   // Closes fds inherited from parent in child process
-  static void closeInheritedFds(const Options::FdMap& fdActions);
+  static void closeInheritedFds(const SpawnRawArgs& args);
 
   /**
    * Read from the error pipe, and throw SubprocessSpawnError if the child
    * failed before calling exec().
    */
-  void readChildErrorPipe(int pfd, const char* executable);
+  void readChildErrorNum(ChildErrorInfo err, const char* executable);
 
   // Returns an index into pipes_. Throws std::invalid_argument if not found.
   size_t findByChildFd(const int childFd) const;

@@ -2190,22 +2190,117 @@ TEST(F14Map, containsWithPrecomputedHash) {
 
 #if FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 template <template <class...> class TMap>
-void testContainsWithPrecomputedHashKeyWrapper() {
-  TMap<int, int> m{};
-  const auto key{1};
+void testFindHashedKey() {
+  TMap<std::string, int> m{};
+  std::string key{"hello"};
   m.insert({key, 1});
-  const F14HashedKey<int> hashedKey{key};
+
+  F14HashedKey<std::string> hashedKey{key};
+  EXPECT_NE(m.find(hashedKey), m.end());
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
+  EXPECT_EQ(m.find(hashedKeyNotFound), m.end());
+}
+
+TEST(F14Map, findHashedKey) {
+  testFindHashedKey<F14ValueMap>();
+  testFindHashedKey<F14VectorMap>();
+  testFindHashedKey<F14NodeMap>();
+  testFindHashedKey<F14FastMap>();
+}
+
+template <template <class...> class TMap>
+void testFindHashedKeyTransparent() {
+  struct Hasher {
+    using is_transparent = void;
+    size_t operator()(int key) const { return key; }
+  };
+  struct Equal {
+    using is_transparent = void;
+    bool operator()(int a, int b) const { return a == b; }
+  };
+
+  TMap<int, int, Hasher, Equal> m{};
+  int key{0};
+  m.insert({key, 1});
+
+  F14HashedKey<int, Hasher, Equal> hashedKey{key};
+  EXPECT_NE(m.find(hashedKey), m.end());
+
+  int otherKey{1};
+  F14HashedKey<int, Hasher, Equal> hashedKeyNotFound{otherKey};
+  EXPECT_EQ(m.find(hashedKeyNotFound), m.end());
+}
+
+TEST(F14Map, findHashedKeyTransparent) {
+  testFindHashedKeyTransparent<F14ValueMap>();
+  testFindHashedKeyTransparent<F14VectorMap>();
+  testFindHashedKeyTransparent<F14NodeMap>();
+  testFindHashedKeyTransparent<F14FastMap>();
+}
+
+template <template <class...> class TMap>
+void testContainsHashedKey() {
+  TMap<std::string, int> m{};
+  std::string key{"hello"};
+  m.insert({key, 1});
+
+  F14HashedKey<std::string> hashedKey{key};
   EXPECT_TRUE(m.contains(hashedKey));
-  const auto otherKey{2};
-  const F14HashedKey<int> hashedKeyNotFound{otherKey};
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
   EXPECT_FALSE(m.contains(hashedKeyNotFound));
 }
 
-TEST(F14Map, containsWithPrecomputedHashKeyWrapper) {
-  testContainsWithPrecomputedHashKeyWrapper<F14ValueMap>();
-  testContainsWithPrecomputedHashKeyWrapper<F14VectorMap>();
-  testContainsWithPrecomputedHashKeyWrapper<F14NodeMap>();
-  testContainsWithPrecomputedHashKeyWrapper<F14FastMap>();
+TEST(F14Map, containsHashedKey) {
+  testContainsHashedKey<F14ValueMap>();
+  testContainsHashedKey<F14VectorMap>();
+  testContainsHashedKey<F14NodeMap>();
+  testContainsHashedKey<F14FastMap>();
+}
+
+template <template <class...> class TMap>
+void testInsertOrAssignHashedKey() {
+  TMap<std::string, int> m{};
+  std::string key{"hello"};
+  m.insert({key, 1});
+
+  F14HashedKey<std::string> hashedKey{key};
+  EXPECT_FALSE(m.insert_or_assign(hashedKey, 2).second);
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
+  EXPECT_TRUE(m.insert_or_assign(hashedKeyNotFound, 3).second);
+}
+
+TEST(F14Map, insertOrAssignHashedKey) {
+  testInsertOrAssignHashedKey<F14ValueMap>();
+  testInsertOrAssignHashedKey<F14VectorMap>();
+  testInsertOrAssignHashedKey<F14NodeMap>();
+  testInsertOrAssignHashedKey<F14FastMap>();
+}
+
+template <template <class...> class TMap>
+void testInsertOrAssignRValueHashedKey() {
+  TMap<std::string, int> m{};
+  std::string key{"hello"};
+  m.insert({key, 1});
+
+  F14HashedKey<std::string> hashedKey{key};
+  EXPECT_FALSE(m.insert_or_assign(std::move(hashedKey), 2).second);
+
+  std::string otherKey{"folly"};
+  F14HashedKey<std::string> hashedKeyNotFound{otherKey};
+  EXPECT_TRUE(m.insert_or_assign(std::move(hashedKeyNotFound), 3).second);
+}
+
+TEST(F14Map, insertOrAssignRValueHashedKey) {
+  testInsertOrAssignRValueHashedKey<F14ValueMap>();
+  testInsertOrAssignRValueHashedKey<F14VectorMap>();
+  testInsertOrAssignRValueHashedKey<F14NodeMap>();
+  testInsertOrAssignRValueHashedKey<F14FastMap>();
 }
 
 template <template <class...> class TMap>
@@ -2268,7 +2363,7 @@ TEST(F14Map, containsWithPrecomputedHashKeyWrapperTransparent) {
   testContainsWithPrecomputedHashKeyWrapperTransparent<F14NodeMap>();
   testContainsWithPrecomputedHashKeyWrapperTransparent<F14FastMap>();
 }
-#endif
+#endif // FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
 template <template <class...> class TMap>
 void testEraseIf() {

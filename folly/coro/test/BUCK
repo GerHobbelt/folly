@@ -240,6 +240,17 @@ cpp_unittest(
     ],
 )
 
+cpp_unittest(
+    name = "noexcept_test",
+    srcs = ["NoexceptTest.cpp"],
+    deps = [
+        "//folly/coro:async_scope",
+        "//folly/coro:gtest_helpers",
+        "//folly/coro:noexcept",
+        "//folly/coro/safe:now_task",
+    ],
+)
+
 cpp_benchmark(
     name = "promise_benchmark",
     srcs = ["PromiseBenchmark.cpp"],
@@ -305,6 +316,7 @@ cpp_unittest(
     deps = [
         "//folly/coro:blocking_wait",
         "//folly/coro:detach_on_cancel",
+        "//folly/coro:gtest_helpers",
         "//folly/coro:shared_promise",
         "//folly/executors:cpu_thread_pool_executor",
         "//folly/portability:gtest",

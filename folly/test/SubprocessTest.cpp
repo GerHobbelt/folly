@@ -19,6 +19,9 @@
 #include <sys/types.h>
 
 #include <chrono>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include <boost/container/flat_set.hpp>
 #include <glog/logging.h>
@@ -27,10 +30,12 @@
 #include <folly/FileUtil.h>
 #include <folly/Format.h>
 #include <folly/String.h>
+#include <folly/container/span.h>
 #include <folly/experimental/io/FsUtil.h>
 #include <folly/gen/Base.h>
 #include <folly/gen/File.h>
 #include <folly/gen/String.h>
+#include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/Unistd.h>
 #include <folly/testing/TestUtil.h>
@@ -39,6 +44,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 
 using namespace folly;
 using namespace std::chrono_literals;
+using namespace std::string_view_literals;
 
 namespace std::chrono {
 template <typename Rep, typename Period>
@@ -64,7 +70,93 @@ bool waitForAnyOutput(Subprocess& proc) {
   LOG(INFO) << "Read " << buffer;
   return len == 1;
 }
+
+sigset_t makeSignalMask(folly::span<int const> signals) {
+  sigset_t sigmask;
+  sigemptyset(&sigmask);
+  for (auto sig : signals) {
+    sigaddset(&sigmask, sig);
+  }
+  return sigmask;
+}
+
+struct ScopedSignalMaskOverride {
+  sigset_t sigmask;
+  explicit ScopedSignalMaskOverride(folly::span<int const> signals) {
+    auto target = makeSignalMask(signals);
+    PCHECK(0 == pthread_sigmask(SIG_SETMASK, &target, &sigmask));
+  }
+  ~ScopedSignalMaskOverride() {
+    PCHECK(0 == pthread_sigmask(SIG_SETMASK, &sigmask, nullptr));
+  }
+};
+
+uint64_t readSignalMask(sigset_t sigmask) {
+  static_assert(NSIG - 1 <= 64); // 0 is not a signal
+  uint64_t ret = 0;
+  for (int sig = 1; sig < NSIG; ++sig) {
+    if (sigismember(&sigmask, sig)) {
+      ret |= (uint64_t(1) << (sig - 1));
+    }
+  }
+  return ret;
+}
+
+sigset_t getCurrentSignalMask() {
+  sigset_t sigmask;
+  pthread_sigmask(SIG_SETMASK, nullptr, &sigmask);
+  return sigmask;
+}
+
+std::string_view readOneLineOfProcSelfStatus(
+    std::string_view text, std::string_view key) {
+  std::vector<std::string_view> lines;
+  folly::split('\n', text, lines);
+  auto prefix = fmt::format("{}:", key);
+  auto iter = std::find_if(lines.begin(), lines.end(), [&](auto line) {
+    return folly::StringPiece(line).starts_with(prefix);
+  });
+  if (iter == lines.end()) {
+    return {};
+  }
+  auto line = *iter;
+  line.remove_prefix(prefix.size());
+  while (!line.empty() && std::isspace(line[0])) {
+    line.remove_prefix(1);
+  }
+  return line;
+}
+
 } // namespace
+
+struct SubprocessFdActionsListTest : testing::Test {};
+
+TEST_F(SubprocessFdActionsListTest, stress) {
+  std::mt19937 rng;
+  std::uniform_int_distribution<size_t> dist{0, 255};
+  for (size_t sz = 0; sz < 128; ++sz) {
+    std::map<int, int> map;
+    for (size_t i = 0; i < sz; ++i) {
+      while (true) {
+        auto n = dist(rng);
+        if (map.count(n)) {
+          continue;
+        }
+        map[int(n)] = -int(n);
+        break;
+      }
+    }
+    std::vector<std::pair<int, int>> vec{map.begin(), map.end()};
+    detail::SubprocessFdActionsList list{vec};
+    for (size_t fd = 0; fd < 256; ++fd) {
+      auto found = list.find(fd);
+      EXPECT_EQ(map.contains(fd), found != nullptr);
+      if (found) {
+        EXPECT_EQ(-int(fd), *found);
+      }
+    }
+  }
+}
 
 TEST(SimpleSubprocessTest, ExitsSuccessfully) {
   Subprocess proc(std::vector<std::string>{"/bin/true"});
@@ -868,3 +960,146 @@ TEST(CloseOtherDescriptorsSubprocessTest, ClosesFileDescriptors) {
   EXPECT_EQ("0\n1\n2\n3\n", p.first);
   proc.wait();
 }
+
+TEST(KeepFileOpenSubprocessTest, KeepsFileOpen) {
+  auto f0 = folly::File{"/dev/null"};
+  auto f1 = f0.dup();
+  auto f2 = f0.dup();
+  auto f3 = f0.dup();
+
+  f0.close(); // make space for fd 3, for ls to open /proc/self/fd
+
+  auto options =
+      Subprocess::Options()
+          .closeOtherFds()
+          .pipeStdout()
+          .fd(f1.fd(), Subprocess::NO_CLOEXEC)
+          .fd(f2.fd(), f2.fd());
+  Subprocess proc(
+      std::vector<std::string>{"/bin/ls", "/proc/self/fd"}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  int fds[] = {0, 1, 2, 3, f1.fd(), f2.fd()};
+  std::sort(std::begin(fds), std::end(fds));
+  EXPECT_EQ(fmt::format("{}\n", fmt::join(fds, "\n")), p.first);
+}
+
+static_assert(
+    Subprocess::Options::kPidBufferMinSize ==
+    std::numeric_limits<pid_t>::digits10 + 2);
+
+TEST(WritePidIntoBufTest, WritesPidIntoBufTooSmall) {
+  constexpr size_t size = Subprocess::Options::kPidBufferMinSize;
+  char buf[size - 1] = {};
+  auto options = Subprocess::Options();
+  EXPECT_THROW(options.addPrintPidToBuffer(buf), std::invalid_argument);
+}
+
+TEST(WritePidIntoBufTest, WritesPidIntoBuf) {
+  constexpr size_t size = Subprocess::Options::kPidBufferMinSize;
+  char buf[size] = {};
+  std::memset(buf, 0xA5, size);
+  auto options = Subprocess::Options().addPrintPidToBuffer(buf);
+  Subprocess proc(std::vector<std::string>{"/bin/true"}, options);
+  EXPECT_EQ(fmt::format("{}", proc.pid()), buf);
+  proc.wait();
+}
+
+TEST(WritePidIntoBufTest, WritesPidIntoBufExampleEnvVar) {
+  // this test effectively duplicates WritesPidIntoBuf but may serve as a
+  // reference for how to use this feature with environment-variable storage
+  //
+  // systemd does something like this:
+  // https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#%24SYSTEMD_EXEC_PID
+  constexpr size_t size = Subprocess::Options::kPidBufferMinSize;
+  constexpr auto prefix = "FOLLY_TEST_SUBPROCESS_PID="sv;
+  std::vector<std::string> env;
+  env.emplace_back("FOLLY_TEST_GREETING=hello world");
+  auto& var = env.emplace_back(prefix);
+  var.resize(prefix.size() + size); // must be stable! no more changes to env!
+  auto buf = folly::span{var}.subspan(prefix.size());
+  auto options = Subprocess::Options().pipeStdout().addPrintPidToBuffer(buf);
+  Subprocess proc(std::vector<std::string>{"/bin/env"}, options, nullptr, &env);
+  auto pid = proc.pid();
+  auto p = proc.communicate();
+  proc.wait();
+  std::vector<std::string_view> lines;
+  folly::split('\n', p.first, lines);
+  EXPECT_THAT(lines, testing::Contains(fmt::format("{}{}", prefix, pid)));
+}
+
+#if defined(__linux__)
+
+TEST(SetSignalMask, KeepsExistingMask) {
+  // the /proc filesystem, including /proc/self/status, is linux-specific
+  ASSERT_EQ(0, readSignalMask(getCurrentSignalMask()));
+  ScopedSignalMaskOverride guard{std::array{SIGURG, SIGCHLD}};
+  auto options = Subprocess::Options().pipeStdout();
+  Subprocess proc(
+      std::vector<std::string>{"/bin/cat", "/proc/self/status"}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  auto line = readOneLineOfProcSelfStatus(p.first, "SigBlk");
+  auto expected = (1 << (SIGURG - 1)) | (1 << (SIGCHLD - 1));
+  EXPECT_EQ(fmt::format("{:016x}", expected), line);
+}
+
+TEST(SetSignalMask, CanOverrideExistingMask) {
+  // the /proc filesystem, including /proc/self/status, is linux-specific
+  ASSERT_EQ(0, readSignalMask(getCurrentSignalMask()));
+  ScopedSignalMaskOverride guard{std::array{SIGURG, SIGCHLD}};
+  auto sigmask = makeSignalMask(std::array{SIGUSR1, SIGUSR2});
+  auto options = Subprocess::Options().pipeStdout().setSignalMask(sigmask);
+  Subprocess proc(
+      std::vector<std::string>{"/bin/cat", "/proc/self/status"}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  auto line = readOneLineOfProcSelfStatus(p.first, "SigBlk");
+  auto expected = (1 << (SIGUSR1 - 1)) | (1 << (SIGUSR2 - 1));
+  EXPECT_EQ(fmt::format("{:016x}", expected), line);
+}
+
+TEST(SetUserGroupId, KeepsExisting) {
+  auto options = Subprocess::Options().pipeStdout();
+  Subprocess proc(
+      std::vector<std::string>{"/bin/cat", "/proc/self/status"}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  auto uidline = readOneLineOfProcSelfStatus(p.first, "Uid");
+  auto gidline = readOneLineOfProcSelfStatus(p.first, "Gid");
+  auto [uid, euid, gid, egid] =
+      std::tuple{getuid(), geteuid(), getgid(), getegid()};
+  EXPECT_EQ(euid, uid);
+  EXPECT_EQ(egid, gid);
+  EXPECT_EQ(fmt::format("{}\t{}\t{}\t{}", uid, euid, uid, uid), uidline);
+  EXPECT_EQ(fmt::format("{}\t{}\t{}\t{}", gid, egid, gid, gid), gidline);
+}
+
+TEST(SetUserGroupId, CanOverrideAndReportFailure) {
+  // without elevated capabilities, the process cannot switch user/group
+  // which makes writing the unit-test for that impossible; here we just
+  // check the errors
+  auto options = Subprocess::Options().pipeStdout();
+  int errnum[4] = {};
+  options.setUid(0, errnum + 0);
+  options.setGid(0, errnum + 1);
+  options.setEUid(0, errnum + 2);
+  options.setEGid(0, errnum + 3);
+  Subprocess proc(
+      std::vector<std::string>{"/bin/cat", "/proc/self/status"}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  auto uidline = readOneLineOfProcSelfStatus(p.first, "Uid");
+  auto gidline = readOneLineOfProcSelfStatus(p.first, "Gid");
+  auto [uid, euid, gid, egid] = std::tuple{
+      errnum[0] ? getuid() : 0,
+      errnum[2] ? geteuid() : 0,
+      errnum[1] ? getgid() : 0,
+      errnum[3] ? getegid() : 0};
+  EXPECT_EQ(euid, uid);
+  EXPECT_EQ(egid, gid);
+  EXPECT_EQ(fmt::format("{}\t{}\t{}\t{}", uid, euid, uid, uid), uidline);
+  EXPECT_EQ(fmt::format("{}\t{}\t{}\t{}", gid, egid, gid, gid), gidline);
+}
+
+#endif

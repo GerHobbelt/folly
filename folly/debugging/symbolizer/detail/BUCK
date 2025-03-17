@@ -4,8 +4,12 @@ oncall("fbcode_entropy_wardens_folly")
 
 cpp_library(
     name = "debug",
+    srcs = ["Debug.cpp"],
     headers = ["Debug.h"],
-    exported_deps = [
-        "//folly:cpp_attributes",
+    deps = [
+        "//folly:portability",
+    ],
+    external_deps = [
+        ("glibc", None, "dl"),
     ],
 )
