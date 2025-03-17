@@ -458,7 +458,15 @@ using Defaulted =
 template <typename T>
 FOLLY_ALWAYS_INLINE static void prefetchAddr(T const* ptr) {
 #ifndef _WIN32
+  FOLLY_PUSH_WARNING
+  FOLLY_GNU_DISABLE_WARNING("-Warray-bounds")
+  /// The argument ptr is permitted to be wild, since wild pointers are allowed
+  /// for prefetching on every architecture. While this behavior is technically
+  /// undefined (forbidden) in C and C++, we need this behavior in order to
+  /// avoid extra cost in the callers. Recent versions of GCC warn when they
+  /// detect uses of pointers which may be wild. So we suppress the warning.
   __builtin_prefetch(static_cast<void const*>(ptr));
+  FOLLY_POP_WARNING
 #elif FOLLY_NEON
   __prefetch(static_cast<void const*>(ptr));
 #elif FOLLY_SSE >= 2
@@ -640,10 +648,8 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
   ////////
   // Tag filtering using NEON intrinsics
 
-  SparseMaskIter tagMatchIter(std::size_t needle) const {
-    FOLLY_SAFE_DCHECK(needle >= 0x80 && needle < 0x100, "");
+  SparseMaskIter tagMatchIter(uint8x16_t needleV) const {
     uint8x16_t tagV = vld1q_u8(&tags_[0]);
-    auto needleV = vdupq_n_u8(static_cast<uint8_t>(needle));
     auto eqV = vceqq_u8(tagV, needleV);
     // get info from every byte into the bottom half of every uint16_t
     // by shifting right 4, then round to get it into a 64-bit vector
@@ -668,27 +674,9 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
     return static_cast<TagVector const*>(static_cast<void const*>(&tags_[0]));
   }
 
-  SparseMaskIter tagMatchIter(std::size_t needle) const {
-    FOLLY_SAFE_DCHECK(needle >= 0x80 && needle < 0x100, "");
+  SparseMaskIter tagMatchIter(__m128i needleV) const {
     auto tagV = _mm_load_si128(tagVector());
 
-    // TRICKY!  It may seem strange to have a std::size_t needle and narrow
-    // it at the last moment, rather than making HashPair::second be a
-    // uint8_t, but the latter choice sometimes leads to a performance
-    // problem.
-    //
-    // On architectures with SSE2 but not AVX2, _mm_set1_epi8 expands
-    // to multiple instructions.  One of those is a MOVD of either 4 or
-    // 8 byte width.  Only the bottom byte of that move actually affects
-    // the result, but if a 1-byte needle has been spilled then this will
-    // be a 4 byte load.  GCC 5.5 has been observed to reload needle
-    // (or perhaps fuse a reload and part of a previous static_cast)
-    // needle using a MOVZX with a 1 byte load in parallel with the MOVD.
-    // This combination causes a failure of store-to-load forwarding,
-    // which has a big performance penalty (60 nanoseconds per find on
-    // a microbenchmark).  Keeping needle >= 4 bytes avoids the problem
-    // and also happens to result in slightly more compact assembly.
-    auto needleV = _mm_set1_epi8(static_cast<uint8_t>(needle));
     auto eqV = _mm_cmpeq_epi8(tagV, needleV);
     auto mask = _mm_movemask_epi8(eqV) & kFullMask;
     return SparseMaskIter{mask};
@@ -745,6 +733,11 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
     return tags_[index] != 0;
   }
 
+  /// Permitted to return a wild pointer, which is allowed for prefetching on
+  /// every architecture. This behavior is technically undefined (forbidden) in
+  /// C and C++, but we violate the rule in order to avoid extra cost in the
+  /// prefetch paths. The wild pointer that may be returned is whatever follows
+  /// any empty-instance global in the memory of any DSO.
   Item* itemAddr(std::size_t i) const {
     return static_cast<Item*>(
         const_cast<void*>(static_cast<void const*>(&rawItems_[i])));
@@ -752,6 +745,7 @@ struct alignas(kRequiredVectorAlignment) F14Chunk {
 
   Item& item(std::size_t i) {
     FOLLY_SAFE_DCHECK(this->occupied(i), "");
+    compiler_may_unsafely_assume(this != getSomeEmptyInstance());
     return *std::launder(itemAddr(i));
   }
 
@@ -1562,19 +1556,53 @@ class F14Table : public Policy {
 
   std::size_t probeDelta(HashPair hp) const { return 2 * hp.second + 1; }
 
+#if FOLLY_NEON
+
+  // TRICKY!  It may seem strange to have a std::size_t needle and narrow
+  // it at the last moment, rather than making HashPair::second be a
+  // uint8_t, but the latter choice sometimes leads to a performance
+  // problem.
+  //
+  // On architectures with SSE2 but not AVX2, _mm_set1_epi8 expands
+  // to multiple instructions.  One of those is a MOVD of either 4 or
+  // 8 byte width.  Only the bottom byte of that move actually affects
+  // the result, but if a 1-byte needle has been spilled then this will
+  // be a 4 byte load.  GCC 5.5 has been observed to reload needle
+  // (or perhaps fuse a reload and part of a previous static_cast)
+  // needle using a MOVZX with a 1 byte load in parallel with the MOVD.
+  // This combination causes a failure of store-to-load forwarding,
+  // which has a big performance penalty (60 nanoseconds per find on
+  // a microbenchmark).  Keeping needle >= 4 bytes avoids the problem
+  // and also happens to result in slightly more compact assembly.
+
+  FOLLY_ALWAYS_INLINE uint8x16_t loadNeedleV(std::size_t needle) const {
+    return vdupq_n_u8(static_cast<uint8_t>(needle));
+  }
+#elif FOLLY_SSE >= 2
+  FOLLY_ALWAYS_INLINE __m128i loadNeedleV(std::size_t needle) const {
+    return _mm_set1_epi8(static_cast<uint8_t>(needle));
+  }
+#else
+  FOLLY_ALWAYS_INLINE std::size_t loadNeedleV(std::size_t needle) const {
+    return needle;
+  }
+#endif
+
   enum class Prefetch { DISABLED, ENABLED };
 
   template <typename K>
   FOLLY_ALWAYS_INLINE ItemIter
   findImpl(HashPair hp, K const& key, Prefetch prefetch) const {
+    FOLLY_SAFE_DCHECK(hp.second >= 0x80 && hp.second < 0x100, "");
     std::size_t index = hp.first;
     std::size_t step = probeDelta(hp);
+    auto needleV = loadNeedleV(hp.second);
     for (std::size_t tries = 0; tries >> chunkShift() == 0; ++tries) {
       ChunkPtr chunk = chunks_ + moduloByChunkCount(index);
       if (prefetch == Prefetch::ENABLED && sizeof(Chunk) > 64) {
         prefetchAddr(chunk->itemAddr(8));
       }
-      auto hits = chunk->tagMatchIter(hp.second);
+      auto hits = chunk->tagMatchIter(needleV);
       while (hits.hasNext()) {
         auto i = hits.next();
         if (FOLLY_LIKELY(this->keyMatchesItem(key, chunk->item(i)))) {
@@ -1644,13 +1672,14 @@ class F14Table : public Policy {
   FOLLY_ALWAYS_INLINE ItemIter findMatching(K const& key, F&& func) const {
     auto hp = splitHash(this->computeKeyHash(key));
     std::size_t index = hp.first;
+    auto needleV = loadNeedleV(hp.second);
     std::size_t step = probeDelta(hp);
     for (std::size_t tries = 0; tries >> chunkShift() == 0; ++tries) {
       ChunkPtr chunk = chunks_ + moduloByChunkCount(index);
       if (sizeof(Chunk) > 64) {
         prefetchAddr(chunk->itemAddr(8));
       }
-      auto hits = chunk->tagMatchIter(hp.second);
+      auto hits = chunk->tagMatchIter(needleV);
       while (hits.hasNext()) {
         auto i = hits.next();
         if (FOLLY_LIKELY(

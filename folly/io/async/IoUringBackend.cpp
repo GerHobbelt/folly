@@ -55,7 +55,7 @@ extern "C" FOLLY_ATTR_WEAK void eb_poll_loop_post_hook(
 #endif
 
 #if FOLLY_IO_URING_UP_TO_DATE
-#include <folly/experimental/io/IoUringProvidedBufferRing.h>
+#include <folly/io/async/IoUringProvidedBufferRing.h>
 #endif
 
 namespace folly {
@@ -476,6 +476,9 @@ void IoSqeBase::internalSubmit(struct io_uring_sqe* sqe) noexcept {
 void IoSqeBase::internalCallback(const io_uring_cqe* cqe) noexcept {
   if (!(cqe->flags & IORING_CQE_F_MORE)) {
     inFlight_ = false;
+  }
+  if (evb_) {
+    evb_->bumpHandlingTime();
   }
   if (cancelled_) {
     callbackCancelled(cqe);

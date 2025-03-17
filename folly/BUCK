@@ -231,7 +231,7 @@ cpp_library(
     name = "config",
     # @fb-only: headers = ["folly-config.h"], 
     headers = ["//:folly-config.h"], # @oss-only
-    tags = ["oss_dependency"], # @oss-only
+    labels = ["oss_dependency"], # @oss-only
 )
 
 cpp_library(
@@ -563,6 +563,25 @@ cpp_library(
         "//folly/lang:exception",
         "//folly/lang:ordering",
         "//folly/portability:constexpr",
+    ],
+)
+
+cpp_library(
+    name = "fmt_utility",
+    srcs = [
+        "FmtUtility.cpp",
+    ],
+    headers = [
+        "FmtUtility.h",
+    ],
+    deps = [
+        ":range",
+        ":string",
+        "//folly/ssl:openssl_hash",
+    ],
+    exported_deps = [
+        "fbsource//third-party/fmt:fmt",
+        ":cpp_attributes",
     ],
 )
 

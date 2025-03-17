@@ -466,6 +466,12 @@ option(PYTHON_EXTENSIONS
   "Build Python Bindings for Folly, requires Cython and (BUILD_SHARED_LIBS=ON)"
   OFF
 )
+set(PYTHON_PACKAGE_INSTALL_DIR "" CACHE STRING
+  "Installation directory for folly Python packages. \
+  If empty, CMAKE_INSTALL_PREFIX will be used. \
+  No effect if PYTHON_EXTENSIONS=OFF."
+)
+
 
 add_library(folly
   $<TARGET_OBJECTS:folly_base>
@@ -1105,6 +1111,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       BENCHMARK fingerprint_benchmark SOURCES FingerprintBenchmark.cpp
       TEST fingerprint_test SOURCES FingerprintTest.cpp
       TEST fixed_string_test SOURCES FixedStringTest.cpp
+      TEST fmt_utility_test SOURCES FmtUtilityTest.cpp
       TEST format_other_test SOURCES FormatOtherTest.cpp
       BENCHMARK format_benchmark SOURCES FormatBenchmark.cpp
       TEST format_test SOURCES FormatTest.cpp
