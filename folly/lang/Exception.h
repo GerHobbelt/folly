@@ -28,6 +28,7 @@
 #include <folly/Portability.h>
 #include <folly/Traits.h>
 #include <folly/Utility.h>
+#include <folly/lang/Assume.h>
 #include <folly/lang/SafeAssert.h>
 #include <folly/lang/TypeInfo.h>
 
@@ -38,7 +39,7 @@ namespace folly {
 /// Throw an exception if exceptions are enabled, or terminate if compiled with
 /// -fno-exceptions.
 template <typename Ex>
-[[noreturn]] FOLLY_NOINLINE FOLLY_COLD void throw_exception(Ex&& ex) {
+[[noreturn, FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE void throw_exception(Ex&& ex) {
 #if FOLLY_HAS_EXCEPTIONS
   throw static_cast<Ex&&>(ex);
 #else
@@ -51,7 +52,8 @@ template <typename Ex>
 ///
 /// Terminates as if by forwarding to throw_exception but in a noexcept context.
 template <typename Ex>
-[[noreturn]] FOLLY_NOINLINE FOLLY_COLD void terminate_with(Ex&& ex) noexcept {
+[[noreturn, FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE void terminate_with(
+    Ex&& ex) noexcept {
   throw_exception(static_cast<Ex&&>(ex));
 }
 
@@ -85,11 +87,12 @@ using throw_exception_arg_t =
     typename throw_exception_arg_<R>::template apply<R>;
 
 template <typename Ex, typename... Args>
-[[noreturn]] FOLLY_NOINLINE FOLLY_COLD void throw_exception_(Args... args) {
+[[noreturn, FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE void throw_exception_(
+    Args... args) {
   throw_exception(Ex(static_cast<Args>(args)...));
 }
 template <typename Ex, typename... Args>
-[[noreturn]] FOLLY_NOINLINE FOLLY_COLD void terminate_with_(
+[[noreturn, FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE void terminate_with_(
     Args... args) noexcept {
   throw_exception(Ex(static_cast<Args>(args)...));
 }
@@ -152,7 +155,7 @@ template <
     typename FD = std::remove_pointer_t<std::decay_t<F>>,
     std::enable_if_t<!std::is_function<FD>::value, int> = 0,
     typename R = decltype(FOLLY_DECLVAL(F&&)(FOLLY_DECLVAL(A&&)...))>
-FOLLY_NOINLINE FOLLY_COLD R invoke_cold(F&& f, A&&... a) //
+[[FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE R invoke_cold(F&& f, A&&... a) //
     noexcept(noexcept(static_cast<F&&>(f)(static_cast<A&&>(a)...))) {
   return static_cast<F&&>(f)(static_cast<A&&>(a)...);
 }
@@ -192,7 +195,7 @@ FOLLY_ERASE R invoke_cold(F&& f, A&&... a) //
 ///         i);
 ///   }
 template <typename F, typename... A>
-[[noreturn]] FOLLY_NOINLINE FOLLY_COLD void
+[[noreturn, FOLLY_ATTR_GNU_COLD]] FOLLY_NOINLINE void
 invoke_noreturn_cold(F&& f, A&&... a) noexcept(
     /* formatting */ noexcept(static_cast<F&&>(f)(static_cast<A&&>(a)...))) {
   static_cast<F&&>(f)(static_cast<A&&>(a)...);
@@ -320,8 +323,8 @@ inline constexpr bool exception_ptr_access_ct = true;
 // 0 unknown, 1 true, -1 false
 extern std::atomic<int> exception_ptr_access_rt_cache_;
 
-FOLLY_COLD bool exception_ptr_access_rt_v_() noexcept;
-FOLLY_COLD bool exception_ptr_access_rt_() noexcept;
+[[FOLLY_ATTR_GNU_COLD]] bool exception_ptr_access_rt_v_() noexcept;
+[[FOLLY_ATTR_GNU_COLD]] bool exception_ptr_access_rt_() noexcept;
 
 inline bool exception_ptr_access_rt() noexcept {
   auto const& cache = exception_ptr_access_rt_cache_;
@@ -364,7 +367,7 @@ void* exception_ptr_get_object_(
 //  objects fails. This is likely to do with mismatch between the application
 //  ABI and the system-provided libstdc++/libc++/cxxabi ABI. May falsely return
 //  true on other platforms.
-[[FOLLY_ATTR_PURE]] inline bool exception_ptr_access() noexcept {
+[[FOLLY_ATTR_GNU_PURE]] inline bool exception_ptr_access() noexcept {
   return detail::exception_ptr_access_ct || detail::exception_ptr_access_rt();
 }
 
@@ -416,9 +419,53 @@ T* exception_ptr_get_object(std::exception_ptr const& ptr) noexcept {
     return detail::exception_ptr_catching<T&>(
         ptr, +[](T& ex) { return std::addressof(ex); });
   }
-  auto target = type_info_of<T>();
-  auto object = !target ? nullptr : exception_ptr_get_object(ptr, target);
+  auto const target = type_info_of<T>();
+  auto const object = !target ? nullptr : exception_ptr_get_object(ptr, target);
   return static_cast<T*>(object);
+}
+
+/// exception_ptr_try_get_object_exact_fast
+///
+/// Returns the address of the stored exception as if it were upcast to the
+/// given type, if its concrete type is exactly equal to one of the types passed
+/// in the tag.
+///
+/// May hypothetically fail in cases where multipe type-info objects exist for
+/// any of the given types. Positives are true but negatives may be either true
+/// or false.
+template <typename T, typename... S>
+T* exception_ptr_try_get_object_exact_fast(
+    std::exception_ptr const& ptr, tag_t<S...>) noexcept {
+  static_assert((std::is_convertible_v<S*, T*> && ...));
+  if (!kHasRtti || !ptr || !exception_ptr_access()) {
+    return nullptr;
+  }
+  auto const type = exception_ptr_get_type(ptr);
+  if (!type) {
+    return nullptr;
+  }
+  auto const object = exception_ptr_get_object(ptr);
+  auto const fun = [&](auto const phantom, std::type_info const* const target) {
+    assume(!!object);
+    return type == target ? static_cast<decltype(phantom)>(object) : nullptr;
+  };
+  T* out = nullptr;
+  ((out = fun(static_cast<S*>(nullptr), FOLLY_TYPE_INFO_OF(S))) || ...);
+  return out;
+}
+
+/// exception_ptr_get_object_hint
+///
+/// Returns the address of the stored exception as if it were upcast to the
+/// given type, if it could be upcast to that type.
+///
+/// If its concrete type is exactly equal to one of the types passed in the tag,
+/// this may be faster than exception_ptr_get_object without the hint.
+template <typename T, typename... S>
+T* exception_ptr_get_object_hint(
+    std::exception_ptr const& ptr, tag_t<S...> const hint) noexcept {
+  auto const val = exception_ptr_try_get_object_exact_fast<T>(ptr, hint);
+  return FOLLY_LIKELY(!!val) ? val : exception_ptr_get_object<T>(ptr);
 }
 
 //  exception_shared_string

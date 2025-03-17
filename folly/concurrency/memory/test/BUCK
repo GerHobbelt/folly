@@ -1,0 +1,60 @@
+load("@fbcode_macros//build_defs:cpp_benchmark.bzl", "cpp_benchmark")
+load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
+
+oncall("fbcode_entropy_wardens_folly")
+
+cpp_benchmark(
+    name = "atomic_read_mostly_main_ptr_benchmark",
+    srcs = ["AtomicReadMostlyMainPtrBenchmark.cpp"],
+    deps = [
+        "//folly:benchmark",
+        "//folly/concurrency/memory:atomic_read_mostly_main_ptr",
+        "//folly/portability:gflags",
+    ],
+)
+
+cpp_unittest(
+    name = "atomic_read_mostly_main_ptr_test",
+    srcs = ["AtomicReadMostlyMainPtrTest.cpp"],
+    deps = [
+        "//folly/concurrency/memory:atomic_read_mostly_main_ptr",
+        "//folly/portability:gtest",
+    ],
+)
+
+cpp_benchmark(
+    name = "read_mostly_shared_ptr_benchmark",
+    srcs = ["ReadMostlySharedPtrBenchmark.cpp"],
+    headers = [],
+    args = [
+        "--json",
+    ],
+    deps = [
+        "//folly:benchmark",
+        "//folly:memory",
+        "//folly/experimental:read_mostly_shared_ptr",
+        "//folly/portability:gflags",
+    ],
+)
+
+cpp_unittest(
+    name = "read_mostly_shared_ptr_stress_test",
+    srcs = ["ReadMostlySharedPtrStressTest.cpp"],
+    headers = [],
+    deps = [
+        "//folly/experimental:read_mostly_shared_ptr",
+        "//folly/portability:gtest",
+    ],
+)
+
+cpp_unittest(
+    name = "read_mostly_shared_ptr_test",
+    srcs = ["ReadMostlySharedPtrTest.cpp"],
+    headers = [],
+    deps = [
+        "//folly:memory",
+        "//folly/experimental:read_mostly_shared_ptr",
+        "//folly/portability:gtest",
+        "//folly/synchronization:baton",
+    ],
+)

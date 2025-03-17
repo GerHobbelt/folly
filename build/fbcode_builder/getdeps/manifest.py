@@ -30,6 +30,7 @@ from .fetcher import (
     PreinstalledNopFetcher,
     ShipitTransformerFetcher,
     SimpleShipitTransformerFetcher,
+    SubFetcher,
     SystemPackageFetcher,
 )
 from .py_wheel_builder import PythonWheelBuilder
@@ -45,6 +46,7 @@ SCHEMA = {
             "fbsource_path": OPTIONAL,
             "shipit_project": OPTIONAL,
             "shipit_fbcode_builder": OPTIONAL,
+            "use_shipit": OPTIONAL,
         },
     },
     "dependencies": {"optional_section": True, "allow_values": False},
@@ -64,6 +66,7 @@ SCHEMA = {
             "subdir": OPTIONAL,
             "make_binary": OPTIONAL,
             "build_in_src_dir": OPTIONAL,
+            "only_install": OPTIONAL,
             "job_weight_mib": OPTIONAL,
             "patchfile": OPTIONAL,
             "patchfile_opts": OPTIONAL,
@@ -103,6 +106,7 @@ SCHEMA = {
     "shipit.pathmap": {"optional_section": True},
     "shipit.strip": {"optional_section": True},
     "install.files": {"optional_section": True},
+    "subprojects": {"optional_section": True},
     # fb-only
     "sandcastle": {"optional_section": True, "fields": {"run_tests": OPTIONAL}},
 }
@@ -394,9 +398,11 @@ class ManifestParser(object):
     def get_repo_url(self, ctx):
         return self.get("git", "repo_url", ctx=ctx)
 
-    def create_fetcher(self, build_options, ctx):
-        use_real_shipit = (
-            ShipitTransformerFetcher.available() and build_options.use_shipit
+    def _create_fetcher(self, build_options, ctx):
+        real_shipit_available = ShipitTransformerFetcher.available(build_options)
+        use_real_shipit = real_shipit_available and (
+            build_options.use_shipit
+            or self.get("manifest", "use_shipit", defval="false", ctx=ctx) == "true"
         )
         if (
             not use_real_shipit
@@ -410,7 +416,7 @@ class ManifestParser(object):
             self.fbsource_path
             and build_options.fbsource_dir
             and self.shipit_project
-            and ShipitTransformerFetcher.available()
+            and real_shipit_available
         ):
             # We can use the code from fbsource
             return ShipitTransformerFetcher(build_options, self.shipit_project)
@@ -451,6 +457,19 @@ class ManifestParser(object):
         raise KeyError(
             "project %s has no fetcher configuration matching %s" % (self.name, ctx)
         )
+
+    def create_fetcher(self, build_options, loader, ctx):
+        fetcher = self._create_fetcher(build_options, ctx)
+        subprojects = self.get_section_as_ordered_pairs("subprojects", ctx)
+        if subprojects:
+            subs = []
+            for project, subdir in subprojects:
+                submanifest = loader.load_manifest(project)
+                subfetcher = submanifest.create_fetcher(build_options, loader, ctx)
+                subs.append((subfetcher, subdir))
+            return SubFetcher(fetcher, subs)
+        else:
+            return fetcher
 
     def get_builder_name(self, ctx):
         builder = self.get("build", "builder", ctx=ctx)

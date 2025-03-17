@@ -1,4 +1,4 @@
-#!/usr/bin/env fbpython
+#!/usr/bin/env python3
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -789,14 +789,6 @@ class BuildCmd(ProjectCmdBase):
             "--schedule-type", help="Indicates how the build was activated"
         )
         parser.add_argument(
-            "--extra-cmake-defines",
-            help=(
-                "Input json map that contains extra cmake defines to be used "
-                "when compiling the current project and all its deps. "
-                'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
-            ),
-        )
-        parser.add_argument(
             "--cmake-target",
             help=("Target for cmake build."),
             default="install",
@@ -809,12 +801,6 @@ class BuildCmd(ProjectCmdBase):
                 "e.g.: 'cxxflags=-fPIC' 'cflags=-fPIC'"
             ),
             action="append",
-        )
-        parser.add_argument(
-            "--shared-libs",
-            help="Build shared libraries if possible",
-            action="store_true",
-            default=False,
         )
         parser.add_argument(
             "--free-up-disk",
@@ -931,7 +917,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
 
     def run_project_cmd(self, args, loader, manifest):
         platforms = [
-            HostType("linux", "ubuntu", "18"),
+            HostType("linux", "ubuntu", "22"),
             HostType("darwin", None, None),
             HostType("windows", None, None),
         ]
@@ -1216,7 +1202,7 @@ jobs:
             help="Allow CI to fire on all branches - Handy for testing",
         )
         parser.add_argument(
-            "--ubuntu-version", default="20.04", help="Version of Ubuntu to use"
+            "--ubuntu-version", default="22.04", help="Version of Ubuntu to use"
         )
         parser.add_argument(
             "--cron",
@@ -1325,6 +1311,20 @@ def parse_args():
         help="Perform a non-FB internal build, even when in an fbsource repository",
         action="store_false",
         dest="facebook_internal",
+    )
+    add_common_arg(
+        "--shared-libs",
+        help="Build shared libraries if possible",
+        action="store_true",
+        default=False,
+    )
+    add_common_arg(
+        "--extra-cmake-defines",
+        help=(
+            "Input json map that contains extra cmake defines to be used "
+            "when compiling the current project and all its deps. "
+            'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
+        ),
     )
     add_common_arg(
         "--allow-system-packages",

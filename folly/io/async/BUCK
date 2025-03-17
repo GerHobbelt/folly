@@ -41,9 +41,9 @@ cpp_library(
         "//folly:map_util",
         "//folly:string",
         "//folly/container:bit_iterator",
-        "//folly/experimental:event_count",
         "//folly/lang:assume",
         "//folly/lang:bits",
+        "//folly/synchronization:event_count",
         "//folly/system:thread_id",
         "//folly/system:thread_name",
     ],
@@ -145,7 +145,6 @@ cpp_library(
     headers = ["AsyncSocket.h"],
     deps = [
         "//folly:exception",
-        "//folly:exception_wrapper",
         "//folly:format",
         "//folly:portability",
         "//folly:string",
@@ -380,7 +379,6 @@ cpp_library(
     headers = ["Request.h"],
     deps = [
         "//folly:glog",
-        "//folly:map_util",
         "//folly/experimental:single_writer_fixed_hash_map",
         "//folly/tracing:static_tracepoint",
     ],
@@ -444,10 +442,10 @@ cpp_library(
         "//folly:exception_wrapper",
         "//folly:network_address",
         "//folly:string",
-        "//folly/experimental/observer:observer",
         "//folly/io:shutdown_socket_set",
         "//folly/net:net_ops",
         "//folly/net:network_socket",
+        "//folly/observer:observer",
         "//folly/portability:sockets",
     ],
 )

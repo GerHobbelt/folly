@@ -20,6 +20,7 @@
 #include <mutex>
 
 #include <folly/lang/Hint.h>
+#include <folly/memory/SanitizeLeak.h>
 #include <folly/synchronization/CallOnce.h>
 
 constexpr auto kSmallGrowthFactor = 1.1;
@@ -255,22 +256,25 @@ void StaticMetaBase::destroy(EntryID* ent) {
         }
         for (auto& e : threadEntrySet->threadEntries) {
           auto elementsCapacity = e->getElementsCapacity();
-          if (id < elementsCapacity && e->elements[id].ptr) {
-            elements.push_back(e->elements[id]);
-            /*
-             * Writing another thread's ThreadEntry from here is fine;
-             * the only other potential reader is the owning thread --
-             * from onThreadExit (which grabs the lock, so is properly
-             * synchronized with us) or from get(), which also grabs
-             * the lock if it needs to resize the elements vector.
-             *
-             * We can't conflict with reads for a get(id), because
-             * it's illegal to call get on a thread local that's
-             * destructing.
-             */
-            e->elements[id].ptr = nullptr;
-            e->elements[id].deleter1 = nullptr;
-            e->elements[id].ownsDeleter = false;
+          if (id < elementsCapacity) {
+            if (e->elements[id].ptr) {
+              elements.push_back(e->elements[id]);
+              /*
+               * Writing another thread's ThreadEntry from here is fine;
+               * the only other potential reader is the owning thread --
+               * from onThreadExit (which grabs the lock, so is properly
+               * synchronized with us) or from get(), which also grabs
+               * the lock if it needs to resize the elements vector.
+               *
+               * We can't conflict with reads for a get(id), because
+               * it's illegal to call get on a thread local that's
+               * destructing.
+               */
+              e->elements[id].ptr = nullptr;
+              e->elements[id].deleter1 = nullptr;
+              e->elements[id].ownsDeleter = false;
+            }
+            e->elements[id].isLinked = false;
           }
         }
         meta.clearSetforIdInMapLocked(id);
@@ -348,6 +352,13 @@ ElementWrapper* StaticMetaBase::reallocate(
     if (!reallocated) {
       throw_exception<std::bad_alloc>();
     }
+
+    // When the main thread exits, it will call functions registered with
+    // 'atexit' and then call 'exit()'. However, It will NOT call any functions
+    // registered via the 'TLS' feature of pthread_key_create.
+    // Reference:
+    // https://pubs.opengroup.org/onlinepubs/9699919799/functions/pthread_create.html
+    folly::lsan_ignore_object(reallocated);
   }
   return reallocated;
 }
@@ -392,6 +403,9 @@ void StaticMetaBase::reserve(EntryID* id) {
 
     threadEntry->setElementsCapacity(newCapacity);
   }
+  for (size_t i = prevCapacity; i < newCapacity; ++i) {
+    threadEntry->elements[i].isLinked = false;
+  }
 
   meta.totalElementWrappers_ += (newCapacity - prevCapacity);
   free(reallocated);
@@ -402,7 +416,6 @@ void StaticMetaBase::reserve(EntryID* id) {
  * ThreadEntry* set and release the element @id.
  */
 void* ThreadEntry::releaseElement(uint32_t id) {
-  meta->removeThreadEntryFromIdInMapLocked(this, id);
   return elements[id].release();
 }
 

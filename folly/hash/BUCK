@@ -30,9 +30,11 @@ cpp_library(
     name = "hash",
     headers = ["Hash.h"],
     exported_deps = [
+        ":murmur_hash",
         ":spooky_hash_v1",
         ":spooky_hash_v2",
         "//folly:c_portability",
+        "//folly:portability",
         "//folly:traits",
         "//folly:utility",
         "//folly/functional:apply_tuple",
@@ -56,5 +58,15 @@ cpp_library(
     deps = [
         "//folly:cpp_attributes",
         "//folly:portability",
+    ],
+)
+
+cpp_library(
+    name = "murmur_hash",
+    headers = ["MurmurHash.h"],
+    exported_deps = [
+        "//folly:c_portability",
+        "//folly/lang:bits",
+        "//folly/portability:constexpr",
     ],
 )

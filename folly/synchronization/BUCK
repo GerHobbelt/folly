@@ -385,3 +385,31 @@ cpp_library(
         "//folly/synchronization/detail:spin",
     ],
 )
+
+cpp_library(
+    name = "flat_combining",
+    headers = ["FlatCombining.h"],
+    exported_deps = [
+        "//folly:function",
+        "//folly:indexed_mem_pool",
+        "//folly:portability",
+        "//folly/concurrency:cache_locality",
+        "//folly/synchronization:saturating_semaphore",
+        "//folly/system:thread_name",
+    ],
+)
+
+cpp_library(
+    name = "event_count",
+    headers = ["EventCount.h"],
+    exported_deps = [
+        "//folly:likely",
+        "//folly/detail:futex",
+        "//folly/lang:bits",
+        "//folly/portability:sys_time",
+        "//folly/portability:unistd",
+    ],
+    exported_external_deps = [
+        "glog",
+    ],
+)
