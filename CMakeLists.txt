@@ -85,6 +85,12 @@ else()
   set(IS_X86_64_ARCH FALSE)
 endif()
 
+if(NOT DEFINED IS_AARCH64_ARCH AND ${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+  set(IS_AARCH64_ARCH TRUE)
+else()
+  set(IS_AARCH64_ARCH FALSE)
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   # Check target architecture
   if (NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -171,7 +177,7 @@ REMOVE_MATCHES_FROM_LISTS(files hfiles
 if (${FOLLY_NO_EXCEPTION_TRACER})
   REMOVE_MATCHES_FROM_LISTS(files hfiles
     MATCHES
-      "^${FOLLY_DIR}/experimental/exception_tracer/"
+      "^${FOLLY_DIR}/debugging/exception_tracer/"
   )
 endif()
 
@@ -372,6 +378,25 @@ if (IS_X86_64_ARCH AND NOT MSVC)
   )
 endif()
 
+set(ARM_AOR_ASM_FILES
+  ${FOLLY_DIR}/external/aor/memcpy-advsimd.S
+  ${FOLLY_DIR}/external/aor/memcpy-armv8.S
+  ${FOLLY_DIR}/external/aor/memcpy_sve.S
+  ${FOLLY_DIR}/external/aor/memset-advsimd.S
+)
+if (IS_AARCH64_ARCH)
+  foreach (AOR_FILE IN LISTS ARM_AOR_ASM_FILES)
+    set_property(
+      SOURCE
+      ${AOR_FILE}
+      APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp"
+    )
+    list(APPEND folly_base_files
+      ${AOR_FILE}
+    )
+  endforeach()
+endif()
+
 add_library(folly_base OBJECT
   ${folly_base_files}
   ${CMAKE_CURRENT_BINARY_DIR}/folly/folly-config.h
@@ -544,9 +569,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
     ${FOLLY_DIR}/test/SingletonTestStructs.cpp
     ${FOLLY_DIR}/test/SocketAddressTestHelper.cpp
     ${FOLLY_DIR}/test/SocketAddressTestHelper.h
+    ${FOLLY_DIR}/compression/test/CodingTestUtils.cpp
     ${FOLLY_DIR}/container/test/F14TestUtil.h
     ${FOLLY_DIR}/container/test/TrackingTypes.h
-    ${FOLLY_DIR}/experimental/test/CodingTestUtils.cpp
     ${FOLLY_DIR}/futures/test/TestExecutor.cpp
     ${FOLLY_DIR}/futures/test/TestExecutor.h
     ${FOLLY_DIR}/io/async/test/BlockingSocket.h
@@ -712,16 +737,14 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
         SOURCES UnboundedBlockingQueueBench.cpp
       TEST unbounded_blocking_queue_test SOURCES UnboundedBlockingQueueTest.cpp
 
-    DIRECTORY experimental/test/
-      TEST bits_test_2 SOURCES BitsTest.cpp
+    #DIRECTORY experimental/test/
       #TEST nested_command_line_app_test SOURCES NestedCommandLineAppTest.cpp
       #TEST program_options_test SOURCES ProgramOptionsTest.cpp
       # Depends on liburcu
       #TEST read_mostly_shared_ptr_test SOURCES ReadMostlySharedPtrTest.cpp
       #TEST ref_count_test SOURCES RefCountTest.cpp
 
-    DIRECTORY experimental/io/test/
-      TEST fs_util_test SOURCES FsUtilTest.cpp
+    #DIRECTORY experimental/io/test/
 
     DIRECTORY external/farmhash/test/
       TEST farmhash_test SOURCES farmhash_test.cpp
@@ -833,6 +856,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST spooky_hash_v2_test SOURCES SpookyHashV2Test.cpp
 
     DIRECTORY io/test/
+      TEST fs_util_test SOURCES FsUtilTest.cpp
       TEST iobuf_test WINDOWS_DISABLED SOURCES IOBufTest.cpp
       TEST iobuf_cursor_test SOURCES IOBufCursorTest.cpp
       TEST iobuf_queue_test SOURCES IOBufQueueTest.cpp
@@ -897,6 +921,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
     DIRECTORY lang/test/
       TEST lang_aligned_test SOURCES AlignedTest.cpp
       TEST lang_badge_test SOURCES BadgeTest.cpp
+      TEST lang_bits_class_test SOURCES BitsClassTest.cpp
       TEST lang_bits_test SOURCES BitsTest.cpp
       TEST lang_c_string_test SOURCES CStringTest.cpp
       TEST lang_cast_test SOURCES CastTest.cpp
@@ -1122,7 +1147,7 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
 
   if (${LIBAIO_FOUND})
     folly_define_tests(
-      DIRECTORY experimental/io/test/
+      DIRECTORY io/async/test/
         TEST async_io_test
           SOURCES
             AsyncIOTest.cpp

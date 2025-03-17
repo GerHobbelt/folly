@@ -65,7 +65,7 @@ struct ExpectedHelper;
  * Expected objects in the error state.
  */
 template <class Error>
-class Unexpected final {
+class FOLLY_NODISCARD Unexpected final {
   template <class E>
   friend class Unexpected;
   template <class V, class E>
@@ -139,8 +139,8 @@ inline bool operator!=(
  * }
  */
 template <class Error>
-FOLLY_NODISCARD constexpr Unexpected<typename std::decay<Error>::type>
-makeUnexpected(Error&& err) {
+constexpr Unexpected<typename std::decay<Error>::type> makeUnexpected(
+    Error&& err) {
   return Unexpected<typename std::decay<Error>::type>{
       static_cast<Error&&>(err)};
 }
@@ -810,6 +810,19 @@ struct ExpectedHelper {
     return makeUnexpected(static_cast<decltype(ex)&&>(ex).error());
   }
 
+  template <
+      class This,
+      class OnError,
+      class Err =
+          decltype(std::declval<OnError>()(std::declval<This>().error()))
+              FOLLY_REQUIRES_TRAILING(std::is_void<Err>::value)>
+  static This onError_(This&& ex, OnError&& onError) {
+    if (UNLIKELY(ex.which_ == expected_detail::Which::eError)) {
+      static_cast<OnError&&>(onError)(static_cast<This&&>(ex).error());
+    }
+    return ex;
+  }
+
   FOLLY_POP_WARNING
 };
 } // namespace expected_detail_ExpectedHelper
@@ -1352,6 +1365,37 @@ class Expected final : expected_detail::ExpectedStorage<Value, Error> {
     }
     return Ret(expected_detail::ExpectedHelper::thenOrThrow_(
         std::move(base()), static_cast<Yes&&>(yes), static_cast<No&&>(no)));
+  }
+
+  /**
+   * onError
+   */
+  template <class OnError>
+  auto onError(OnError&& onError) const& {
+    if (this->uninitializedByException()) {
+      throw_exception<BadExpectedAccess<void>>();
+    }
+
+    return expected_detail::ExpectedHelper::onError_(
+        *this, static_cast<OnError&&>(onError));
+  }
+
+  template <class OnError>
+  auto onError(OnError&& onError) & {
+    if (this->uninitializedByException()) {
+      throw_exception<BadExpectedAccess<void>>();
+    }
+    return expected_detail::ExpectedHelper::onError_(
+        *this, static_cast<OnError&&>(onError));
+  }
+
+  template <class OnError>
+  auto onError(OnError&& onError) && {
+    if (this->uninitializedByException()) {
+      throw_exception<BadExpectedAccess<void>>();
+    }
+    return expected_detail::ExpectedHelper::onError_(
+        std::move(*this), static_cast<OnError&&>(onError));
   }
 
   // Quasi-private, exposed only for implementing efficient short-circuiting

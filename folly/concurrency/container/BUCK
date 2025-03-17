@@ -49,3 +49,29 @@ cpp_library(
         "boost",
     ],
 )
+
+cpp_library(
+    name = "flat_combining_priority_queue",
+    headers = ["FlatCombiningPriorityQueue.h"],
+    exported_deps = [
+        "//folly:optional",
+        "//folly/detail:futex",
+        "//folly/synchronization:flat_combining",
+    ],
+    exported_external_deps = [
+        "glog",
+    ],
+)
+
+cpp_library(
+    name = "single_writer_fixed_hash_map",
+    headers = [
+        "SingleWriterFixedHashMap.h",
+    ],
+    exported_deps = [
+        "//folly/lang:bits",
+    ],
+    exported_external_deps = [
+        "glog",
+    ],
+)

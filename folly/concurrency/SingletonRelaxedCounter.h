@@ -26,7 +26,9 @@
 #include <folly/Synchronized.h>
 #include <folly/Utility.h>
 #include <folly/detail/StaticSingletonManager.h>
-#include <folly/detail/ThreadLocalDetail.h>
+#include <folly/detail/thread_local_globals.h>
+#include <folly/lang/SafeAssert.h>
+#include <folly/synchronization/AtomicRef.h>
 
 namespace folly {
 
@@ -45,12 +47,13 @@ template <typename Int>
 class SingletonRelaxedCounterBase {
  protected:
   using Signed = std::make_signed_t<Int>;
-  using Counter = std::atomic<Signed>;
+  using Counter = Signed; // should be atomic but clang generates worse code
 
   struct CounterAndCache {
     Counter counter; // valid during LocalLifetime object lifetime
     Counter* cache; // points to counter when counter is valid
   };
+  static_assert(std::is_trivial_v<CounterAndCache>);
 
   struct CounterRefAndLocal {
     Counter* counter; // refers either to local counter or to global counter
@@ -65,9 +68,7 @@ class SingletonRelaxedCounterBase {
   //  a global fallback counter.
   struct Global {
     struct Tracking {
-      using CounterSet = std::unordered_set<Counter*>;
-      std::unordered_map<Counter*, size_t> locals; // for summing
-      std::unordered_map<LocalLifetime*, CounterSet> lifetimes;
+      std::unordered_map<LocalLifetime*, CounterAndCache*> lifetimes;
     };
 
     Counter fallback; // used instead of local during thread destruction
@@ -87,9 +88,10 @@ class SingletonRelaxedCounterBase {
   //  LocalLifetime
   //
   //  Manages local().cache, global().tracking, and moving outstanding counts
-  //  from local().counter to global().counter during thread destruction.
+  //  from local().counter to global().counter during thread destruction and dso
+  //  unload.
   //
-  //  The counter-set is within Global to reduce per-thread overhead for threads
+  //  The index map is within Global to reduce per-thread overhead for threads
   //  which do not participate in counter mutations, rather than being a member
   //  field of LocalLifetime. This comes at the cost of the slow path always
   //  acquiring a unique lock on the global mutex.
@@ -100,15 +102,13 @@ class SingletonRelaxedCounterBase {
     FOLLY_NOINLINE void destroy_(GetGlobal& get_global) {
       auto& global = get_global();
       auto const tracking = global.tracking.wlock();
-      auto& lifetimes = tracking->lifetimes[this];
-      for (auto ctr : lifetimes) {
-        auto const it = tracking->locals.find(ctr);
-        if (!--it->second) {
-          tracking->locals.erase(it);
-          auto const current = ctr->load(std::memory_order_relaxed);
-          global.fallback.fetch_add(current, std::memory_order_relaxed);
-        }
-      }
+      auto& entry = tracking->lifetimes[this];
+      FOLLY_SAFE_CHECK(entry);
+      auto entry_counter = atomic_ref(entry->counter);
+      auto const current = entry_counter.load(std::memory_order_relaxed);
+      atomic_ref(global.fallback).fetch_add(current, std::memory_order_relaxed);
+      entry_counter.store(Signed(0), std::memory_order_relaxed);
+      entry->cache = nullptr;
       tracking->lifetimes.erase(this);
     }
 
@@ -118,8 +118,9 @@ class SingletonRelaxedCounterBase {
     FOLLY_NOINLINE void track_(Global& global, CounterAndCache& state) {
       state.cache = &state.counter;
       auto const tracking = global.tracking.wlock();
-      auto const inserted = tracking->lifetimes[this].insert(&state.counter);
-      tracking->locals[&state.counter] += inserted.second;
+      auto& entry = tracking->lifetimes[this];
+      FOLLY_SAFE_CHECK(!entry || &state == entry);
+      entry = &state;
     }
   };
 
@@ -128,10 +129,11 @@ class SingletonRelaxedCounterBase {
   }
   FOLLY_NOINLINE static Int aggregate_(GetGlobal& get_global) {
     auto& global = get_global();
-    auto count = global.fallback.load(std::memory_order_relaxed);
+    auto count = atomic_ref(global.fallback).load(std::memory_order_relaxed);
     auto const tracking = global.tracking.rlock();
-    for (auto const& kvp : tracking->locals) {
-      count += kvp.first->load(std::memory_order_relaxed);
+    for (auto const& [_, entry] : tracking->lifetimes) {
+      FOLLY_SAFE_CHECK(entry);
+      count += atomic_ref(entry->counter).load(std::memory_order_relaxed);
     }
     return std::is_unsigned<Int>::value
         ? to_unsigned(std::max(Signed(0), count))
@@ -139,7 +141,7 @@ class SingletonRelaxedCounterBase {
   }
 
   FOLLY_ERASE static void mutate(Signed v, CounterRefAndLocal cl) {
-    auto& c = *cl.counter;
+    auto c = atomic_ref(*cl.counter);
     if (cl.local) {
       //  splitting load/store on the local counter is faster than fetch-and-add
       c.store(c.load(std::memory_order_relaxed) + v, std::memory_order_relaxed);
@@ -155,7 +157,7 @@ class SingletonRelaxedCounterBase {
 
   FOLLY_NOINLINE static Counter& counter_slow(Arg const& arg) noexcept {
     auto& global = arg.global();
-    if (threadlocal_detail::StaticMetaBase::dying()) {
+    if (thread_is_dying()) {
       return global.fallback;
     }
     auto& state = arg.local();
@@ -233,7 +235,15 @@ class SingletonRelaxedCounter
     ~MonoLocalLifetime() noexcept(false) { LocalLifetime::destroy(global); }
   };
 
-  FOLLY_NOINLINE static void mutate_slow(Signed v) noexcept {
+  //  It is an invariant that in a single call to mutate which calls mutate_slow
+  //  the thread_local local and the thread_local lifetime that are used are in
+  //  the same DSO as each other.
+  //
+  //  The following functions are all [[gnu::visibility("hidden")]] in order to
+  //  ensure this invariant.
+
+  FOLLY_ERASE_NOINLINE static void mutate_slow(Signed v) noexcept {
+    static constexpr Arg arg{global, local, lifetime};
     mutate_slow(v, arg);
   }
 
@@ -245,24 +255,18 @@ class SingletonRelaxedCounter
 
   static constexpr GetGlobal& global = folly::detail::createGlobal<Global, Tag>;
 
-  FOLLY_EXPORT FOLLY_ALWAYS_INLINE static CounterAndCache& local() {
+  FOLLY_ERASE static CounterAndCache& local() {
     //  this is a member function local instead of a class member because of
     //  https://gcc.gnu.org/bugzilla/show_bug.cgi?id=66944
     static thread_local CounterAndCache instance;
     return instance;
   }
 
-  FOLLY_EXPORT FOLLY_ALWAYS_INLINE static LocalLifetime& lifetime() {
+  FOLLY_ERASE static LocalLifetime& lifetime() {
     static thread_local MonoLocalLifetime lifetime;
     return lifetime;
   }
-
-  static constexpr Arg arg{global, local, lifetime};
 };
-
-template <typename Int, typename Tag>
-constexpr typename SingletonRelaxedCounter<Int, Tag>::Arg
-    SingletonRelaxedCounter<Int, Tag>::arg;
 
 template <typename Counted>
 class SingletonRelaxedCountableAccess;

@@ -26,12 +26,7 @@ cpp_library(
     name = "bits",
     headers = ["Bits.h"],
     exported_deps = [
-        "//folly:portability",
-        "//folly:range",
-        "//folly/lang:bits",
-    ],
-    exported_external_deps = [
-        "glog",
+        "//folly/lang:bits_class",
     ],
 )
 
@@ -88,14 +83,11 @@ cpp_library(
 
 cpp_library(
     name = "flat_combining_priority_queue",
-    headers = ["FlatCombiningPriorityQueue.h"],
-    exported_deps = [
-        "//folly:optional",
-        "//folly/detail:futex",
-        "//folly/synchronization:flat_combining",
+    headers = [
+        "FlatCombiningPriorityQueue.h",
     ],
-    exported_external_deps = [
-        "glog",
+    exported_deps = [
+        "//folly/concurrency/container:flat_combining_priority_queue",
     ],
 )
 
@@ -206,10 +198,7 @@ cpp_library(
         "SingleWriterFixedHashMap.h",
     ],
     exported_deps = [
-        "//folly/lang:bits",
-    ],
-    exported_external_deps = [
-        "glog",
+        "//folly/concurrency/container:single_writer_fixed_hash_map",
     ],
 )
 
@@ -235,23 +224,13 @@ cpp_library(
 
 cpp_library(
     name = "timerfd",
-    srcs = [
-        "STTimerFDTimeoutManager.cpp",
-        "TimerFD.cpp",
-        "TimerFDTimeoutManager.cpp",
-    ],
     headers = [
         "STTimerFDTimeoutManager.h",
         "TimerFD.h",
         "TimerFDTimeoutManager.h",
     ],
-    deps = [
-        "//folly:file_util",
-        "//folly/io/async:event_util",
-    ],
     exported_deps = [
-        "//folly/io/async:async_base",
-        "//folly/io/async:delayed_destruction",
+        "//folly/io/async:timerfd",
     ],
 )
 

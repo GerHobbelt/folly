@@ -242,6 +242,7 @@ cpp_library(
         ":global_executor",
         ":serialized_executor",
         "//folly:exception_string",
+        "//folly:scope_guard",
         "//folly/concurrency:unbounded_queue",
         "//folly/io/async:request_context",
         "//folly/synchronization:distributed_mutex",
@@ -397,6 +398,7 @@ cpp_library(
     exported_deps = [
         ":queue_observer",
         "//folly:default_keep_alive_executor",
+        "//folly/concurrency:unbounded_queue",
         "//folly/io/async:async_base",
     ],
 )

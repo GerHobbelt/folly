@@ -63,14 +63,29 @@ constexpr uint32_t kEntryIDInvalid = std::numeric_limits<uint32_t>::max();
  */
 struct ElementWrapper {
   using DeleterFunType = void(void*, TLPDestructionMode);
+  using DeleterObjType = std::function<DeleterFunType>;
 
-  bool dispose(TLPDestructionMode mode) {
+  static inline constexpr auto deleter_obj_mask = uintptr_t(0b01);
+  static inline constexpr auto deleter_all_mask = uintptr_t(0) //
+      | deleter_obj_mask //
+      ;
+
+  static_assert(alignof(DeleterObjType) > deleter_all_mask);
+
+  bool dispose(TLPDestructionMode mode) noexcept {
     if (ptr == nullptr) {
       return false;
     }
 
-    DCHECK(deleter1 != nullptr);
-    ownsDeleter ? (*deleter2)(ptr, mode) : (*deleter1)(ptr, mode);
+    DCHECK_NE(0, deleter);
+    auto const deleter_masked = deleter & ~deleter_all_mask;
+    if (deleter & deleter_obj_mask) {
+      auto& obj = *reinterpret_cast<DeleterObjType*>(deleter_masked);
+      obj(ptr, mode);
+    } else {
+      auto& fun = *reinterpret_cast<DeleterFunType*>(deleter_masked);
+      fun(ptr, mode);
+    }
     return true;
   }
 
@@ -86,54 +101,55 @@ struct ElementWrapper {
 
   template <class Ptr>
   void set(Ptr p) {
-    DCHECK(ptr == nullptr);
-    DCHECK(deleter1 == nullptr);
+    DCHECK_EQ(static_cast<void*>(nullptr), ptr);
+    DCHECK_EQ(0, deleter);
 
     if (!p) {
       return;
     }
-    deleter1 = [](void* pt, TLPDestructionMode) {
-      delete static_cast<Ptr>(pt);
-    };
-    ownsDeleter = false;
+    auto const fun =
+        +[](void* pt, TLPDestructionMode) { delete static_cast<Ptr>(pt); };
+    auto const raw = reinterpret_cast<uintptr_t>(fun);
+    if (raw & deleter_all_mask) {
+      return set(p, std::ref(*fun));
+    }
+    DCHECK_EQ(0, raw & deleter_all_mask);
+    deleter = raw;
     ptr = p;
   }
 
   template <class Ptr, class Deleter>
   void set(Ptr p, const Deleter& d) {
-    DCHECK(ptr == nullptr);
-    DCHECK(deleter2 == nullptr);
+    DCHECK_EQ(static_cast<void*>(nullptr), ptr);
+    DCHECK_EQ(0, deleter);
 
     if (!p) {
       return;
     }
 
     auto guard = makeGuard([&] { d(p, TLPDestructionMode::THIS_THREAD); });
-    deleter2 = new std::function<DeleterFunType>(
-        [d](void* pt, TLPDestructionMode mode) {
-          d(static_cast<Ptr>(pt), mode);
-        });
+    auto const obj = new DeleterObjType([d](void* pt, TLPDestructionMode mode) {
+      d(static_cast<Ptr>(pt), mode);
+    });
     guard.dismiss();
-    ownsDeleter = true;
+    auto const raw = reinterpret_cast<uintptr_t>(obj);
+    DCHECK_EQ(0, raw & deleter_all_mask);
+    deleter = raw | deleter_obj_mask;
     ptr = p;
   }
 
-  void cleanup() {
-    if (ownsDeleter) {
-      delete deleter2;
+  void cleanup() noexcept {
+    if (deleter & deleter_obj_mask) {
+      auto const deleter_masked = deleter & ~deleter_all_mask;
+      auto const obj = reinterpret_cast<DeleterObjType*>(deleter_masked);
+      delete obj;
     }
     ptr = nullptr;
-    deleter1 = nullptr;
-    ownsDeleter = false;
+    deleter = 0;
   }
 
   void* ptr;
-  union {
-    DeleterFunType* deleter1;
-    std::function<DeleterFunType>* deleter2;
-  };
-  bool ownsDeleter;
-  bool isLinked{false};
+  uintptr_t deleter;
 };
 
 struct StaticMetaBase;
@@ -175,7 +191,7 @@ struct ThreadEntry {
   /*
    * Clean up element from ThreadEntry::elements at index @id.
    */
-  void cleanupElementAndSetThreadEntry(uint32_t id, bool validThreadEntry);
+  void cleanupElement(uint32_t id);
 
   /*
    * Templated methods to deal with reset with and without a deleter
@@ -320,7 +336,8 @@ struct ThreadEntrySet {
     // the vector, since that way lies non-amortized-O(N)-complexity costs for
     // both insert and erase ops.
     constexpr size_t const mult = 4;
-    return threadEntries.size() * mult <= threadEntries.capacity();
+    auto& vec = threadEntries;
+    return std::max(size_t(1), vec.size()) * mult <= vec.capacity();
   }
   /// compress
   ///
@@ -402,6 +419,8 @@ struct StaticMetaBase {
 
   ElementWrapper& getElement(EntryID* ent);
 
+  using SynchronizedThreadEntrySet = folly::Synchronized<ThreadEntrySet>;
+
   /*
    * Helper inline methods to add/remove/clear ThreadEntry* from
    * allId2ThreadEntrySets_
@@ -416,21 +435,24 @@ struct StaticMetaBase {
   }
 
   /*
-   * Add a ThreadEntry* to the map of allId2ThreadEntrySets_
-   * for a given slot @id in ThreadEntry::elements that is
-   * used.
+   * Ensure the given ThreadEntry* is present in the tracking set for the
+   * given id. Once added, we do not remove it until the thread exits or the
+   * whole set is reaped when the TL id itself is destroyed.
+   *
+   * Note: Call may drop and reacquire the read lock.
+   * If the provided entry is not already in the set, the given RLockedPtr will
+   * be released, entry added under a WLockedPtr, and RLockedPtr reacquired
+   * before returning.
    */
-  FOLLY_ALWAYS_INLINE void addThreadEntryToMap(ThreadEntry* te, uint32_t id) {
-    if (te->elements[id].isLinked) {
-      DCHECK(isThreadEntryInSet(te, id));
-    } else {
-      te->elements[id].isLinked = true;
-      DCHECK_NE(te->removed_, true);
-      // StaticMetaBase::allocate() always initializes a ThreadEntrySet
-      // when ever a new @id is allocated. Enabling faster and less contentious
-      // addThreadEntryToMap.
-      allId2ThreadEntrySets_[id].wlock()->insert(te);
+  FOLLY_ALWAYS_INLINE void ensureThreadEntryIsInSet(
+      ThreadEntry* te,
+      uint32_t id,
+      SynchronizedThreadEntrySet::RLockedPtr& rlocked) {
+    if (rlocked->contains(te)) {
+      return;
     }
+    auto scopedUnlock = rlocked.scopedUnlock();
+    allId2ThreadEntrySets_[id].wlock()->insert(te);
   }
 
   /*
@@ -449,7 +471,12 @@ struct StaticMetaBase {
   /*
    * Check if ThreadEntry* is present in the map for all slots of @ids.
    */
-  FOLLY_ALWAYS_INLINE bool isThreadEntryRemovedFromAllInMap(ThreadEntry* te) {
+  FOLLY_ALWAYS_INLINE bool isThreadEntryRemovedFromAllInMap(
+      ThreadEntry* te, bool needForkLock) {
+    std::shared_lock rlocked(forkHandlerLock_, std::defer_lock);
+    if (needForkLock) {
+      rlocked.lock();
+    }
     uint32_t maxId = nextId_.load();
     for (uint32_t i = 0; i < maxId; ++i) {
       if (allId2ThreadEntrySets_[i].rlock()->contains(te)) {
@@ -470,6 +497,17 @@ struct StaticMetaBase {
   std::vector<uint32_t> freeIds_;
   std::mutex lock_;
   mutable SharedMutex accessAllThreadsLock_;
+  // As part of handling fork, we need to ensure no locks used by ThreadLocal
+  // implementation are held by threads other than the one forking. The total
+  // number of locks involved is large due to the per ThreadEntrySet lock. TSAN
+  // builds have to track each lock acquire and release. TSAN also has its own
+  // fork handler. Using a lot of locks in fork handler can end up deadlocking
+  // TSAN. To avoid that behavior, we the forkHandlerLock_. All code paths that
+  // acquire a lock on any ThreadEntrySet (accessAllThreads() or reset() calls)
+  // must also acquire a shared lock on forkHandlerLock_.
+  // Fork handler will acquire an exclusive lock on forkHandlerLock_,
+  // along with exclusive locks on accessAllThreadsLock_ and lock_.
+  mutable SharedMutex forkHandlerLock_;
   pthread_key_t pthreadKey_;
   ThreadEntry* (*threadEntry_)();
   bool strict_;
@@ -480,8 +518,18 @@ struct StaticMetaBase {
   relaxed_atomic_int64_t totalElementWrappers_{0};
   // This is a map of all thread entries mapped to index i with active
   // elements[i];
-  using SynchronizedThreadEntrySet = folly::Synchronized<ThreadEntrySet>;
   folly::atomic_grow_array<SynchronizedThreadEntrySet> allId2ThreadEntrySets_;
+
+  // Note on locking rules. There are 4 locks involved in managing StaticMeta:
+  // fork handler lock (getStaticMetaGlobalForkMutex(),
+  // access all threads lock (accessAllThreadsLock_),
+  // per thread entry set lock implicit in SynchronizedThreadEntrySet and
+  // meta lock (lock_)
+  //
+  // If multiple locks need to be acquired in a call path, the above is also
+  // the order in which they should be acquired. Additionally, if per
+  // ThreadEntrySet locks are the only ones that are acquired in a path, it
+  // must also acquire shared lock on the fork handler lock.
 };
 
 struct FakeUniqueInstance {
@@ -497,8 +545,11 @@ struct FakeUniqueInstance {
  */
 template <class Ptr>
 void ThreadEntry::resetElement(Ptr p, uint32_t id) {
-  auto validThreadEntry = (p != nullptr && !removed_);
-  cleanupElementAndSetThreadEntry(id, validThreadEntry);
+  auto rlocked = meta->allId2ThreadEntrySets_[id].rlock();
+  if (p != nullptr && !removed_) {
+    meta->ensureThreadEntryIsInSet(this, id, rlocked);
+  }
+  cleanupElement(id);
   elements[id].set(p);
 }
 
@@ -509,8 +560,11 @@ void ThreadEntry::resetElement(Ptr p, uint32_t id) {
  */
 template <class Ptr, class Deleter>
 void ThreadEntry::resetElement(Ptr p, Deleter& d, uint32_t id) {
-  auto validThreadEntry = (p != nullptr && !removed_);
-  cleanupElementAndSetThreadEntry(id, validThreadEntry);
+  auto rlocked = meta->allId2ThreadEntrySets_[id].rlock();
+  if (p != nullptr && !removed_) {
+    meta->ensureThreadEntryIsInSet(this, id, rlocked);
+  }
+  cleanupElement(id);
   elements[id].set(p, d);
 }
 
@@ -562,7 +616,7 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
     return instance;
   }
 
-  FOLLY_EXPORT FOLLY_ALWAYS_INLINE static ElementWrapper& get(EntryID* ent) {
+  FOLLY_ALWAYS_INLINE static ElementWrapper& get(EntryID* ent) {
     // Eliminate as many branches and as much extra code as possible in the
     // cached fast path, leaving only one branch here and one indirection
     // below.
@@ -582,14 +636,15 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
    * StaticMetaBase::allId2ThreadEntrySets_ updated with ThreadEntry* whenever a
    * ThreadLocal is set/released.
    */
-  FOLLY_EXPORT FOLLY_ALWAYS_INLINE static ThreadEntry* getThreadEntry(
-      EntryID* ent) {
+  FOLLY_ALWAYS_INLINE static ThreadEntry* getThreadEntry(EntryID* ent) {
+    if (!kUseThreadLocal) {
+      return getThreadEntrySlowReserve(ent);
+    }
+
     // Eliminate as many branches and as much extra code as possible in the
     // cached fast path, leaving only one branch here and one indirection below.
     uint32_t id = ent->getOrInvalid();
-    LocalCache cacheNonTL{};
-    auto& cache = kUseThreadLocal ? getLocalCache() : cacheNonTL;
-
+    auto& cache = getLocalCache();
     if (FOLLY_UNLIKELY(cache.capacity <= id)) {
       getSlowReserveAndCache(ent, cache);
     }
@@ -598,18 +653,22 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
 
   FOLLY_NOINLINE static void getSlowReserveAndCache(
       EntryID* ent, LocalCache& cache) {
-    auto id = ent->getOrInvalid();
-    auto& threadEntry = cache.threadEntry;
-    auto& capacity = cache.capacity;
+    auto threadEntry = getThreadEntrySlowReserve(ent);
+    cache.capacity = threadEntry->getElementsCapacity();
+    cache.threadEntry = threadEntry;
+  }
+
+  FOLLY_NOINLINE static ThreadEntry* getThreadEntrySlowReserve(EntryID* ent) {
+    uint32_t id = ent->getOrInvalid();
 
     auto& inst = instance();
-    threadEntry = inst.threadEntry_();
+    auto threadEntry = inst.threadEntry_();
     if (FOLLY_UNLIKELY(threadEntry->getElementsCapacity() <= id)) {
       inst.reserve(ent);
       id = ent->getOrInvalid();
     }
-    capacity = threadEntry->getElementsCapacity();
-    assert(capacity > id);
+    assert(threadEntry->getElementsCapacity() > id);
+    return threadEntry;
   }
 
   FOLLY_EXPORT FOLLY_NOINLINE static ThreadEntry* getThreadEntrySlow() {
@@ -620,15 +679,10 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
     if (!threadEntry) {
       ThreadEntryList* threadEntryList = StaticMeta::getThreadEntryList();
       threadEntry = new ThreadEntry();
-      // if the ThreadEntry already exists
-      // but pthread_getspecific returns NULL
-      // do not add the same entry twice to the list
-      // since this would create a loop in the list
-      if (!threadEntry->list) {
-        threadEntry->list = threadEntryList;
-        threadEntry->listNext = threadEntryList->head;
-        threadEntryList->head = threadEntry;
-      }
+
+      threadEntry->list = threadEntryList;
+      threadEntry->listNext = threadEntryList->head;
+      threadEntryList->head = threadEntry;
 
       threadEntry->tid() = std::this_thread::get_id();
       threadEntry->tid_os = folly::getOSThreadID();
@@ -646,39 +700,46 @@ struct FOLLY_EXPORT StaticMeta final : StaticMetaBase {
   }
 
   static bool preFork() {
-    return instance().lock_.try_lock(); // Make sure it's created
+    auto& meta = instance();
+    bool gotLock = meta.forkHandlerLock_.try_lock(); // Make sure it's created
+    if (!gotLock) {
+      return false;
+    }
+    meta.accessAllThreadsLock_.lock();
+    meta.lock_.lock();
+    // Okay to not lock each set in meta.allId2ThreadEntrySets
+    // as accessAllThreadsLock_ in held by calls to reset() and
+    // accessAllThreads.
+    return true;
   }
 
-  static void onForkParent() { instance().lock_.unlock(); }
+  static void onForkParent() {
+    auto& meta = instance();
+    meta.lock_.unlock();
+    meta.accessAllThreadsLock_.unlock();
+    meta.forkHandlerLock_.unlock();
+  }
 
   static void onForkChild() {
-    // only the current thread survives
     auto& meta = instance();
+    // only the current thread survives
+    meta.lock_.unlock();
+    meta.accessAllThreadsLock_.unlock();
     auto threadEntry = meta.threadEntry_();
     // Loop through allId2ThreadEntrySets_; Only keep ThreadEntry* in the map
     // for ThreadEntry::elements that are still in use by the current thread.
     // Evict all of the ThreadEntry* from other threads.
-    // Since the map structure is untouched and only map entries are modified,
-    // rlock() with asNonConstUnsafe() access is used, so that an exclusive lock
-    // can be acquired on the threadEntrySet.
     uint32_t maxId = meta.nextId_.load();
     for (uint32_t id = 0; id < maxId; ++id) {
       auto wlockedSet = meta.allId2ThreadEntrySets_[id].wlock();
       if (wlockedSet->contains(threadEntry)) {
-        DCHECK(threadEntry->elements[id].isLinked);
         wlockedSet->clear();
         wlockedSet->insert(threadEntry);
       } else {
-        // DCHECK if elements[id] is unlinked for this
-        // threadEntry only (id < threadEntry->getElementsCapacity()).
-        // The rest can be cleared regardless.
-        if (id < threadEntry->getElementsCapacity()) {
-          DCHECK(!threadEntry->elements[id].isLinked);
-        }
         wlockedSet->clear();
       }
     }
-    instance().lock_.unlock();
+    meta.forkHandlerLock_.unlock();
   }
 };
 
