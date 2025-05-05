@@ -558,19 +558,107 @@ T* exception_ptr_try_get_object_exact_fast(
   return out;
 }
 
+namespace detail {
+template <typename T>
+using detect_folly_get_exception_hint_types =
+    typename std::remove_cv_t<T>::folly_get_exception_hint_types;
+} // namespace detail
+
 /// exception_ptr_get_object_hint
 ///
 /// Returns the address of the stored exception as if it were upcast to the
 /// given type, if it could be upcast to that type.
 ///
 /// If its concrete type is exactly equal to one of the types passed in the tag,
-/// this may be faster than exception_ptr_get_object without the hint.
+/// this may be faster than `exception_ptr_get_object` without the hint.
+///
+/// Prefer the next overload that uses `T::folly_get_exception_hint_types`.
 template <typename T, typename... S>
 T* exception_ptr_get_object_hint(
     std::exception_ptr const& ptr, tag_t<S...> const hint) noexcept {
   auto const val = exception_ptr_try_get_object_exact_fast<T>(ptr, hint);
   return FOLLY_LIKELY(!!val) ? val : exception_ptr_get_object<T>(ptr);
 }
+
+template <typename T>
+T* exception_ptr_get_object_hint(std::exception_ptr const& ptr) noexcept {
+  using hints =
+      detected_or_t<tag_t<T>, detail::detect_folly_get_exception_hint_types, T>;
+  return exception_ptr_get_object_hint<T>(ptr, hints{});
+}
+
+/// get_exception_tag_t
+///
+/// Passkey: To extend `folly::get_exception<Ex>()`, a type must have the member
+/// `get_exception<Ex>(get_exception_tag_t)`.
+struct get_exception_tag_t {};
+
+/// get_exception_fn
+/// get_exception
+///
+/// `get_exception<Ex>(v)` is meant to become a uniform way for accessing
+/// exception-containers in `folly`.  It returns:
+///   - `nullptr` if `v` is of a variant type, but is not in an "error" state,
+///   - A pointer to the `Ex` held by `v`, if it holds an error whose type
+///     `From` permits `std::is_convertible<From*, Ex*>`,
+///   - `nullptr` for errors incompatible with `Ex*`.
+///
+/// In addition to the `std::exception_ptr` support above, a type can support
+/// this verb by providing a `get_exception<Ex>(get_exception_tag_t)` member.
+/// For an example, see `ExceptionWrapper.h`. Requirements:
+///   - `noexcept`
+///   - `const`-correct
+///   - returns `Ex*` or `const Ex*` depending on the overload.
+///
+/// This is most efficient when `Ex` matches the exact stored type, or when the
+/// type alias `Ex::folly_get_exception_hint_types` has a good hint.
+///
+/// NB: `result<T>` supports `get_exception<Ex>(res)`, but `Try<T>` currently
+/// omits `get_exception(get_exception_tag_t)`, because that might encourage
+/// "empty state" bugs:
+///
+///   if (auto* ex = get_exception<MyError>(tryData)) {
+///     // handle error
+///   } else {
+///     doStuff(tryData.value()); // Oops, may throw `UsingUninitializedTry`!
+///   }
+template <typename Ex>
+class get_exception_fn {
+ private:
+  template <typename CEx, typename SrcRef>
+  CEx* impl(SrcRef src) const noexcept {
+    using Src = remove_cvref_t<SrcRef>;
+    if constexpr (std::is_same_v<Src, std::exception_ptr>) {
+      return exception_ptr_get_object_hint<CEx>(src);
+    } else {
+      constexpr get_exception_tag_t passkey;
+      static_assert( // Return type & `noexcept`ness must match
+          std::is_same_v<
+              CEx*,
+              decltype(src.template get_exception<Ex>(passkey))> &&
+          noexcept(noexcept(src.template get_exception<Ex>(passkey))));
+      return src.template get_exception<Ex>(passkey);
+    }
+  }
+
+ public:
+  template <typename Src>
+  const Ex* operator()(const Src& src) const noexcept {
+    return impl<const Ex, const Src&>(src);
+  }
+  template <typename Src>
+  Ex* operator()(Src& src) const noexcept {
+    return impl<Ex, Src&>(src);
+  }
+  // It is unsafe to use `get_exception()` to get a pointer into an rvalue.
+  // If you know what you're doing, add a `static_cast`.
+  template <typename Src>
+  void operator()(Src&&) const noexcept = delete;
+  template <typename Src> // NB: Actually, redundant with `Src&&` overload.
+  void operator()(const Src&&) const noexcept = delete;
+};
+template <typename Ex = std::exception>
+inline constexpr get_exception_fn<Ex> get_exception{};
 
 namespace detail {
 

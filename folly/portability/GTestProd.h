@@ -16,19 +16,7 @@
 
 #pragma once
 
-#include <Python.h>
-
-#include <memory>
-#include <string>
-
-#include <folly/io/IOBuf.h>
-
-namespace folly::python {
-
-std::string to_uppercase_string_cpp(PyObject* iobuf);
-std::string to_uppercase_string_cpp_heap(PyObject* o_iobuf);
-
-void wrap_and_delayed_free_cpp(
-    PyObject* memoryview, void* buf, uint64_t length, int32_t delayMs);
-
-} // namespace folly::python
+// Including `gtest/gtest_prod.h` would make gtest/gmock a hard dep
+// of the OSS build, which we do not want.
+#define FOLLY_GTEST_FRIEND_TEST(test_case_name, test_name) \
+  friend class test_case_name##_##test_name##_Test

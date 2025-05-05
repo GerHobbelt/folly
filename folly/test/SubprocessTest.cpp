@@ -38,6 +38,7 @@
 #include <folly/gen/String.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
+#include <folly/portability/SysSyscall.h>
 #include <folly/portability/Unistd.h>
 #include <folly/testing/TestUtil.h>
 
@@ -59,20 +60,6 @@ void PrintTo(std::chrono::duration<Rep, Period> duration, std::ostream* out) {
 } // namespace std::chrono
 
 namespace {
-// Wait for the given subprocess to write anything in stdout to ensure
-// it has started.
-bool waitForAnyOutput(Subprocess& proc) {
-  // We couldn't use communicate here because it blocks until the
-  // stdout/stderr is closed.
-  char buffer;
-  ssize_t len;
-  do {
-    len = fileops::read(proc.stdoutFd(), &buffer, 1);
-  } while (len == -1 && errno == EINTR);
-  LOG(INFO) << "Read " << buffer;
-  return len == 1;
-}
-
 sigset_t makeSignalMask(folly::span<int const> signals) {
   sigset_t sigmask;
   sigemptyset(&sigmask);
@@ -274,15 +261,23 @@ TEST(SimpleSubprocessTest, ChangeChildDirectoryWithError) {
 }
 
 TEST(SimpleSubprocessTest, waitOrTerminateOrKillWaitsIfProcessExits) {
-  Subprocess proc(std::vector<std::string>{"/bin/sleep", "0.1"});
+  auto const opts =
+      Subprocess::Options()
+          .stdinFd(Subprocess::DEV_NULL)
+          .stdoutFd(Subprocess::DEV_NULL);
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
   auto retCode = proc.waitOrTerminateOrKill(1s, 1s);
   EXPECT_TRUE(retCode.exited());
   EXPECT_EQ(0, retCode.exitStatus());
 }
 
 TEST(SimpleSubprocessTest, waitOrTerminateOrKillTerminatesIfTimeout) {
-  Subprocess proc(std::vector<std::string>{"/bin/sleep", "60"});
-  auto retCode = proc.waitOrTerminateOrKill(1s, 1s);
+  auto const opts =
+      Subprocess::Options() //
+          .pipeStdin()
+          .stdoutFd(Subprocess::DEV_NULL);
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
+  auto retCode = proc.waitOrTerminateOrKill(10ms, 10ms);
   EXPECT_TRUE(retCode.killed());
   EXPECT_EQ(SIGTERM, retCode.killSignal());
 }
@@ -302,8 +297,13 @@ TEST(
 }
 
 TEST(SubprocessTest, FatalOnDestroy) {
+  auto const opts =
+      Subprocess::Options() //
+          .pipeStdin()
+          .pipeStdout()
+          .pipeStderr();
   EXPECT_DEATH(
-      []() { Subprocess proc(std::vector<std::string>{"/bin/sleep", "10"}); }(),
+      Subprocess(std::vector<std::string>{"/bin/cat"}, opts),
       "Subprocess destroyed without reaping child");
 }
 
@@ -320,32 +320,56 @@ TEST(SubprocessTest, KillOnDestroy) {
   EXPECT_EQ(ESRCH, errno);
 }
 
+#if defined(__linux__)
+
 TEST(SubprocessTest, TerminateOnDestroy) {
+  // Enabled only on Linux because this test uses pidfd, which is Linux-only.
+  // V.s. attempting to kill() a pid that was already wait()ed to check for an
+  // error returned from kill(), which is subject to races on the system.
+  auto pidfd = -1;
   pid_t pid;
   std::chrono::steady_clock::time_point start;
-  const auto terminateTimeout = 500ms;
+  const auto terminateTimeout = 100ms;
   {
-    // Spawn a process that ignores SIGTERM
-    Subprocess proc(
-        std::vector<std::string>{
-            "/bin/bash",
-            "-c",
-            "trap \"sleep 120\" SIGTERM; echo ready; sleep 60"},
-        Subprocess::Options()
+    sigset_t mask;
+    sigfillset(&mask);
+    auto const opts =
+        Subprocess::Options() //
+            .pipeStdin()
             .pipeStdout()
             .pipeStderr()
-            .terminateChildOnDestruction(terminateTimeout));
+            .setSignalMask(mask)
+            .terminateChildOnDestruction(terminateTimeout);
+    // Spawn a process that ignores SIGTERM
+    Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
     pid = proc.pid();
-    // Wait to make sure bash has installed the SIGTERM trap before we proceed;
-    // otherwise the test can fail if we kill the process before it starts
-    // ignoring SIGTERM.
-    EXPECT_TRUE(waitForAnyOutput(proc));
+    pidfd = syscall(SYS_pidfd_open, pid, /* flags = */ 0);
+    PCHECK(-1 != pidfd);
+    {
+      auto rc = syscall(
+          SYS_pidfd_send_signal,
+          pidfd,
+          SIGTERM,
+          /* info = */ nullptr,
+          /* flags = */ 0);
+      PCHECK(0 == rc);
+    }
     start = std::chrono::steady_clock::now();
   }
   const auto end = std::chrono::steady_clock::now();
   // The process should no longer exist.
-  EXPECT_EQ(-1, kill(pid, 0));
-  EXPECT_EQ(ESRCH, errno);
+  {
+    auto rc = syscall(
+        SYS_pidfd_send_signal,
+        pidfd,
+        SIGTERM,
+        /* info = */ nullptr,
+        /* flags = */ 0);
+    auto const err = errno;
+    PCHECK(-1 == rc);
+    EXPECT_EQ(ESRCH, err);
+  }
+  close(pidfd);
   // It should have taken us roughly terminateTimeout in the destructor
   // to wait for the child to exit after SIGTERM before we gave up and sent
   // SIGKILL.
@@ -353,6 +377,8 @@ TEST(SubprocessTest, TerminateOnDestroy) {
   EXPECT_GE(destructorDuration, terminateTimeout);
   EXPECT_LT(destructorDuration, terminateTimeout + 5s);
 }
+
+#endif
 
 // This method verifies terminateOrKill shouldn't affect the exit
 // status if the process has exited already.
@@ -372,11 +398,8 @@ TEST(SimpleSubprocessTest, TerminateAfterProcessExit) {
 TEST(SimpleSubprocessTest, TerminateWithoutKill) {
   // Start a bash process that would sleep for 60 seconds, and the
   // default signal handler should exit itself upon receiving SIGTERM.
-  Subprocess proc(
-      std::vector<std::string>{
-          "/bin/bash", "-c", "echo TerminateWithoutKill; sleep 60"},
-      Subprocess::Options().pipeStdout().pipeStderr());
-  EXPECT_TRUE(waitForAnyOutput(proc));
+  auto const opts = Subprocess::Options().pipeStdin().pipeStdout().pipeStderr();
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
   auto retCode = proc.terminateOrKill(1s);
   EXPECT_TRUE(retCode.killed());
   EXPECT_EQ(SIGTERM, retCode.killSignal());
@@ -385,10 +408,8 @@ TEST(SimpleSubprocessTest, TerminateWithoutKill) {
 TEST(SimpleSubprocessTest, TerminateOrKillZeroTimeout) {
   // Using terminateOrKill() with a 0s timeout should immediately kill the
   // process with SIGKILL without bothering to attempt SIGTERM.
-  Subprocess proc(
-      std::vector<std::string>{"/bin/bash", "-c", "echo ready; sleep 60"},
-      Subprocess::Options().pipeStdout().pipeStderr());
-  EXPECT_TRUE(waitForAnyOutput(proc));
+  auto const opts = Subprocess::Options().pipeStdin().pipeStdout().pipeStderr();
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
   auto retCode = proc.terminateOrKill(0s);
   EXPECT_TRUE(retCode.killed());
   EXPECT_EQ(SIGKILL, retCode.killSignal());
@@ -397,17 +418,16 @@ TEST(SimpleSubprocessTest, TerminateOrKillZeroTimeout) {
 // This method tests that if the subprocess ignores SIGTERM, we have
 // to use SIGKILL to kill it when calling terminateOrKill.
 TEST(SimpleSubprocessTest, KillAfterTerminate) {
-  Subprocess proc(
-      std::vector<std::string>{
-          "/bin/bash",
-          "-c",
-          // use trap to register handler that sleeps for 60 seconds
-          // upon receiving SIGTERM, so SIGKILL would be triggered to
-          // kill it.
-          "trap \"sleep 120\" SIGTERM; echo KillAfterTerminate; sleep 60"},
-      Subprocess::Options().pipeStdout().pipeStderr());
-  EXPECT_TRUE(waitForAnyOutput(proc));
-  auto retCode = proc.terminateOrKill(1s);
+  sigset_t mask;
+  sigfillset(&mask);
+  auto const opts =
+      Subprocess::Options() //
+          .pipeStdin()
+          .pipeStdout()
+          .pipeStderr()
+          .setSignalMask(mask);
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, opts);
+  auto retCode = proc.terminateOrKill(10ms);
   EXPECT_TRUE(retCode.killed());
   EXPECT_EQ(SIGKILL, retCode.killSignal());
 }
@@ -503,23 +523,48 @@ TEST(SimpleSubprocessTest, DetachExecFails) {
 
 #ifdef __linux__
 
-TEST(SimpleSubprocessTest, Affinity) {
+TEST(SimpleSubprocessTest, AffinitySuccess) {
   cpu_set_t cpuSet0;
   CPU_ZERO(&cpuSet0);
   CPU_SET(1, &cpuSet0);
   CPU_SET(2, &cpuSet0);
   CPU_SET(3, &cpuSet0);
-  Subprocess::Options options;
-  Subprocess proc(
-      std::vector<std::string>{"/bin/sleep", "5"}, options.setCpuSet(cpuSet0));
+  auto options = Subprocess::Options().pipeStdin().pipeStdout();
+  options.setCpuSet(cpuSet0);
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, options);
   EXPECT_NE(proc.pid(), -1);
   cpu_set_t cpuSet1;
   CPU_ZERO(&cpuSet1);
   auto ret = ::sched_getaffinity(proc.pid(), sizeof(cpu_set_t), &cpuSet1);
   CHECK_EQ(ret, 0);
   CHECK_EQ(::memcmp(&cpuSet0, &cpuSet1, sizeof(cpu_set_t)), 0);
-  auto retCode = proc.waitOrTerminateOrKill(1s, 1s);
-  EXPECT_TRUE(retCode.killed());
+  proc.communicate();
+  proc.wait();
+}
+
+TEST(SimpleSubprocessTest, AffinityFailure) {
+  cpu_set_t cpuSet0;
+  CPU_ZERO(&cpuSet0);
+  CPU_SET(16 * sysconf(_SC_NPROCESSORS_ONLN), &cpuSet0);
+  auto options = Subprocess::Options().pipeStdin().pipeStdout();
+  options.setCpuSet(cpuSet0);
+  EXPECT_THROW(
+      Subprocess(std::vector<std::string>{"/bin/cat"}, options),
+      SubprocessSpawnError);
+}
+
+TEST(SimpleSubprocessTest, AffinityFailureIntoErrnum) {
+  cpu_set_t cpuSet0;
+  CPU_ZERO(&cpuSet0);
+  CPU_SET(16 * sysconf(_SC_NPROCESSORS_ONLN), &cpuSet0);
+  auto options = Subprocess::Options().pipeStdin().pipeStdout();
+  int cpusetErrnum = 0;
+  options.setCpuSet(cpuSet0, to_shared_ptr_non_owning(&cpusetErrnum));
+  Subprocess proc(std::vector<std::string>{"/bin/cat"}, options);
+  EXPECT_NE(proc.pid(), -1);
+  EXPECT_EQ(EINVAL, cpusetErrnum);
+  proc.communicate();
+  proc.wait();
 }
 
 #endif // __linux__
@@ -575,97 +620,6 @@ TEST(PopenSubprocessTest, PopenRead) {
     }
   };
   EXPECT_EQ(3, found);
-  proc.waitChecked();
-}
-
-// DANGER: This class runs after fork in a child processes. Be fast, the
-// parent thread is waiting, but remember that other parent threads are
-// running and may mutate your state.  Avoid mutating any data belonging to
-// the parent.  Avoid interacting with non-POD data that originated in the
-// parent.  Avoid any libraries that may internally reference non-POD data.
-// Especially beware parent mutexes -- for example, glog's LOG() uses one.
-struct WriteFileAfterFork
-    : public Subprocess::DangerousPostForkPreExecCallback {
-  explicit WriteFileAfterFork(std::string filename)
-      : filename_(std::move(filename)) {}
-  ~WriteFileAfterFork() override {}
-  int operator()() override {
-    return writeFile(std::string("ok"), filename_.c_str()) ? 0 : errno;
-  }
-  const std::string filename_;
-};
-
-TEST(AfterForkCallbackSubprocessTest, TestAfterForkCallbackSuccess) {
-  test::ChangeToTempDir td;
-  // Trigger a file write from the child.
-  WriteFileAfterFork write_cob("good_file");
-  Subprocess proc(
-      std::vector<std::string>{"/bin/echo"},
-      Subprocess::Options().dangerousPostForkPreExecCallback(&write_cob));
-  // The file gets written immediately.
-  std::string s;
-  EXPECT_TRUE(readFile(write_cob.filename_.c_str(), s));
-  EXPECT_EQ("ok", s);
-  proc.waitChecked();
-}
-
-TEST(AfterForkCallbackSubprocessTest, TestAfterForkCallbackError) {
-  test::ChangeToTempDir td;
-  // The child will try to write to a file, whose directory does not exist.
-  WriteFileAfterFork write_cob("bad/file");
-  EXPECT_THROW(
-      Subprocess proc(
-          std::vector<std::string>{"/bin/echo"},
-          Subprocess::Options().dangerousPostForkPreExecCallback(&write_cob)),
-      SubprocessSpawnError);
-  EXPECT_FALSE(fs::exists(write_cob.filename_));
-}
-
-// DANGER: This class runs after fork in a child processes. Be fast, the
-// parent thread is waiting, but remember that other parent threads are
-// running and may mutate your state.  Avoid mutating any data belonging to
-// the parent.  Avoid interacting with non-POD data that originated in the
-// parent.  Avoid any libraries that may internally reference non-POD data.
-// Especially beware parent mutexes -- for example, glog's LOG() uses one.
-struct UpdateEnvAfterFork
-    : public folly::Subprocess::DangerousPostForkPreExecCallback {
- public:
-  // [pidDest, pidDest + pidSpace] must store PID plus NUL terminator.
-  UpdateEnvAfterFork(char* pidDest, size_t pidSpace)
-      : pidDest_{pidDest}, pidSpace_{pidSpace} {}
-
-  int operator()() override {
-    size_t snprintfRes = snprintf(pidDest_, pidSpace_, "%d", getpid());
-    if (snprintfRes < 0) {
-      return errno;
-    }
-    if (snprintfRes >= pidSpace_) {
-      return ERANGE;
-    }
-    return 0;
-  }
-
- private:
-  char* pidDest_;
-  size_t pidSpace_;
-};
-
-TEST(SubprocessEnvTest, TestEnvPointerRemainsValid) {
-  // This seems to be the only way to get the pid of the child process
-  // included in the environment of the child process.
-  const std::string pidEnvVarName = "SUBPROCESS_TEST_PID";
-  constexpr int nCharsBesidesNul = 15;
-  std::vector<std::string> env = {
-      pidEnvVarName + "=" + std::string(nCharsBesidesNul, '\0')};
-  UpdateEnvAfterFork cb(
-      env.back().data() + pidEnvVarName.size() + 1, nCharsBesidesNul + 1);
-  Subprocess proc(
-      std::vector<std::string>{"/bin/sh", "-c", "echo -n $SUBPROCESS_TEST_PID"},
-      Subprocess::Options().pipeStdout().dangerousPostForkPreExecCallback(&cb),
-      nullptr,
-      &env);
-  auto out = proc.communicate();
-  EXPECT_EQ(out.first, folly::to<std::string>(proc.pid()));
   proc.waitChecked();
 }
 

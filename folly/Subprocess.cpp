@@ -225,9 +225,8 @@ struct Subprocess::SpawnRawArgs {
   AttrWithMeta<char const*> linuxCGroupPath{nullptr, nullptr};
   bool closeOtherFds{};
 #if defined(__linux__)
-  cpu_set_t const* cpuSet{};
+  Options::AttrWithMeta<cpu_set_t> const* cpuSet{};
 #endif
-  DangerousPostForkPreExecCallback* dangerousPostForkPreExecCallback;
   bool detach{};
   detail::SubprocessFdActionsList fdActions;
   int parentDeathSignal{};
@@ -260,8 +259,6 @@ struct Subprocess::SpawnRawArgs {
 #if defined(__linux__)
         cpuSet{get_pointer(options.cpuSet_)},
 #endif
-        dangerousPostForkPreExecCallback{
-            options.dangerousPostForkPreExecCallback_},
         detach{options.detach_},
         fdActions{scratch.fdActions},
 #if defined(__linux__)
@@ -904,7 +901,13 @@ int Subprocess::prepareChild(SpawnRawArgs const& args) {
   // Best effort
   if (args.cpuSet) {
     const auto& cpuSet = *args.cpuSet;
-    ::sched_setaffinity(0, sizeof(cpuSet), &cpuSet);
+    if (::sched_setaffinity(0, sizeof(cpuSet.value), &cpuSet.value) == -1) {
+      if (cpuSet.errout) {
+        *cpuSet.errout = errno;
+      } else {
+        return errno;
+      }
+    }
   }
 #endif
 
@@ -1006,13 +1009,6 @@ int Subprocess::prepareChild(SpawnRawArgs const& args) {
   for (size_t i = 0; i < args.setPrintPidToBufferSize; ++i) {
     auto buf = args.setPrintPidToBufferData[i];
     detail::subprocess_libc::sprintf(buf, "%d", getpid());
-  }
-
-  // The user callback comes last, so that the child is otherwise all set up.
-  if (args.dangerousPostForkPreExecCallback) {
-    if (int error = (*args.dangerousPostForkPreExecCallback)()) {
-      return error;
-    }
   }
 
   return 0;
