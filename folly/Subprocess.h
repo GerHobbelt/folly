@@ -98,6 +98,7 @@
 #endif
 
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -545,6 +546,18 @@ class Subprocess {
       cpuSet_ = cpuSet;
       return *this;
     }
+
+    /*
+     * setLinuxCGroup*
+     * Takes a fd or a path to the cgroup dir. Only one may be provided.
+     * Note that the cgroup filesystem may be mounted at any arbitrary point in
+     * the filesystem hierarchy, and that different distributions may have their
+     * own standard points. So just taking a cgroup name would be non-portable.
+     */
+    Options& setLinuxCGroupFd(
+        int cgroupFd, std::shared_ptr<int> errout = nullptr);
+    Options& setLinuxCGroupPath(
+        const std::string& cgroupPath, std::shared_ptr<int> errout = nullptr);
 #endif
 
     Options& setUid(uid_t uid, std::shared_ptr<int> errout = nullptr) {
@@ -571,6 +584,9 @@ class Subprocess {
 
     Options& addPrintPidToBuffer(span<char> buf);
 
+    Options& addRLimit(
+        int resource, rlimit limit, std::shared_ptr<int> errout = nullptr);
+
    private:
     template <typename T>
     struct AttrWithMeta {
@@ -593,6 +609,8 @@ class Subprocess {
     // terminateOrKill() to kill the child process.
     TimeoutDuration::rep destroyBehavior_{DestroyBehaviorFatal};
     std::string childDir_; // "" keeps the parent's working directory
+    AttrWithMeta<int> linuxCGroupFd_{-1, nullptr}; // -1 means no cgroup
+    AttrWithMeta<std::string> linuxCGroupPath_{}; // empty means no cgroup
 #if defined(__linux__)
     int parentDeathSignal_{0};
 #endif
@@ -607,6 +625,7 @@ class Subprocess {
     Optional<AttrWithMeta<gid_t>> egid_;
     Optional<sigset_t> sigmask_;
     std::unordered_set<char*> setPrintPidToBuffer_;
+    std::unordered_map<int, AttrWithMeta<rlimit>> rlimits_;
   };
 
   // Non-copyable, but movable
@@ -1056,6 +1075,8 @@ class Subprocess {
   // Note that this runs after vfork(), so tread lightly.
   // Returns 0 on success, or an errno value on failure.
   static int prepareChild(SpawnRawArgs const& args);
+  static int prepareChildDoOptionalError(int* errout);
+  static int prepareChildDoLinuxCGroup(SpawnRawArgs const& args);
   static int runChild(SpawnRawArgs const& args);
 
   // Closes fds inherited from parent in child process

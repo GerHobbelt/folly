@@ -26,6 +26,7 @@
 #include <glog/logging.h>
 
 #include <folly/CancellationToken.h>
+#include <folly/DefaultKeepAliveExecutor.h>
 #include <folly/Executor.h>
 #include <folly/GLog.h>
 #include <folly/Portability.h>
@@ -569,6 +570,13 @@ class FOLLY_NODISCARD TaskWithExecutor {
               << "If you are using folly::getCPUExecutor, switch to getGlobalCPUExecutor "
               << "or be sure to call setCPUExecutor first.";
         }
+        if (dynamic_cast<folly::DefaultKeepAliveExecutor::WeakRefExecutor*>(
+                promise.executor_.get())) {
+          FB_LOG_ONCE(ERROR)
+              << "You are scheduling a coro::Task on a weak executor. "
+              << "It is not supported, and can lead to memory leaks. "
+              << "Consider using CancellationToken instead.";
+        }
       }
 
       auto& calleeFrame = promise.getAsyncFrame();
@@ -597,7 +605,8 @@ class FOLLY_NODISCARD TaskWithExecutor {
       return std::move(coro_.promise().result()).value();
     }
 
-    folly::Try<StorageType> await_resume_try() {
+    folly::Try<StorageType> await_resume_try() noexcept(
+        std::is_nothrow_move_constructible_v<StorageType>) {
       SCOPE_EXIT {
         std::exchange(coro_, {}).destroy();
       };
@@ -905,7 +914,8 @@ class FOLLY_CORO_TASK_ATTRS Task {
       return std::move(coro_.promise().result()).value();
     }
 
-    folly::Try<StorageType> await_resume_try() {
+    folly::Try<StorageType> await_resume_try() noexcept(
+        std::is_nothrow_move_constructible_v<StorageType>) {
       DCHECK(coro_);
       SCOPE_EXIT {
         std::exchange(coro_, {}).destroy();

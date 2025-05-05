@@ -119,7 +119,7 @@ auto SubprocessFdActionsList::find(int fd) const noexcept -> int const* {
 static inline constexpr auto subprocess_libc_soname =
     kIsLinux ? "libc.so.6" :
     kIsFreeBSD ? "libc.so.7" :
-    kIsApple ? "/usr/lib/libc.dylib" :
+    kIsApple ? "/usr/lib/libSystem.B.dylib" :
     nullptr;
 // clang-format on
 
@@ -138,12 +138,17 @@ static Ret subprocess_libc_load(
   X(signal, signal)                            \
   X(sprintf, sprintf)                          \
   X(strtol, strtol)                            \
-  X(vfork, vfork)
+  X(vfork, vfork)                              \
+  X(write, write)
 
 #if defined(__BIONIC_INCLUDE_FORTIFY_HEADERS)
-#define FOLLY_DETAIL_SUBPROCESS_LIBC_X_OPEN(X) X(open, __open_real)
+#define FOLLY_DETAIL_SUBPROCESS_LIBC_X_OPEN(X) \
+  X(open, __open_real)                         \
+  X(openat, __openat_real)
 #else
-#define FOLLY_DETAIL_SUBPROCESS_LIBC_X_OPEN(X) X(open, open)
+#define FOLLY_DETAIL_SUBPROCESS_LIBC_X_OPEN(X) \
+  X(open, open)                                \
+  X(openat, openat)
 #endif
 
 #if defined(__linux__)
@@ -192,18 +197,32 @@ struct Subprocess::SpawnRawArgs {
   struct Scratch {
     std::vector<std::pair<int, int>> fdActions;
     std::vector<char*> setPrintPidToBuffer;
+    std::vector<std::pair<int, Options::AttrWithMeta<rlimit>>> rlimits;
 
     explicit Scratch(Options const& options)
         : fdActions{options.fdActions_.begin(), options.fdActions_.end()},
           setPrintPidToBuffer{
               options.setPrintPidToBuffer_.begin(),
-              options.setPrintPidToBuffer_.end()} {
+              options.setPrintPidToBuffer_.end()},
+          rlimits{options.rlimits_.begin(), options.rlimits_.end()} {
       std::sort(fdActions.begin(), fdActions.end());
     }
   };
 
+  template <typename T>
+  struct AttrWithMeta {
+    T value{};
+    int* errout{};
+  };
+
+  static char const* getCStrForNonEmpty(std::string const& str) {
+    return str.empty() ? nullptr : str.c_str();
+  }
+
   // from options
   char const* childDir{};
+  AttrWithMeta<int> linuxCGroupFd{-1, nullptr};
+  AttrWithMeta<char const*> linuxCGroupPath{nullptr, nullptr};
   bool closeOtherFds{};
 #if defined(__linux__)
   cpu_set_t const* cpuSet{};
@@ -220,6 +239,8 @@ struct Subprocess::SpawnRawArgs {
   Options::AttrWithMeta<gid_t> const* egid{};
   char* const* setPrintPidToBufferData{};
   size_t setPrintPidToBufferSize{};
+  std::pair<int, Options::AttrWithMeta<rlimit>> const* rlimitsData{};
+  size_t rlimitsSize{};
 
   // assigned explicitly
   char const* const* argv{};
@@ -229,7 +250,12 @@ struct Subprocess::SpawnRawArgs {
   sigset_t oldSignals{};
 
   explicit SpawnRawArgs(Scratch const& scratch, Options const& options)
-      : childDir{options.childDir_.empty() ? nullptr : options.childDir_.c_str()},
+      : childDir{getCStrForNonEmpty(options.childDir_)},
+        linuxCGroupFd{
+            options.linuxCGroupFd_.value, options.linuxCGroupFd_.errout},
+        linuxCGroupPath{
+            getCStrForNonEmpty(options.linuxCGroupPath_.value),
+            options.linuxCGroupPath_.errout},
         closeOtherFds{options.closeOtherFds_},
 #if defined(__linux__)
         cpuSet{get_pointer(options.cpuSet_)},
@@ -248,7 +274,9 @@ struct Subprocess::SpawnRawArgs {
         euid{options.euid_.get_pointer()},
         egid{options.egid_.get_pointer()},
         setPrintPidToBufferData{scratch.setPrintPidToBuffer.data()},
-        setPrintPidToBufferSize{scratch.setPrintPidToBuffer.size()} {
+        setPrintPidToBufferSize{scratch.setPrintPidToBuffer.size()},
+        rlimitsData{scratch.rlimits.data()},
+        rlimitsSize{scratch.rlimits.size()} {
     static_assert(std::is_standard_layout_v<Subprocess::SpawnRawArgs>);
     static_assert(std::is_trivially_destructible_v<Subprocess::SpawnRawArgs>);
   }
@@ -391,11 +419,42 @@ Subprocess::Options& Subprocess::Options::fd(int fd, int action) {
   return *this;
 }
 
+#if defined(__linux__)
+
+Subprocess::Options& Subprocess::Options::setLinuxCGroupFd(
+    int cgroupFd, std::shared_ptr<int> errout) {
+  if (linuxCGroupFd_.value >= 0 || !linuxCGroupPath_.value.empty()) {
+    throw std::runtime_error("setLinuxCGroup* called more than once");
+  }
+  linuxCGroupFd_ = {cgroupFd, std::move(errout)};
+  return *this;
+}
+
+Subprocess::Options& Subprocess::Options::setLinuxCGroupPath(
+    const std::string& cgroupPath, std::shared_ptr<int> errout) {
+  if (linuxCGroupFd_.value >= 0 || !linuxCGroupPath_.value.empty()) {
+    throw std::runtime_error("setLinuxCGroup* called more than once");
+  }
+  linuxCGroupPath_ = {cgroupPath, std::move(errout)};
+  return *this;
+}
+
+#endif
+
 Subprocess::Options& Subprocess::Options::addPrintPidToBuffer(span<char> buf) {
   if (buf.size() < kPidBufferMinSize) {
     throw std::invalid_argument("buf size too small");
   }
   setPrintPidToBuffer_.insert(buf.data());
+  return *this;
+}
+
+Subprocess::Options& Subprocess::Options::addRLimit(
+    int resource, rlimit limit, std::shared_ptr<int> errout) {
+  if (rlimits_.count(resource)) {
+    throw std::runtime_error("addRLimit called with same limit more than once");
+  }
+  rlimits_[resource] = AttrWithMeta<rlimit>{limit, std::move(errout)};
   return *this;
 }
 
@@ -695,6 +754,46 @@ pid_t Subprocess::spawnInternalDoFork(SpawnRawArgs const& args) {
 }
 FOLLY_POP_WARNING
 
+FOLLY_DETAIL_SUBPROCESS_RAW
+int Subprocess::prepareChildDoOptionalError(int* errout) {
+  if (errout) {
+    *errout = errno;
+    return 0;
+  } else {
+    return errno;
+  }
+}
+
+FOLLY_DETAIL_SUBPROCESS_RAW
+int Subprocess::prepareChildDoLinuxCGroup(SpawnRawArgs const& args) {
+  auto cgroupPath = args.linuxCGroupPath;
+  auto cgroupFd = args.linuxCGroupFd;
+  if (nullptr != cgroupPath.value) {
+    int fd = detail::subprocess_libc::open(
+        cgroupPath.value, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (-1 == fd) {
+      return prepareChildDoOptionalError(cgroupPath.errout);
+    }
+    cgroupFd = {fd, cgroupPath.errout};
+  }
+  if (-1 != cgroupFd.value) {
+    int fd = detail::subprocess_libc::openat(
+        cgroupFd.value, "cgroup.procs", O_WRONLY | O_CLOEXEC);
+    if (fd == -1) {
+      return prepareChildDoOptionalError(cgroupFd.errout);
+    }
+    int rc = 0;
+    do {
+      constexpr char const buf = '0';
+      rc = detail::subprocess_libc::write(fd, &buf, 1);
+    } while (rc == -1 && errno == EINTR);
+    if (rc == -1) {
+      return prepareChildDoOptionalError(cgroupFd.errout);
+    }
+  }
+  return 0;
+}
+
 // If requested, close all other file descriptors.  Don't close
 // any fds in options.fdActions_, and don't touch stdin, stdout, stderr.
 // Ignore errors.
@@ -775,6 +874,22 @@ int Subprocess::prepareChild(SpawnRawArgs const& args) {
         SIG_SETMASK, &args.oldSignals, nullptr);
     if (r != 0) {
       return r; // pthread_sigmask() returns an errno value
+    }
+  }
+
+  // Move the child process into a linux cgroup, if one is given
+  if (auto rc = prepareChildDoLinuxCGroup(args)) {
+    return rc;
+  }
+
+  for (size_t i = 0; i < args.rlimitsSize; ++i) {
+    auto const& limit = args.rlimitsData[i];
+    if (setrlimit(limit.first, &limit.second.value) == -1) {
+      if (limit.second.errout) {
+        *limit.second.errout = errno;
+      } else {
+        return errno;
+      }
     }
   }
 

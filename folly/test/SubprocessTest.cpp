@@ -29,6 +29,7 @@
 #include <folly/Exception.h>
 #include <folly/FileUtil.h>
 #include <folly/Format.h>
+#include <folly/Memory.h>
 #include <folly/String.h>
 #include <folly/container/span.h>
 #include <folly/experimental/io/FsUtil.h>
@@ -44,6 +45,7 @@ FOLLY_GNU_DISABLE_WARNING("-Wdeprecated-declarations")
 
 using namespace folly;
 using namespace std::chrono_literals;
+using namespace std::string_literals;
 using namespace std::string_view_literals;
 
 namespace std::chrono {
@@ -1080,12 +1082,11 @@ TEST(SetUserGroupId, CanOverrideAndReportFailure) {
   // which makes writing the unit-test for that impossible; here we just
   // check the errors
   auto options = Subprocess::Options().pipeStdout();
-  auto emptysp = std::shared_ptr<int>{};
   int errnum[4] = {};
-  options.setUid(0, std::shared_ptr<int>{emptysp, errnum + 0});
-  options.setGid(0, std::shared_ptr<int>{emptysp, errnum + 1});
-  options.setEUid(0, std::shared_ptr<int>{emptysp, errnum + 2});
-  options.setEGid(0, std::shared_ptr<int>{emptysp, errnum + 3});
+  options.setUid(0, to_shared_ptr_non_owning(errnum + 0));
+  options.setGid(0, to_shared_ptr_non_owning(errnum + 1));
+  options.setEUid(0, to_shared_ptr_non_owning(errnum + 2));
+  options.setEGid(0, to_shared_ptr_non_owning(errnum + 3));
   Subprocess proc(
       std::vector<std::string>{"/bin/cat", "/proc/self/status"}, options);
   auto p = proc.communicate();
@@ -1103,4 +1104,199 @@ TEST(SetUserGroupId, CanOverrideAndReportFailure) {
   EXPECT_EQ(fmt::format("{}\t{}\t{}\t{}", gid, egid, gid, gid), gidline);
 }
 
+TEST(SetLinuxCGroup, CanSetCGroupFdAbsent) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupFd(cgdirfd);
+  EXPECT_THROW(
+      Subprocess(std::vector{"/bin/true"s}, options), SubprocessSpawnError);
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupFdAbsentIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupFd(cgdirfd, to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(ENOENT, errnum) << ::strerror(errnum);
+  proc.wait();
+  EXPECT_EQ(0, proc.returnCode().exitStatus());
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupFdPresent) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0755); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupFd(cgdirfd);
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  std::string s;
+  EXPECT_TRUE(readFile(cgprocs.native().c_str(), s));
+  EXPECT_EQ("0", s);
+  proc.wait();
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupFdPresentIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0755); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupFd(cgdirfd, to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(0, errnum) << ::strerror(errnum);
+  std::string s;
+  EXPECT_TRUE(readFile(cgprocs.native().c_str(), s));
+  EXPECT_EQ("0", s);
+  proc.wait();
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupFdPresentProcsNoOpen) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0); // rm'd with cgdir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupFd(cgdirfd);
+  EXPECT_THROW(
+      Subprocess(std::vector{"/bin/true"s}, options), SubprocessSpawnError);
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupFdPresentProcsNoOpenIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0); // rm'd with cgdir
+  auto cgdirfd = ::open(cgdir.path().native().c_str(), O_DIRECTORY | O_CLOEXEC);
+  auto cgdirfdGuard = folly::makeGuard([&] { ::close(cgdirfd); });
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupFd(cgdirfd, to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(EACCES, errnum) << ::strerror(errnum);
+  proc.wait();
+  EXPECT_EQ(0, proc.returnCode().exitStatus());
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathAbsent) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupPath(cgdir.path().string());
+  EXPECT_THROW(
+      Subprocess(std::vector{"/bin/true"s}, options), SubprocessSpawnError);
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathAbsentIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupPath(
+      cgdir.path().string(), to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(ENOENT, errnum) << ::strerror(errnum);
+  proc.wait();
+  EXPECT_EQ(0, proc.returnCode().exitStatus());
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathPresent) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0755); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupPath(cgdir.path().string());
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  std::string s;
+  EXPECT_TRUE(readFile(cgprocs.native().c_str(), s));
+  EXPECT_EQ("0", s);
+  proc.wait();
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathPresentIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0755); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupPath(
+      cgdir.path().string(), to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(0, errnum) << ::strerror(errnum);
+  std::string s;
+  EXPECT_TRUE(readFile(cgprocs.native().c_str(), s));
+  EXPECT_EQ("0", s);
+  proc.wait();
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathPresentProcsNoOpen) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  options.setLinuxCGroupPath(cgdir.path().string());
+  EXPECT_THROW(
+      Subprocess(std::vector{"/bin/true"s}, options), SubprocessSpawnError);
+}
+
+TEST(SetLinuxCGroup, CanSetCGroupPathPresentProcsNoOpenIntoErrnum) {
+  folly::test::TemporaryDirectory cgdir; // not a real cgroup dir
+  auto cgprocs = cgdir.path() / "cgroup.procs";
+  ::creat(cgprocs.native().c_str(), 0); // rm'd with cgdir
+  auto options = Subprocess::Options();
+  int errnum = 0;
+  options.setLinuxCGroupPath(
+      cgdir.path().string(), to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/true"s}, options);
+  EXPECT_EQ(EACCES, errnum) << ::strerror(errnum);
+  proc.wait();
+  EXPECT_EQ(0, proc.returnCode().exitStatus());
+}
+
 #endif
+
+TEST(SetRLimit, SetRLimitSuccess) {
+  rlimit limit;
+  ::getrlimit(RLIMIT_MEMLOCK, &limit);
+  auto limit2 = limit;
+  limit2.rlim_cur -= ::sysconf(_SC_PAGESIZE);
+  auto options = Subprocess::Options().pipeStdout();
+  options.addRLimit(RLIMIT_MEMLOCK, limit2);
+  Subprocess proc(std::vector{"/bin/ulimit"s, "-l"s}, options);
+  auto p = proc.communicate();
+  proc.wait();
+  EXPECT_EQ(fmt::format("{}\n", limit2.rlim_cur / 1024), p.first);
+}
+
+TEST(SetRLimit, SetRLimitFailure) {
+  rlimit limit;
+  ::getrlimit(RLIMIT_MEMLOCK, &limit);
+  auto limit2 = limit;
+  limit2.rlim_cur = limit2.rlim_max * 2;
+  auto options = Subprocess::Options().pipeStdout();
+  options.addRLimit(RLIMIT_MEMLOCK, limit2);
+  EXPECT_THROW(
+      Subprocess(std::vector{"/bin/ulimit"s, "-l"s}, options),
+      SubprocessSpawnError);
+}
+
+TEST(SetRLimit, SetRLimitFailureIntoErrnum) {
+  rlimit limit;
+  ::getrlimit(RLIMIT_MEMLOCK, &limit);
+  auto limit2 = limit;
+  limit2.rlim_cur = limit2.rlim_max * 2;
+  auto options = Subprocess::Options().pipeStdout();
+  int errnum = 0;
+  options.addRLimit(RLIMIT_MEMLOCK, limit2, to_shared_ptr_non_owning(&errnum));
+  Subprocess proc(std::vector{"/bin/ulimit"s, "-l"s}, options);
+  EXPECT_EQ(EINVAL, errnum);
+  auto p = proc.communicate();
+  proc.wait();
+  EXPECT_EQ(fmt::format("{}\n", limit.rlim_cur / 1024), p.first);
+}
