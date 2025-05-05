@@ -423,15 +423,21 @@ TEST_F(ExceptionTest, make_exception_ptr_with_in_place) {
 
 TEST_F(ExceptionTest, get_exception_from_std_exception_ptr) {
   using folly::get_exception;
+  using folly::get_mutable_exception;
 
-  static_assert(
-      std::is_invocable_v< //
-          folly::get_exception_fn<std::exception>,
-          std::exception_ptr&>);
   static_assert(
       std::is_invocable_v<
           folly::get_exception_fn<std::exception>,
           const std::exception_ptr&>);
+  static_assert(
+      std::is_invocable_v<
+          folly::get_mutable_exception_fn<std::exception>,
+          std::exception_ptr&>);
+  static_assert(
+      !std::is_invocable_v<
+          folly::get_mutable_exception_fn<std::exception>,
+          const std::exception_ptr&>);
+
   // Unsafe to extract a pointer out of rvalues
   static_assert(
       !std::is_invocable_v<
@@ -441,6 +447,14 @@ TEST_F(ExceptionTest, get_exception_from_std_exception_ptr) {
       !std::is_invocable_v<
           folly::get_exception_fn<std::exception>,
           const std::exception_ptr&&>);
+  static_assert(
+      !std::is_invocable_v<
+          folly::get_mutable_exception_fn<std::exception>,
+          std::exception_ptr&&>);
+  static_assert(
+      !std::is_invocable_v<
+          folly::get_mutable_exception_fn<std::exception>,
+          const std::exception_ptr&&>);
 
   auto eptr = folly::make_exception_ptr_with([]() {
     return std::runtime_error{"foo"};
@@ -449,17 +463,33 @@ TEST_F(ExceptionTest, get_exception_from_std_exception_ptr) {
   EXPECT_EQ(nullptr, get_exception<std::system_error>(eptr));
 
   EXPECT_STREQ("foo", get_exception<std::exception>(eptr)->what());
+  EXPECT_STREQ(
+      "foo", get_exception<std::exception>(std::as_const(eptr))->what());
+  EXPECT_STREQ("foo", get_mutable_exception<std::exception>(eptr)->what());
+
   EXPECT_STREQ("foo", get_exception<const std::exception>(eptr)->what());
+  EXPECT_STREQ(
+      "foo", get_exception<const std::exception>(std::as_const(eptr))->what());
+  // While this is a very silly kind of usage, it does work.
+  EXPECT_STREQ(
+      "foo", get_mutable_exception<const std::exception>(eptr)->what());
+
   EXPECT_STREQ("foo", get_exception<>(eptr)->what());
+  EXPECT_STREQ("foo", get_exception<>(std::as_const(eptr))->what());
+  EXPECT_STREQ("foo", get_mutable_exception<>(eptr)->what());
 
   EXPECT_STREQ("foo", get_exception<std::runtime_error>(eptr)->what());
-  EXPECT_EQ(
-      folly::exception_ptr_get_object<std::runtime_error>(eptr),
-      get_exception<std::runtime_error>(eptr));
+  EXPECT_STREQ(
+      "foo", get_exception<std::runtime_error>(std::as_const(eptr))->what());
+  EXPECT_STREQ("foo", get_mutable_exception<std::runtime_error>(eptr)->what());
+
+  auto* expected_p = folly::exception_ptr_get_object<std::runtime_error>(eptr);
+  EXPECT_EQ(expected_p, get_exception<std::runtime_error>(eptr));
+  EXPECT_EQ(expected_p, get_exception<std::runtime_error>(std::as_const(eptr)));
 
   static_assert(
       std::is_same_v<
-          std::runtime_error*,
+          const std::runtime_error*,
           decltype(get_exception<std::runtime_error>(eptr))>);
   static_assert(
       std::is_same_v<
@@ -469,6 +499,10 @@ TEST_F(ExceptionTest, get_exception_from_std_exception_ptr) {
       std::is_same_v<
           const std::runtime_error*,
           decltype(get_exception<std::runtime_error>(std::as_const(eptr)))>);
+  static_assert(
+      std::is_same_v<
+          std::runtime_error*,
+          decltype(get_mutable_exception<std::runtime_error>(eptr))>);
 }
 
 TEST_F(ExceptionTest, exception_shared_string) {
@@ -485,12 +519,27 @@ TEST_F(ExceptionTest, exception_shared_string) {
 
 #if FOLLY_CPLUSPLUS >= 202002
 
+using namespace folly::string_literals;
+
 TEST_F(ExceptionTest, exception_shared_string_literal) {
-  using namespace folly::string_literals;
   auto s0 = folly::exception_shared_string("hello, world!"_litv);
   auto s1 = s0;
   auto s2 = s1;
-  EXPECT_STREQ("hello, world!", s2.what());
+
+  const char* expected = "hello, world!";
+  EXPECT_STREQ(expected, s2.what());
+}
+
+TEST_F(ExceptionTest, exception_shared_string_literal_constant) {
+  constexpr auto s0 = folly::exception_shared_string("hello, world!"_litv);
+
+  const char* expected = "hello, world!";
+  EXPECT_STREQ(expected, s0.what());
+
+  // NOLINTNEXTLINE(performance-unnecessary-copy-initialization)
+  auto s1 = s0;
+  EXPECT_EQ(s0.what(), s1.what());
+  EXPECT_STREQ(expected, s1.what());
 }
 
 #endif

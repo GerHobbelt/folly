@@ -126,8 +126,6 @@ class exception_wrapper final {
   template <class This, class... CatchFns>
   static void handle_(This& this_, char const* name, CatchFns&... fns);
 
-  static std::exception_ptr extract_(std::exception_ptr&&) noexcept;
-
  public:
   //! Default-constructs an empty `exception_wrapper`
   //! \post `type() == nullptr`
@@ -227,8 +225,16 @@ class exception_wrapper final {
 
   //! \return A `std::exception_ptr` that references the exception held by
   //!     `*this`.
-  std::exception_ptr to_exception_ptr() const noexcept;
+  std::exception_ptr to_exception_ptr() const& noexcept;
+  // NB: Can add this back, if a good use-case arises.
+  std::exception_ptr to_exception_ptr() && = delete;
   std::exception_ptr const& exception_ptr_ref() const noexcept;
+
+  //! \return `true` if the wrappers point to the same exception object
+  friend inline bool operator==(
+      exception_wrapper const& lhs, exception_wrapper const& rhs) noexcept {
+    return lhs.ptr_ == rhs.ptr_;
+  }
 
   //! Returns the `typeid` of the wrapped exception object. If there is no
   //!     wrapped exception object, returns `nullptr`.
@@ -334,13 +340,13 @@ class exception_wrapper final {
   template <class... CatchFns>
   void handle(CatchFns... fns) const;
 
-  // Implementation of `folly::get_exception<Ex>(ew)`
+  // Implement the `folly::get_exception<Ex>(ew)` protocol
   template <typename Ex>
-  Ex* get_exception(get_exception_tag_t) noexcept {
+  Ex const* get_exception(get_exception_tag_t) const noexcept {
     return get_exception<Ex>();
   }
   template <typename Ex>
-  Ex const* get_exception(get_exception_tag_t) const noexcept {
+  Ex* get_mutable_exception(get_exception_tag_t) noexcept {
     return get_exception<Ex>();
   }
 };

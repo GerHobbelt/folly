@@ -634,15 +634,10 @@ TYPED_TEST_P(ConcurrentHashMapTest, IterateStressTest) {
           } else {
             res = m.erase_if_equal(k, k);
           }
-          if (!res) {
-            printf("Faulre to erase thread %i val %li\n", t, k);
-            exit(0);
-          }
           EXPECT_TRUE(res);
         }
         int count = 0;
         for (auto it = m.cbegin(); it != m.cend(); ++it) {
-          printf("Item is %li\n", it->first);
           if (it->first < 10) {
             count++;
           }
@@ -1139,54 +1134,6 @@ TYPED_TEST_P(ConcurrentHashMapTest, ConcurrentInsertClear) {
   }
 }
 
-TYPED_TEST_P(ConcurrentHashMapTest, StressTestReclamation) {
-  // Create a map where we keep reclaiming a lot of objects that are linked to
-  // one node.
-
-  // Ensure all entries are mapped to a single segment.
-  struct constant_hash {
-    uint64_t operator()(unsigned long) const noexcept { return 0; }
-  };
-  CHM<unsigned long, unsigned long, constant_hash> map;
-  static constexpr unsigned long key_prev =
-      0; // A key that the test key has a link to - to guard against immediate
-         // reclamation.
-  static constexpr unsigned long key_test =
-      1; // A key that keeps being reclaimed repeatedly.
-  static constexpr unsigned long key_link_explosion =
-      2; // A key that is linked to the test key.
-
-  EXPECT_TRUE(map.insert(std::make_pair(key_prev, 0)).second);
-  EXPECT_TRUE(map.insert(std::make_pair(key_test, 0)).second);
-  EXPECT_TRUE(map.insert(std::make_pair(key_link_explosion, 0)).second);
-
-  std::vector<std::thread> threads;
-  // Test with (2^16)+ threads, enough to overflow a 16 bit integer.
-  // It should be uncommon to have more than 2^32 concurrent accesses.
-  static constexpr uint64_t num_threads = std::numeric_limits<uint16_t>::max();
-  static constexpr uint64_t iters = 100;
-  folly::Latch start(num_threads);
-  for (uint64_t t = 0; t < num_threads; t++) {
-    threads.push_back(lib::thread([t, &map, &start]() {
-      start.arrive_and_wait();
-      static constexpr uint64_t progress_report_pct =
-          (iters / 20); // Every 5% we log progress
-      for (uint64_t i = 0; i < iters; i++) {
-        if (t == 0 && (i % progress_report_pct) == 0) {
-          // To a casual observer - to know that the test is progressing, even
-          // if slowly
-          LOG(INFO) << "Progress: " << (i * 100 / iters);
-        }
-
-        map.insert_or_assign(key_test, i * num_threads);
-      }
-    }));
-  }
-  for (auto& t : threads) {
-    join;
-  }
-}
-
 REGISTER_TYPED_TEST_SUITE_P(
     ConcurrentHashMapTest,
     MapTest,
@@ -1230,17 +1177,16 @@ REGISTER_TYPED_TEST_SUITE_P(
     HeterogeneousInsert,
     InsertOrAssignIterator,
     EraseClonedNonCopyable,
-    ConcurrentInsertClear,
-    StressTestReclamation);
+    ConcurrentInsertClear);
 
 using folly::detail::concurrenthashmap::bucket::BucketTable;
 
 #if FOLLY_SSE_PREREQ(4, 2) && FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 using folly::detail::concurrenthashmap::simd::SIMDTable;
-typedef ::testing::Types<MapFactory<BucketTable>, MapFactory<SIMDTable>>
-    MapFactoryTypes;
+using MapFactoryTypes =
+    ::testing::Types<MapFactory<BucketTable>, MapFactory<SIMDTable>>;
 #else
-typedef ::testing::Types<MapFactory<BucketTable>> MapFactoryTypes;
+using MapFactoryTypes = ::testing::Types<MapFactory<BucketTable>>;
 #endif
 
 INSTANTIATE_TYPED_TEST_SUITE_P(
