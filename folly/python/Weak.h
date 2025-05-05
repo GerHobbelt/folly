@@ -58,6 +58,8 @@ Py_Weak(PyThreadState*) PyGILState_GetThisThreadState(void);
 Py_Weak(int) PyGILState_Check(void);
 Py_Weak(PyGILState_STATE) PyGILState_Ensure(void);
 Py_Weak(void) PyGILState_Release(PyGILState_STATE);
+Py_Weak(PyThreadState*) PyEval_SaveThread(void);
+Py_Weak(void) PyEval_RestoreThread(PyThreadState*);
 
 // Some Frame and Traceback Handling
 Py_Weak(PyFrameObject*) PyThreadState_GetFrame(PyThreadState*);
@@ -82,6 +84,8 @@ Py_Weak(int) _Py_IsFinalizing(void);
 
 } // extern "C"
 
+// Torch had the same idea.
+#ifndef PYTHONCAPI_COMPAT
 // So windows can use these helpers
 #if PY_VERSION_HEX < 0x030b0000 // < 3.11
 #include <frameobject.h>
@@ -95,6 +99,7 @@ inline int Py_IsFinalizing() {
   return _Py_IsFinalizing();
 }
 #endif
+#endif // PYTHONCAPI_COMPAT
 
 namespace folly::python {
 

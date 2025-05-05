@@ -674,6 +674,9 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST chrono_conv_test WINDOWS_DISABLED
         SOURCES ConvTest.cpp
 
+    DIRECTORY codec/test/
+      TEST codec_uuid_test SOURCES UuidTest.cpp
+
     DIRECTORY compression/test/
       TEST compression_compression_test SLOW SOURCES CompressionTest.cpp
       TEST compression_quotient_multiset_test SOURCES QuotientMultiSetTest.cpp
@@ -728,6 +731,8 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
         SOURCES CoreCachedSharedPtrTest.cpp
       BENCHMARK concurrency_concurrent_hash_map_bench WINDOWS_DISABLED
         SOURCES ConcurrentHashMapBench.cpp
+      TEST concurrency_concurrent_hash_map_stress_test SLOW WINDOWS_DISABLED
+        SOURCES ConcurrentHashMapStressTest.cpp
       TEST concurrency_concurrent_hash_map_test WINDOWS_DISABLED
         SOURCES ConcurrentHashMapTest.cpp
       TEST concurrency_dynamic_bounded_queue_test WINDOWS_DISABLED

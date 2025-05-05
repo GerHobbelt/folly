@@ -105,7 +105,7 @@ void evSigHandler(int sig) {
 
 void SignalRegistry::notify(int sig) {
   // use try_lock in case somebody already has the lock
-  std::unique_lock<folly::MicroSpinLock> lk(mapLock_, std::try_to_lock);
+  std::unique_lock lk(mapLock_, std::try_to_lock);
   if (lk.owns_lock()) {
     int fd = notifyFd_.load();
     if (fd >= 0) {
@@ -116,7 +116,7 @@ void SignalRegistry::notify(int sig) {
 }
 
 void SignalRegistry::setNotifyFd(int sig, int fd) {
-  std::lock_guard<folly::MicroSpinLock> g(mapLock_);
+  std::lock_guard g(mapLock_);
   if (fd >= 0) {
     if (!map_) {
       map_ = std::make_unique<SignalMap>();

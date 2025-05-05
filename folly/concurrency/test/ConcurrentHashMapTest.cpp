@@ -428,6 +428,54 @@ TYPED_TEST_P(ConcurrentHashMapTest, AssignIfTest) {
   EXPECT_EQ(3, f2.value()->second);
 }
 
+TYPED_TEST_P(ConcurrentHashMapTest, InsertOrAssignIfTest) {
+  CHM<uint64_t, uint64_t> foomap(3);
+
+  bool canAssignFlag = false;
+  auto r = foomap.insert_or_assign_if(0, 0, [canAssignFlag](auto&&) {
+    return canAssignFlag;
+  });
+  EXPECT_TRUE(r.second);
+  EXPECT_EQ(0, r.first->second);
+  EXPECT_EQ(0, foomap.find(0)->second);
+
+  canAssignFlag = true;
+  r = foomap.insert_or_assign_if(1, 0, [canAssignFlag](auto&&) {
+    return canAssignFlag;
+  });
+  EXPECT_TRUE(r.second);
+  EXPECT_EQ(0, r.first->second);
+  EXPECT_EQ(0, foomap.find(1)->second);
+
+  // assign_if test equivalent
+  canAssignFlag = false;
+  r = foomap.insert_or_assign_if(1, 1, [canAssignFlag](auto&&) {
+    return canAssignFlag;
+  });
+  EXPECT_FALSE(r.second);
+  EXPECT_EQ(0, r.first->second);
+  EXPECT_EQ(0, foomap.find(1)->second);
+
+  canAssignFlag = true;
+  r = foomap.insert_or_assign_if(1, 2, [canAssignFlag](auto&&) {
+    return canAssignFlag;
+  });
+  EXPECT_TRUE(r.second);
+  EXPECT_EQ(2, r.first->second);
+  EXPECT_EQ(2, foomap.find(1)->second);
+
+  // Assign based on the current value.
+  r = foomap.insert_or_assign_if(1, 3, [](auto&& val) { return val == 2; });
+  EXPECT_TRUE(r.second);
+  EXPECT_EQ(3, r.first->second);
+  EXPECT_EQ(3, foomap.find(1)->second);
+
+  r = foomap.insert_or_assign_if(1, 4, [](auto&& val) { return val == 2; });
+  EXPECT_FALSE(r.second);
+  EXPECT_EQ(3, r.first->second);
+  EXPECT_EQ(3, foomap.find(1)->second);
+}
+
 // TODO: hazptrs must support DeterministicSchedule
 
 #define Atom std::atomic // DeterministicAtomic
@@ -1134,6 +1182,72 @@ TYPED_TEST_P(ConcurrentHashMapTest, ConcurrentInsertClear) {
   }
 }
 
+struct Wrong : std::exception {
+  char const* what() const noexcept { return "wrong!"; }
+};
+struct ValueMaybeThrow {
+  int value = 0;
+  explicit ValueMaybeThrow(int i) : value{i} {
+    if (!i) {
+      throw Wrong();
+    }
+  }
+};
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowInsertSeparate) {
+  CHM<int, ValueMaybeThrow> map;
+  EXPECT_THROW(map.insert(0, 0), Wrong);
+  EXPECT_FALSE(get_ptr(map, 0));
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowTryEmplaceFail) {
+  CHM<int, ValueMaybeThrow> map;
+  map.try_emplace(0, 1);
+  map.try_emplace(0, 0);
+  EXPECT_TRUE(get_ptr(map, 0));
+  EXPECT_EQ(1, get_ptr(map, 0)->value);
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowTryEmplaceSucc) {
+  CHM<int, ValueMaybeThrow> map;
+  EXPECT_THROW(map.try_emplace(0, 0), Wrong);
+  EXPECT_FALSE(get_ptr(map, 0));
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowEmplace) {
+  CHM<int, ValueMaybeThrow> map;
+  EXPECT_THROW(map.emplace(0, 0), Wrong);
+  EXPECT_FALSE(get_ptr(map, 0));
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowInsertOrAssignInsert) {
+  CHM<int, ValueMaybeThrow> map;
+  EXPECT_THROW(map.insert_or_assign(0, 0), Wrong);
+  EXPECT_FALSE(get_ptr(map, 0));
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowInsertOrAssignAssign) {
+  CHM<int, ValueMaybeThrow> map;
+  map.emplace(0, 1);
+  EXPECT_THROW(map.insert_or_assign(0, 0), Wrong);
+  ASSERT_TRUE(get_ptr(map, 0));
+  EXPECT_EQ(1, get_ptr(map, 0)->value);
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowAssignAbsent) {
+  CHM<int, ValueMaybeThrow> map;
+  map.assign(0, 0);
+  EXPECT_FALSE(get_ptr(map, 0));
+}
+
+TYPED_TEST_P(ConcurrentHashMapTest, ValueMaybeThrowAssignPresent) {
+  CHM<int, ValueMaybeThrow> map;
+  map.emplace(0, 1);
+  EXPECT_THROW(map.assign(0, 0), Wrong);
+  ASSERT_TRUE(get_ptr(map, 0));
+  EXPECT_EQ(1, get_ptr(map, 0)->value);
+}
+
 REGISTER_TYPED_TEST_SUITE_P(
     ConcurrentHashMapTest,
     MapTest,
@@ -1161,6 +1275,7 @@ REGISTER_TYPED_TEST_SUITE_P(
     EraseIfTest,
     EraseInIterateTest,
     AssignIfTest,
+    InsertOrAssignIfTest,
     EraseStressTest,
     EraseTest,
     ForEachLoop,
@@ -1177,7 +1292,15 @@ REGISTER_TYPED_TEST_SUITE_P(
     HeterogeneousInsert,
     InsertOrAssignIterator,
     EraseClonedNonCopyable,
-    ConcurrentInsertClear);
+    ConcurrentInsertClear,
+    ValueMaybeThrowInsertSeparate,
+    ValueMaybeThrowTryEmplaceFail,
+    ValueMaybeThrowTryEmplaceSucc,
+    ValueMaybeThrowEmplace,
+    ValueMaybeThrowInsertOrAssignInsert,
+    ValueMaybeThrowInsertOrAssignAssign,
+    ValueMaybeThrowAssignAbsent,
+    ValueMaybeThrowAssignPresent);
 
 using folly::detail::concurrenthashmap::bucket::BucketTable;
 

@@ -1107,7 +1107,7 @@ TEST(Observer, ObservableLockInversion) {
     using element_type = size_t;
 
     std::shared_ptr<const size_t> get() {
-      std::lock_guard<std::mutex> lg(lockingObservableLock);
+      std::lock_guard lg(lockingObservableLock);
       return std::make_shared<const size_t>(lockingObservableValue.load());
     }
 
@@ -1133,7 +1133,7 @@ TEST(Observer, ObservableLockInversion) {
   });
 
   while (true) {
-    std::lock_guard<std::mutex> lg(lockingObservableLock);
+    std::lock_guard lg(lockingObservableLock);
     if (**makeObserver([o = observer] { return **o; }) == kNumIters) {
       break;
     }
@@ -1201,7 +1201,7 @@ TEST(Observer, ReenableSingletons) {
     for (size_t i = 1; i <= kMaxValue; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds{1});
       {
-        std::lock_guard<std::mutex> lg(forkMutex);
+        std::lock_guard lg(forkMutex);
         observable.setValue(i);
       }
     }
@@ -1211,7 +1211,7 @@ TEST(Observer, ReenableSingletons) {
     std::this_thread::sleep_for(std::chrono::milliseconds{10});
     folly::SingletonVault::singleton()->destroyInstances();
     {
-      std::lock_guard<std::mutex> lg(forkMutex);
+      std::lock_guard lg(forkMutex);
       folly::SingletonVault::singleton()->reenableInstances();
     }
     folly::observer_detail::ObserverManager::vivify();
@@ -1252,10 +1252,9 @@ TEST(Observer, TestMakeObserverWithTypeInfo) {
     EXPECT_THAT(
         folly::demangle(*observer.getCreatorTypeInfo()).toStdString(),
         StartsWith(prefix));
-    EXPECT_THAT(
-        folly::demangle(*observer.getCreatorInvokeResultTypeInfo())
-            .toStdString(),
-        "std::shared_ptr<int>");
+    EXPECT_EQ(
+        *observer.getCreatorInvokeResultTypeInfo(),
+        typeid(std::shared_ptr<int>));
   }
   {
     auto observer1 = folly::observer::makeObserver([] { return 1; });
@@ -1273,10 +1272,9 @@ TEST(Observer, TestMakeObserverWithTypeInfo) {
     EXPECT_THAT(
         folly::demangle(*observer.getCreatorTypeInfo()).toStdString(),
         StartsWith("folly::observer::unwrap"));
-    EXPECT_THAT(
-        folly::demangle(*observer.getCreatorInvokeResultTypeInfo())
-            .toStdString(),
-        "std::shared_ptr<int const>");
+    EXPECT_EQ(
+        *observer.getCreatorInvokeResultTypeInfo(),
+        typeid(std::shared_ptr<int const>));
   }
 }
 
@@ -1299,13 +1297,13 @@ TEST(Observer, TestMakeValueObserverWithTypeInfo) {
       return std::make_shared<int>(42);
     });
     EXPECT_EQ(42, **observer);
+
     EXPECT_THAT(
         folly::demangle(*observer.getCreatorTypeInfo()).toStdString(),
         StartsWith(prefix));
-    EXPECT_THAT(
-        folly::demangle(*observer.getCreatorInvokeResultTypeInfo())
-            .toStdString(),
-        "std::shared_ptr<int>");
+    EXPECT_EQ(
+        *observer.getCreatorInvokeResultTypeInfo(),
+        typeid(std::shared_ptr<int>));
   }
   {
     auto observer1 = folly::observer::makeValueObserver([] { return 1; });
@@ -1323,10 +1321,9 @@ TEST(Observer, TestMakeValueObserverWithTypeInfo) {
     EXPECT_THAT(
         folly::demangle(*observer.getCreatorTypeInfo()).toStdString(),
         StartsWith("folly::observer::unwrap"));
-    EXPECT_THAT(
-        folly::demangle(*observer.getCreatorInvokeResultTypeInfo())
-            .toStdString(),
-        "std::shared_ptr<int const>");
+    EXPECT_EQ(
+        *observer.getCreatorInvokeResultTypeInfo(),
+        typeid(std::shared_ptr<int const>));
   }
 }
 
@@ -1338,9 +1335,9 @@ TEST(Observer, TestSimpleObservableWithTypeInfo) {
   EXPECT_THAT(
       folly::demangle(*observer.getCreatorTypeInfo()).toStdString(),
       StartsWith(prefix));
-  EXPECT_THAT(
-      folly::demangle(*observer.getCreatorInvokeResultTypeInfo()).toStdString(),
-      "std::shared_ptr<int const>");
+  EXPECT_EQ(
+      *observer.getCreatorInvokeResultTypeInfo(),
+      typeid(std::shared_ptr<int const>));
 }
 
 TEST(Observer, TestObserverWithNamedCreator) {
