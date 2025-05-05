@@ -14,17 +14,21 @@
  * limitations under the License.
  */
 
-#include <folly/memory/MemoryResource.h>
+#include <gtest/gtest.h>
+#include <folly/python/Weak.h>
 
-#include <folly/portability/GTest.h>
-
-#if FOLLY_HAS_MEMORY_RESOURCE
-
-TEST(MemoryResource, simple) {
-  using Alloc = std::pmr::polymorphic_allocator<char>;
-
-  std::vector<char, Alloc> v{Alloc{std::pmr::null_memory_resource()}};
-  EXPECT_THROW(v.push_back('x'), std::bad_alloc);
+TEST(WeakPython, isLinked) {
+  if (folly::python::isLinked()) {
+    EXPECT_TRUE(Py_GetVersion != nullptr);
+    auto version = Py_GetVersion();
+    EXPECT_NE(version, nullptr);
+  } else {
+    EXPECT_TRUE(Py_GetVersion == nullptr);
+  }
 }
 
-#endif // FOLLY_HAS_MEMORY_RESOURCE
+TEST(WeakPython, isFinalizing) {
+  // This should always be false, since we never finalize an interperter
+  // And never SEGFAULT
+  EXPECT_EQ(false, folly::python::isLinked() && Py_IsFinalizing());
+}

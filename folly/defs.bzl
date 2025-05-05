@@ -120,6 +120,7 @@ def _compute_include_directories():
 def folly_xplat_library(
         name,
         srcs = (),
+        header_namespace = "",
         exported_headers = (),
         raw_headers = (),
         deps = (),
@@ -150,7 +151,7 @@ def folly_xplat_library(
     fb_xplat_cxx_library(
         name = name,
         srcs = srcs,
-        header_namespace = "",
+        header_namespace = header_namespace,
         exported_headers = exported_headers,
         raw_headers = raw_headers,
         public_include_directories = _compute_include_directories(),
@@ -166,7 +167,7 @@ def folly_xplat_library(
             "ovr_config//os:android": FBANDROID_CXXFLAGS,
             "ovr_config//os:iphoneos": CLANG_CXX_FLAGS,
             # TODO: Why iphoneos and macos are not marked as clang compilers?
-            "ovr_config//os:macos": CLANG_CXX_FLAGS,
+            "ovr_config//os:macos": CLANG_CXX_FLAGS + ["-fvisibility=default"],
         }) + select({
             "DEFAULT": [],
             "ovr_config//os:windows-cl": WINDOWS_MSVC_CXXFLAGS,

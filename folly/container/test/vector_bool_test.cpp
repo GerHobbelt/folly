@@ -14,17 +14,33 @@
  * limitations under the License.
  */
 
-#include <folly/memory/MemoryResource.h>
+#include <folly/container/vector_bool.h>
 
+#include <folly/Memory.h>
+#include <folly/container/detail/BoolWrapper.h>
+#include <folly/memory/MemoryResource.h>
 #include <folly/portability/GTest.h>
 
-#if FOLLY_HAS_MEMORY_RESOURCE
+namespace folly {
 
-TEST(MemoryResource, simple) {
-  using Alloc = std::pmr::polymorphic_allocator<char>;
-
-  std::vector<char, Alloc> v{Alloc{std::pmr::null_memory_resource()}};
-  EXPECT_THROW(v.push_back('x'), std::bad_alloc);
+TEST(VectorBoolTest, Example) {
+  folly::vector_bool<> vec = {false, true};
+  EXPECT_FALSE(vec[0]);
+  EXPECT_TRUE(vec[1]);
 }
 
-#endif // FOLLY_HAS_MEMORY_RESOURCE
+TEST(VectorBoolTest, CustomAllocator) {
+  folly::vector_bool<SysAllocator> vec = {false, true};
+  EXPECT_FALSE(vec[0]);
+  EXPECT_TRUE(vec[1]);
+}
+
+#if FOLLY_HAS_MEMORY_RESOURCE
+TEST(VectorBoolTest, PmrAllocator) {
+  folly::pmr::vector_bool vec = {false, true};
+  EXPECT_FALSE(vec[0]);
+  EXPECT_TRUE(vec[1]);
+}
+#endif
+
+} // namespace folly

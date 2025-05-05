@@ -19,20 +19,21 @@
 #include <folly/Conv.h>
 #include <folly/ExceptionString.h>
 #include <folly/String.h>
+#include <folly/lang/Align.h>
 
 #if FOLLY_HAS_LIBURING
 
 namespace folly {
 
 IoUringProvidedBufferRing::ProvidedBuffersBuffer::ProvidedBuffersBuffer(
-    int count, int bufferShift, int ringCountShift, bool huge_pages)
+    size_t count, int bufferShift, int ringCountShift, bool huge_pages)
     : bufferShift_(bufferShift), bufferCount_(count) {
   // space for the ring
   int ringCount = 1 << ringCountShift;
   ringMask_ = ringCount - 1;
   ringMemSize_ = sizeof(struct io_uring_buf) * ringCount;
 
-  ringMemSize_ = (ringMemSize_ + kBufferAlignMask) & (~kBufferAlignMask);
+  ringMemSize_ = align_ceil(ringMemSize_, kBufferAlignBytes);
 
   if (bufferShift_ < 5) {
     bufferShift_ = 5; // for alignment
@@ -44,11 +45,11 @@ IoUringProvidedBufferRing::ProvidedBuffersBuffer::ProvidedBuffersBuffer(
 
   int pages;
   if (huge_pages) {
-    allSize_ = (allSize_ + kHugePageMask) & (~kHugePageMask);
-    pages = allSize_ / (1 + kHugePageMask);
+    allSize_ = align_ceil(allSize_, kHugePageSizeBytes);
+    pages = allSize_ / kHugePageSizeBytes;
   } else {
-    allSize_ = (kPageMask + kPageMask) & ~kPageMask;
-    pages = allSize_ / (1 + kPageMask);
+    allSize_ = align_ceil(allSize_, kPageSizeBytes);
+    pages = allSize_ / kPageSizeBytes;
   }
 
   buffer_ = ::mmap(
@@ -74,34 +75,38 @@ IoUringProvidedBufferRing::ProvidedBuffersBuffer::ProvidedBuffersBuffer(
   ringPtr_ = (struct io_uring_buf_ring*)buffer_;
 
   if (huge_pages) {
-    int ret = madvise(buffer_, allSize_, MADV_HUGEPAGE);
+    int ret = ::madvise(buffer_, allSize_, MADV_HUGEPAGE);
     PLOG_IF(ERROR, ret) << "cannot enable huge pages";
+  } else {
+    ::madvise(buffer_, allSize_, MADV_NOHUGEPAGE);
   }
 }
 
 IoUringProvidedBufferRing::IoUringProvidedBufferRing(
-    io_uring* ioRingPtr,
-    uint16_t gid,
-    int count,
-    int bufferShift,
-    int ringSizeShift)
+    io_uring* ioRingPtr, Options options)
     : IoUringBufferProviderBase(
-          gid, ProvidedBuffersBuffer::calcBufferSize(bufferShift)),
+          options.gid,
+          ProvidedBuffersBuffer::calcBufferSize(options.bufferShift)),
       ioRingPtr_(ioRingPtr),
-      buffer_(count, bufferShift, ringSizeShift, true) {
-  if (count > std::numeric_limits<uint16_t>::max()) {
+      buffer_(
+          options.count,
+          options.bufferShift,
+          options.ringSizeShift,
+          options.useHugePages) {
+  if (options.count > std::numeric_limits<uint16_t>::max()) {
     throw std::runtime_error("too many buffers");
   }
-  if (count <= 0) {
+  if (options.count == 0) {
     throw std::runtime_error("not enough buffers");
   }
 
-  ioBufCallbacks_.assign((count + (sizeof(void*) - 1)) / sizeof(void*), this);
+  ioBufCallbacks_.assign(
+      (options.count + (sizeof(void*) - 1)) / sizeof(void*), this);
 
   initialRegister();
 
-  gottenBuffers_ += count;
-  for (int i = 0; i < count; i++) {
+  gottenBuffers_ += options.count;
+  for (size_t i = 0; i < options.count; i++) {
     returnBuffer(i);
   }
 }

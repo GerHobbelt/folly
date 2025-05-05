@@ -14,17 +14,25 @@
  * limitations under the License.
  */
 
-#include <folly/memory/MemoryResource.h>
+#pragma once
 
-#include <folly/portability/GTest.h>
+namespace folly {
+namespace detail {
 
-#if FOLLY_HAS_MEMORY_RESOURCE
+class BoolWrapper {
+ public:
+  constexpr /* implicit */ BoolWrapper(bool value = false) noexcept
+      : value_(value) {}
 
-TEST(MemoryResource, simple) {
-  using Alloc = std::pmr::polymorphic_allocator<char>;
+  constexpr /* implicit */ operator bool() const noexcept { return value_; }
 
-  std::vector<char, Alloc> v{Alloc{std::pmr::null_memory_resource()}};
-  EXPECT_THROW(v.push_back('x'), std::bad_alloc);
-}
+  constexpr BoolWrapper operator!() const noexcept {
+    return BoolWrapper(!value_);
+  }
 
-#endif // FOLLY_HAS_MEMORY_RESOURCE
+ private:
+  bool value_;
+};
+
+} // namespace detail
+} // namespace folly
