@@ -1,4 +1,5 @@
 from conan.tools.microsoft import is_msvc, msvc_runtime_flag
+
 from conan.tools.build import can_run, check_min_cppstd
 from conan.tools.scm import Version
 from conan.tools import files
@@ -31,6 +32,7 @@ class FollyConan(ConanFile):
         "fPIC": True,
         "use_sse4_2": True,
         "fmt:header_only": True,
+        "glog:with_gflags": True
     }
     exports_sources = (
         "folly/*",
@@ -225,6 +227,12 @@ class FollyConan(ConanFile):
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0042"] = "NEW"
         # Honor BUILD_SHARED_LIBS from conan_toolchain (see https://github.com/conan-io/conan/issues/11840)
         tc.cache_variables["CMAKE_POLICY_DEFAULT_CMP0077"] = "NEW"
+        
+        # Set RPATH for proper library linking
+        if self.settings.os != "Windows":
+            tc.variables["CMAKE_INSTALL_RPATH_USE_LINK_PATH"] = "TRUE"
+            tc.variables["CMAKE_BUILD_WITH_INSTALL_RPATH"] = "TRUE"
+            tc.variables["CMAKE_INSTALL_RPATH"] = "${CMAKE_INSTALL_PREFIX}/lib"
 
         cxx_std_flag = tools.cppstd_flag(self.settings)
         cxx_std_value = (
