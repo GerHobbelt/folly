@@ -130,8 +130,8 @@ TEST_F(HHWheelTimerTest, NoRequestContextLeak) {
 
   EXPECT_EQ(0, destructed.size());
   t1.reset();
-  EXPECT_EQ(1, destructed.count(1));
-  EXPECT_EQ(0, destructed.count(2));
+  EXPECT_TRUE(destructed.contains(1));
+  EXPECT_FALSE(destructed.contains(2));
 }
 
 /*

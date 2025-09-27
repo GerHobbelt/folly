@@ -20,6 +20,8 @@
 #define _GNU_SOURCE 1 // for RTLD_NOLOAD
 #include <dlfcn.h>
 #endif
+#include <string.h>
+
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -45,10 +47,8 @@ namespace folly {
 
 ///////////// CacheLocality
 
-namespace detail {
-
 /// Returns the CacheLocality information best for this machine
-CacheLocality getSystemLocalityInfo() {
+CacheLocality CacheLocality::readSystemLocalityInfo() {
   if (kIsLinux) {
     if (kIsArchAmd64 || kIsArchX86) {
       // First try to parse /proc/cpuinfo.
@@ -85,8 +85,6 @@ CacheLocality getSystemLocalityInfo() {
   return CacheLocality::uniform(size_t(numCpus));
 }
 
-} // namespace detail
-
 template <>
 const CacheLocality& CacheLocality::system<std::atomic>() {
   static std::atomic<const CacheLocality*> cache;
@@ -94,7 +92,7 @@ const CacheLocality& CacheLocality::system<std::atomic>() {
   if (value != nullptr) {
     return *value;
   }
-  auto next = new CacheLocality(detail::getSystemLocalityInfo());
+  auto next = new CacheLocality(readSystemLocalityInfo());
   if (cache.compare_exchange_strong(value, next, std::memory_order_acq_rel)) {
     return *next;
   }
@@ -193,17 +191,30 @@ CacheLocality CacheLocality::readFromSysfsTree(std::string_view root) {
   // are named by the smallest cpu in the class
   std::vector<std::vector<size_t>> equivClassesByCpu;
 
-  auto rdfile = [&](auto dirfd, auto name) {
-    auto fd = ::openat(dirfd, name.c_str(), O_CLOEXEC, O_RDONLY);
+  auto checkNoEnt = [](std::string_view name) {
+    auto err = errno;
+    if (err != ENOENT) {
+      throw std::runtime_error(fmt::format(
+          "unexpected error while opening {}: {}", name, strerror(err)));
+    }
+  };
+
+  // Reads the first 64 bytes of the file.
+  auto rdfile64 = [&](int dirfd, const std::string& name) {
+    const auto fd = ::openat(dirfd, name.c_str(), O_CLOEXEC, O_RDONLY);
     if (fd < 0) {
+      checkNoEnt(name);
       return std::string(); // stop condition for the inner loop below
     }
-    auto fdg = makeGuard([=] { ::close(fd); });
+    SCOPE_EXIT {
+      ::close(fd);
+    };
+
     alignas(64) char buf[64];
     int ret = 0;
     do {
       ret = ::pread(fd, buf, sizeof(buf), 0);
-    } while (ret < 0 && errno == EINVAL);
+    } while (ret < 0 && errno == EINTR);
     if (ret < 0) {
       return std::string();
     }
@@ -211,25 +222,34 @@ CacheLocality CacheLocality::readFromSysfsTree(std::string_view root) {
   };
 
   auto subroot = std::filesystem::path(root) / "sys/devices/system/cpu";
-  int allfd = ::open(subroot.c_str(), O_DIRECTORY | O_CLOEXEC, O_RDONLY);
-  if (allfd < 0 && errno == ENOENT) {
-    throw std::runtime_error("unable to open sysfs");
+  const int allfd = ::open(subroot.c_str(), O_DIRECTORY | O_CLOEXEC, O_RDONLY);
+  if (allfd < 0) {
+    auto err = errno;
+    throw std::runtime_error(
+        fmt::format("unable to open sysfs: {}", strerror(err)));
   }
-  assert(allfd >= 0);
+  SCOPE_EXIT {
+    ::close(allfd);
+  };
 
   size_t maxindex = 0;
   for (size_t cpu = 0;; ++cpu) {
     auto cpuroot = fmt::format(FMT_COMPILE("cpu{}/cache"), cpu);
-    int cpufd =
+    const int cpufd =
         ::openat(allfd, cpuroot.c_str(), O_DIRECTORY | O_CLOEXEC, O_RDONLY);
     if (cpufd < 0) {
+      checkNoEnt(cpuroot);
       break;
     }
+    SCOPE_EXIT {
+      ::close(cpufd);
+    };
+
     std::vector<size_t> levels;
     grow_capacity_by(levels, maxindex);
     for (size_t index = 0;; ++index) {
       auto dir = fmt::format(FMT_COMPILE("index{}/"), index);
-      auto cacheType = rdfile(cpufd, dir + "type");
+      auto cacheType = rdfile64(cpufd, dir + "type");
       if (cacheType.empty()) {
         // no more caches
         break;
@@ -239,7 +259,7 @@ CacheLocality CacheLocality::readFromSysfsTree(std::string_view root) {
         continue;
       }
       // only try to read the second file once we know we will need it
-      auto equivStr = rdfile(cpufd, dir + "shared_cpu_list");
+      auto equivStr = rdfile64(cpufd, dir + "shared_cpu_list");
       if (equivStr.empty()) {
         // no more caches
         break;

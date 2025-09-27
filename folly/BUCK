@@ -213,43 +213,14 @@ non_fbcode_target(
             "-DFOLLY_SINGLETON_SKIP_SCHEDULE_ATEXIT=1",
         ],
         "DEFAULT": [],
-    }) + select({
-        # Symbolizer is not available for all platforms, disable it for now.
-        "DEFAULT": ["-DFOLLY_HAVE_DWARF=0"],
-        "ovr_config//os:linux": [],
     }),
     fbandroid_deps = [
         "//xplat/third-party/linker_lib:dl",
     ],
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
-        "Singleton-inl.h",
         "Singleton.h",
-        # Instead of depending on experimental_symbolizer_symbolizer, reference always-included headers here.
-        "debugging/symbolizer/Dwarf.h",
-        "debugging/symbolizer/DwarfImpl.h",
-        "debugging/symbolizer/DwarfLineNumberVM.h",
-        "debugging/symbolizer/DwarfSection.h",
-        "debugging/symbolizer/DwarfUtil.h",
-        "debugging/symbolizer/Elf.h",
-        "debugging/symbolizer/Elf-inl.h",
-        "debugging/symbolizer/ElfCache.h",
-        "debugging/symbolizer/Symbolizer.h",
-        "debugging/symbolizer/SymbolizedFrame.h",
-        "debugging/symbolizer/SymbolizePrinter.h",
-        "debugging/symbolizer/StackTrace.h",
-        "experimental/symbolizer/Dwarf.h",
-        "experimental/symbolizer/DwarfImpl.h",
-        "experimental/symbolizer/DwarfLineNumberVM.h",
-        "experimental/symbolizer/DwarfSection.h",
-        "experimental/symbolizer/DwarfUtil.h",
-        "experimental/symbolizer/Elf.h",
-        "experimental/symbolizer/Elf-inl.h",
-        "experimental/symbolizer/ElfCache.h",
-        "experimental/symbolizer/Symbolizer.h",
-        "experimental/symbolizer/SymbolizedFrame.h",
-        "experimental/symbolizer/SymbolizePrinter.h",
-        "experimental/symbolizer/StackTrace.h",
+        "Singleton-inl.h",
     ],
     deps = [
         "//xplat/folly:portability_fmt_compile",
@@ -265,6 +236,7 @@ non_fbcode_target(
         "//xplat/folly:demangle",
         "//xplat/folly:exception",
         "//xplat/folly:executor",
+        "//xplat/folly:experimental_symbolizer_symbolizer",
         "//xplat/folly:fbstring",
         "//xplat/folly:file_util",
         "//xplat/folly:hash_hash",
@@ -287,10 +259,7 @@ non_fbcode_target(
         "//xplat/folly/lang:exception",
         "//xplat/folly/memory:reentrant_allocator",
         "//xplat/folly/memory:sanitize_leak",
-    ] + select({
-        "DEFAULT": [],
-        "ovr_config//os:linux": ["//xplat/folly:experimental_symbolizer_symbolizer"],
-    }),
+    ],
 )
 
 non_fbcode_target(
@@ -3038,6 +3007,8 @@ non_fbcode_target(
     use_instrumentation_test = True,
     deps = [
         "fbsource//third-party/boost:boost",
+        "fbsource//third-party/boost:boost_filesystem",
+        "fbsource//third-party/boost:boost_system",
         "fbsource//third-party/double-conversion:double-conversion",
         "fbsource//third-party/glog:glog",
         "fbsource//xplat/folly:atomic_hash_map",
@@ -3048,11 +3019,13 @@ non_fbcode_target(
         "fbsource//xplat/folly:conv",
         "fbsource//xplat/folly:cpp_attributes",
         "fbsource//xplat/folly:demangle",
+        "fbsource//xplat/folly:discriminated_ptr",
         "fbsource//xplat/folly:dynamic",
         "fbsource//xplat/folly:exception",
         "fbsource//xplat/folly:exception_string",
         "fbsource//xplat/folly:executor",
         "fbsource//xplat/folly:expected",
+        "fbsource//xplat/folly:extended",
         "fbsource//xplat/folly:f14_hash",
         "fbsource//xplat/folly:fbstring",
         "fbsource//xplat/folly:fbvector",
@@ -3064,6 +3037,13 @@ non_fbcode_target(
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
         "fbsource//xplat/folly:likely",
+        "fbsource//xplat/folly:logging_init",
+        "fbsource//xplat/folly:logging_init_weak",
+        "fbsource//xplat/folly:logging_log_handler",
+        "fbsource//xplat/folly:logging_log_level",
+        "fbsource//xplat/folly:logging_log_name",
+        "fbsource//xplat/folly:logging_logging",
+        "fbsource//xplat/folly:logging_rate_limiter",
         "fbsource//xplat/folly:math",
         "fbsource//xplat/folly:micro_lock",
         "fbsource//xplat/folly:move_wrapper",
@@ -3073,6 +3053,8 @@ non_fbcode_target(
         "fbsource//xplat/folly:portability_extended",
         "fbsource//xplat/folly:portability_fcntl",
         "fbsource//xplat/folly:portability_gflags",
+        "fbsource//xplat/folly:portability_gmock",
+        "fbsource//xplat/folly:portability_gtest",
         "fbsource//xplat/folly:portability_headers",
         "fbsource//xplat/folly:portability_iovec",
         "fbsource//xplat/folly:portability_math",
@@ -3091,9 +3073,11 @@ non_fbcode_target(
         "fbsource//xplat/folly:small_vector",
         "fbsource//xplat/folly:sorted_vector_types",
         "fbsource//xplat/folly:spin_lock",
+        "fbsource//xplat/folly:stop_watch",
         "fbsource//xplat/folly:synchronization_call_once",
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
+        "fbsource//xplat/folly:synchronization_rcu",
         "fbsource//xplat/folly:synchronization_small_locks",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
@@ -3105,11 +3089,17 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:heap_vector_types",
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
+        "fbsource//xplat/folly/detail:discriminated_ptr_detail",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/fibers:core",
+        "fbsource//xplat/folly/fibers:event_base_loop_controller",
+        "fbsource//xplat/folly/fibers:fiber_manager_map",
         "fbsource//xplat/folly/functional:apply_tuple",
         "fbsource//xplat/folly/functional:invoke",
         "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
+        "fbsource//xplat/folly/io:typed_io_buf",
+        "fbsource//xplat/folly/io/async:server_socket",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
         "fbsource//xplat/folly/lang:exception",
@@ -3128,7 +3118,6 @@ non_fbcode_target(
         "//xplat/folly:memory",
         "//xplat/folly:optional",
         "//xplat/folly:test-headers",
-        "//xplat/folly:test-util",
         "//xplat/folly/lang:keep",
     ],
 )
@@ -3148,6 +3137,8 @@ non_fbcode_target(
     use_instrumentation_test = True,
     deps = [
         "fbsource//third-party/boost:boost",
+        "fbsource//third-party/boost:boost_filesystem",
+        "fbsource//third-party/boost:boost_system",
         "fbsource//third-party/double-conversion:double-conversion",
         "fbsource//third-party/glog:glog",
         "fbsource//xplat/folly:atomic_hash_map",
@@ -3158,11 +3149,13 @@ non_fbcode_target(
         "fbsource//xplat/folly:conv",
         "fbsource//xplat/folly:cpp_attributes",
         "fbsource//xplat/folly:demangle",
+        "fbsource//xplat/folly:discriminated_ptr",
         "fbsource//xplat/folly:dynamic",
         "fbsource//xplat/folly:exception",
         "fbsource//xplat/folly:exception_string",
         "fbsource//xplat/folly:executor",
         "fbsource//xplat/folly:expected",
+        "fbsource//xplat/folly:extended",
         "fbsource//xplat/folly:f14_hash",
         "fbsource//xplat/folly:fbstring",
         "fbsource//xplat/folly:fbvector",
@@ -3174,6 +3167,13 @@ non_fbcode_target(
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
         "fbsource//xplat/folly:likely",
+        "fbsource//xplat/folly:logging_init",
+        "fbsource//xplat/folly:logging_init_weak",
+        "fbsource//xplat/folly:logging_log_handler",
+        "fbsource//xplat/folly:logging_log_level",
+        "fbsource//xplat/folly:logging_log_name",
+        "fbsource//xplat/folly:logging_logging",
+        "fbsource//xplat/folly:logging_rate_limiter",
         "fbsource//xplat/folly:math",
         "fbsource//xplat/folly:micro_lock",
         "fbsource//xplat/folly:move_wrapper",
@@ -3183,6 +3183,8 @@ non_fbcode_target(
         "fbsource//xplat/folly:portability_extended",
         "fbsource//xplat/folly:portability_fcntl",
         "fbsource//xplat/folly:portability_gflags",
+        "fbsource//xplat/folly:portability_gmock",
+        "fbsource//xplat/folly:portability_gtest",
         "fbsource//xplat/folly:portability_headers",
         "fbsource//xplat/folly:portability_iovec",
         "fbsource//xplat/folly:portability_math",
@@ -3201,9 +3203,11 @@ non_fbcode_target(
         "fbsource//xplat/folly:small_vector",
         "fbsource//xplat/folly:sorted_vector_types",
         "fbsource//xplat/folly:spin_lock",
+        "fbsource//xplat/folly:stop_watch",
         "fbsource//xplat/folly:synchronization_call_once",
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
+        "fbsource//xplat/folly:synchronization_rcu",
         "fbsource//xplat/folly:synchronization_small_locks",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
@@ -3215,11 +3219,17 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:heap_vector_types",
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
+        "fbsource//xplat/folly/detail:discriminated_ptr_detail",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/fibers:core",
+        "fbsource//xplat/folly/fibers:event_base_loop_controller",
+        "fbsource//xplat/folly/fibers:fiber_manager_map",
         "fbsource//xplat/folly/functional:apply_tuple",
         "fbsource//xplat/folly/functional:invoke",
         "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
+        "fbsource//xplat/folly/io:typed_io_buf",
+        "fbsource//xplat/folly/io/async:server_socket",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
         "fbsource//xplat/folly/lang:exception",
@@ -3234,166 +3244,6 @@ non_fbcode_target(
         "//third-party/googletest:gmock_main",
         "//xplat/folly:extended",
         "//xplat/folly:test-headers",
-        "//xplat/folly:test-util",
-    ],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
-    name = "folly-futures-test",
-    srcs = [
-        "futures/test/BarrierTest.cpp",
-        "futures/test/ContextTest.cpp",
-        "futures/test/CoreTest.cpp",
-        "futures/test/EnsureTest.cpp",
-        "futures/test/FilterTest.cpp",
-        "futures/test/HeaderCompileTest.cpp",
-        "futures/test/MapTest.cpp",
-        "futures/test/NonCopyableLambdaTest.cpp",
-        "futures/test/PollTest.cpp",
-        "futures/test/PromiseTest.cpp",
-        "futures/test/ReduceTest.cpp",
-        "futures/test/SelfDestructTest.cpp",
-        "futures/test/SharedPromiseTest.cpp",
-        "futures/test/TestExecutor.cpp",
-        "futures/test/ThenCompileTest.cpp",
-        "futures/test/ThenTest.cpp",
-        "futures/test/TimesTest.cpp",
-        "futures/test/UnwrapTest.cpp",
-        "futures/test/ViaTest.cpp",
-        "futures/test/WhenTest.cpp",
-        "futures/test/WhileDoTest.cpp",
-        "futures/test/WillEqualTest.cpp",
-    ],
-    compiler_flags = CXXFLAGS + select({
-        "DEFAULT": [],
-        "ovr_config//os:android": FBANDROID_CXXFLAGS + [
-            "-Wno-deprecated-declarations",
-        ],
-    }),
-    # TODO(T188948036): Fix xplat/folly:folly-futures-test and folly_xplat_cxx_test
-    # The arguments below are unused by folly_xplat_cxx_test.
-    # They need to be investigated and fixed (i.e., correctly used or removed).
-    cxx_srcs = [
-        "futures/test/FutureTest.cpp",
-        "futures/test/InterruptTest.cpp",
-        "futures/test/TimekeeperTest.cpp",
-        "futures/test/WaitTest.cpp",
-        "futures/test/WindowTest.cpp",
-    ],
-    fbobjc_compiler_flags = FBOBJC_CXXFLAGS,
-    fbobjc_srcs = [
-        "futures/test/FutureTest.cpp",
-        "futures/test/InterruptTest.cpp",
-        "futures/test/TimekeeperTest.cpp",
-        "futures/test/WaitTest.cpp",
-        "futures/test/WindowTest.cpp",
-    ],
-    include_directories = [
-        "..",
-    ],
-    platforms = (ANDROID, APPLE, CXX, WINDOWS),
-    preprocessor_flags = CPPFLAGS + select({
-        "DEFAULT": [],
-        "ovr_config//os:linux": FBANDROID_CPPFLAGS,
-    }),
-    raw_headers = glob([
-        "futures/test/ThenCompileTest.h",
-    ]),
-    use_instrumentation_test = True,
-    deps = [
-        "fbsource//third-party/boost:boost",
-        "fbsource//third-party/double-conversion:double-conversion",
-        "fbsource//third-party/glog:glog",
-        "fbsource//xplat/folly:atomic_hash_map",
-        "fbsource//xplat/folly:atomic_linked_list",
-        "fbsource//xplat/folly:c_portability",
-        "fbsource//xplat/folly:config",
-        "fbsource//xplat/folly:constexpr_math",
-        "fbsource//xplat/folly:conv",
-        "fbsource//xplat/folly:cpp_attributes",
-        "fbsource//xplat/folly:demangle",
-        "fbsource//xplat/folly:dynamic",
-        "fbsource//xplat/folly:exception",
-        "fbsource//xplat/folly:exception_string",
-        "fbsource//xplat/folly:executor",
-        "fbsource//xplat/folly:expected",
-        "fbsource//xplat/folly:f14_hash",
-        "fbsource//xplat/folly:fbstring",
-        "fbsource//xplat/folly:fbvector",
-        "fbsource//xplat/folly:file",
-        "fbsource//xplat/folly:format",
-        "fbsource//xplat/folly:format_traits",
-        "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:glog",
-        "fbsource//xplat/folly:indestructible",
-        "fbsource//xplat/folly:intrusive_list",
-        "fbsource//xplat/folly:likely",
-        "fbsource//xplat/folly:math",
-        "fbsource//xplat/folly:micro_lock",
-        "fbsource//xplat/folly:move_wrapper",
-        "fbsource//xplat/folly:optional",
-        "fbsource//xplat/folly:overload",
-        "fbsource//xplat/folly:portability",
-        "fbsource//xplat/folly:portability_extended",
-        "fbsource//xplat/folly:portability_fcntl",
-        "fbsource//xplat/folly:portability_gflags",
-        "fbsource//xplat/folly:portability_headers",
-        "fbsource//xplat/folly:portability_iovec",
-        "fbsource//xplat/folly:portability_math",
-        "fbsource//xplat/folly:portability_pthread",
-        "fbsource//xplat/folly:portability_stdlib",
-        "fbsource//xplat/folly:portability_sys_resource",
-        "fbsource//xplat/folly:portability_sys_stat",
-        "fbsource//xplat/folly:portability_sys_time",
-        "fbsource//xplat/folly:portability_time",
-        "fbsource//xplat/folly:portability_windows",
-        "fbsource//xplat/folly:preprocessor",
-        "fbsource//xplat/folly:range",
-        "fbsource//xplat/folly:scope_guard",
-        "fbsource//xplat/folly:shared_mutex",
-        "fbsource//xplat/folly:singleton_thread_local",
-        "fbsource//xplat/folly:small_vector",
-        "fbsource//xplat/folly:sorted_vector_types",
-        "fbsource//xplat/folly:spin_lock",
-        "fbsource//xplat/folly:synchronization_call_once",
-        "fbsource//xplat/folly:synchronization_micro_spin_lock",
-        "fbsource//xplat/folly:synchronization_pico_spin_lock",
-        "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:thread_local",
-        "fbsource//xplat/folly:traits",
-        "fbsource//xplat/folly:unit",
-        "fbsource//xplat/folly/concurrency:cache_locality",
-        "fbsource//xplat/folly/container:array",
-        "fbsource//xplat/folly/container:enumerate",
-        "fbsource//xplat/folly/container:foreach",
-        "fbsource//xplat/folly/container:heap_vector_types",
-        "fbsource//xplat/folly/container:iterator",
-        "fbsource//xplat/folly/container:sparse_byte_set",
-        "fbsource//xplat/folly/detail:futex",
-        "fbsource//xplat/folly/functional:apply_tuple",
-        "fbsource//xplat/folly/functional:invoke",
-        "fbsource//xplat/folly/functional:partial",
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/lang:bits",
-        "fbsource//xplat/folly/lang:checked_math",
-        "fbsource//xplat/folly/lang:exception",
-        "fbsource//xplat/folly/lang:rvalue_reference_wrapper",
-        "fbsource//xplat/folly/lang:uncaught_exceptions",
-        "fbsource//xplat/folly/memory:arena",
-        "fbsource//xplat/folly/memory:malloc",
-        "fbsource//xplat/folly/system:thread_id",
-        "fbsource//xplat/folly/system:thread_name",
-        "//third-party/boost:boost",
-        "//third-party/boost:boost_system",
-        "//third-party/boost:boost_thread",
-        "//third-party/googletest:gtest_main",
-        "//xplat/folly:extended",
-        "//xplat/folly:futures",
-        "//xplat/folly:memory",
-        "//xplat/folly:test-headers",
-        "//xplat/folly:test-util",
-        "//xplat/folly/test/common:test_main",
     ],
 )
 
@@ -3414,26 +3264,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_stack_trace",
-    srcs = [
-        "debugging/symbolizer/StackTrace.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/StackTrace.h",
-        "experimental/symbolizer/StackTrace.h",
-    ],
-    deps = [
-        ":cpp_attributes",
-        ":portability",
-        ":portability_config",
-        "//xplat/folly/tracing:async_stack",
-    ],
-    exported_deps = [
-        ":portability_libunwind",
-        ":portability_sys_types",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:stack_trace"],
 )
 
 non_fbcode_target(
@@ -3576,19 +3411,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "quantile_histogram",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "stats/QuantileHistogram.h",
-        "stats/QuantileHistogram-inl.h",
-    ],
-    deps = [
-        ":c_portability",
-        ":conv",
-        "//third-party/glog:glog",
-        "//xplat/folly/lang:exception",
-    ],
+    exported_deps = ["//xplat/folly/stats:quantile_histogram"],
 )
 
 non_fbcode_target(
@@ -3620,16 +3447,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_cleanup",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "futures/Cleanup.h",
-    ],
-    deps = [
-        ":futures_core",
-        "//third-party/glog:glog",
-    ],
+    exported_deps = ["//xplat/folly/futures:cleanup"],
 )
 
 non_fbcode_target(
@@ -4195,84 +4017,35 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_program_options",
-    srcs = [
-        "cli/NestedCommandLineApp.cpp",
-        "cli/ProgramOptions.cpp",
-    ],
-    apple_sdks = (IOS, MACOSX),
-    fbandroid_deps = [
-        "//third-party/gflags:gflags",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    platforms = (ANDROID, APPLE, CXX, FBCODE, WINDOWS),
-    raw_headers = [
-        "cli/NestedCommandLineApp.h",
-        "cli/ProgramOptions.h",
-    ],
-    # Note: keeping relative target labels otherwise fbcode_macros will complain about a dependency
-    # on a restricted repo since experimental_program_options is in fbcode_allowed_list.bzl.
-    deps = [
-        ":c_portability",
-        ":conv",
-        ":experimental_io_fs_util",
-        ":file_util",
-        ":format",
-        ":optional",
-        ":portability",
-        ":portability_gflags",
-        ":string",
-        "//third-party/boost:boost",
-        "//third-party/boost:boost_program_options",
-        "//third-party/glog:glog",
-    ],
+    exported_deps = ["//xplat/folly/cli:program_options"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_detail_debug",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/detail/Debug.h",
-        "experimental/symbolizer/detail/Debug.h",
-    ],
-    deps = [
-        ":cpp_attributes",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer/detail:debug"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_line_reader",
-    srcs = [
-        "debugging/symbolizer/LineReader.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/LineReader.h",
-        "experimental/symbolizer/LineReader.h",
-    ],
-    deps = [
-        ":file_util",
-        ":range",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:line_reader"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_auto_timer",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "logging/AutoTimer.h",
-    ],
-    deps = [
-        ":conv",
-        ":format",
-        ":optional",
-        ":string",
-        "//third-party/glog:glog",
-    ],
+    exported_deps = ["//xplat/folly/logging:auto_timer"],
 )
 
 non_fbcode_target(
@@ -4284,30 +4057,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_elf",
-    srcs = [
-        "debugging/symbolizer/Elf.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/Elf.h",
-        "debugging/symbolizer/Elf-inl.h",
-        "experimental/symbolizer/Elf.h",
-        "experimental/symbolizer/Elf-inl.h",
-    ],
-    deps = [
-        "//third-party/glog:glog",
-        "//xplat/folly:conv",
-        "//xplat/folly:exception",
-        "//xplat/folly:likely",
-        "//xplat/folly:portability_sys_mman",
-        "//xplat/folly:portability_unistd",
-        "//xplat/folly:range",
-        "//xplat/folly:scope_guard",
-        "//xplat/folly/lang:c_string",
-        "//xplat/folly/lang:safe_assert",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:elf"],
 )
 
 non_fbcode_target(
@@ -4340,80 +4094,27 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_elf_cache",
-    srcs = ["debugging/symbolizer/ElfCache.cpp"],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/ElfCache.h",
-        "experimental/symbolizer/ElfCache.h",
-    ],
-    exported_deps = [
-        ":experimental_symbolizer_elf",
-        ":scope_guard",
-        "//third-party/boost:boost",
-        "//xplat/folly:conv",
-        "//xplat/folly:hash_hash",
-        "//xplat/folly:optional",
-        "//xplat/folly:portability_sys_mman",
-        "//xplat/folly/memory:reentrant_allocator",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:elf_cache"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_dwarf",
-    srcs = [
-        "debugging/symbolizer/Dwarf.cpp",
-        "debugging/symbolizer/DwarfImpl.cpp",
-        "debugging/symbolizer/DwarfLineNumberVM.cpp",
-        "debugging/symbolizer/DwarfSection.cpp",
-        "debugging/symbolizer/DwarfUtil.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/Dwarf.h",
-        "debugging/symbolizer/DwarfImpl.h",
-        "debugging/symbolizer/DwarfLineNumberVM.h",
-        "debugging/symbolizer/DwarfSection.h",
-        "debugging/symbolizer/DwarfUtil.h",
-        "experimental/symbolizer/Dwarf.h",
-        "experimental/symbolizer/DwarfImpl.h",
-        "experimental/symbolizer/DwarfLineNumberVM.h",
-        "experimental/symbolizer/DwarfSection.h",
-        "experimental/symbolizer/DwarfUtil.h",
-    ],
-    deps = [
-        ":experimental_symbolized_frame",
-        ":experimental_symbolizer_elf_cache",
-        ":function",
-        ":portability_sys_mman",
-        ":scope_guard",
-        "//third-party/boost:boost",
-        "//third-party/glog:glog",
-        "//third-party/libdwarf:dwarf",
-        "//xplat/folly:experimental_symbolizer_elf",
-        "//xplat/folly:optional",
-        "//xplat/folly:portability_unistd",
-        "//xplat/folly:range",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:dwarf"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolized_frame",
-    srcs = [
-        "debugging/symbolizer/SymbolizedFrame.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/SymbolizedFrame.h",
-        "experimental/symbolizer/SymbolizedFrame.h",
-    ],
-    deps = [
-        ":experimental_symbolizer_elf",
-        ":range",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:symbolized_frame"],
 )
 
 non_fbcode_target(
@@ -4469,67 +4170,19 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_symbolizer_detail",
-    srcs = [
-        "debugging/symbolizer/detail/Debug.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/detail/Debug.h",
-    ],
-    deps = [
-        ":portability",
-        "//xplat/third-party/linker_lib:dl",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer/detail:debug"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "experimental_symbolizer_symbolizer",
-    srcs = [
-        "debugging/symbolizer/SignalHandler.cpp",
-        "debugging/symbolizer/SymbolizePrinter.cpp",
-        "debugging/symbolizer/Symbolizer.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "debugging/symbolizer/SignalHandler.h",
-        "debugging/symbolizer/SymbolizePrinter.h",
-        "debugging/symbolizer/Symbolizer.h",
-        "experimental/symbolizer/SignalHandler.h",
-        "experimental/symbolizer/SymbolizePrinter.h",
-        "experimental/symbolizer/Symbolizer.h",
-    ],
-    deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        ":experimental_symbolizer_symbolizer_detail",
-        ":scope_guard",
-        "//third-party/glog:glog",
-        "//xplat/folly:experimental_symbolizer_detail_debug",
-        "//xplat/folly:experimental_symbolizer_dwarf",
-        "//xplat/folly:experimental_symbolizer_elf_cache",
-        "//xplat/folly:experimental_symbolizer_line_reader",
-        "//xplat/folly:experimental_symbolizer_stack_trace",
-        "//xplat/folly:fbstring",
-        "//xplat/folly:file_util",
-        "//xplat/folly:memory",
-        "//xplat/folly:optional",
-        "//xplat/folly:portability_sys_mman",
-        "//xplat/folly:portability_sys_syscall",
-        "//xplat/folly:range",
-        "//xplat/folly:scope_guard",
-        "//xplat/folly:string",
-        "//xplat/folly:synchronized",
-        "//xplat/folly/container:evicting_cache_map",
-        "//xplat/folly/container:f14_hash",
-        "//xplat/folly/lang:to_ascii",
-        "//xplat/folly/memory:sanitize_address",
-        "//xplat/folly/tracing:async_stack",
-    ],
-    exported_deps = [
-        "//xplat/folly:portability_unistd",
-    ],
+    exported_deps = ["//xplat/folly/experimental/symbolizer:symbolizer"],
 )
 
 non_fbcode_target(
@@ -4851,57 +4504,6 @@ non_fbcode_target(
         "//xplat/folly/experimental/io:async_base",
     ],
 )
-
-# xplat/third-party/libaio does not exist yet; disabling target
-# folly_xplat_library(
-#     name = "experimental_io_async_io",
-#     srcs = [
-#         "experimental/io/AsyncIO.cpp",
-#     ],
-#     public_include_directories = [
-#         "..",
-#     ],
-#     raw_headers = [
-#         "experimental/io/AsyncIO.h",
-#     ],
-#     deps = [
-#         "//third-party/boost:boost",
-#         "//third-party/glog:glog",
-#         "//xplat/third-party/libaio:aio",
-#         ":exception",
-#         ":experimental_io_async_base",
-#         ":format",
-#         ":likely",
-#         ":portability_unistd",
-#         ":string",
-#     ],
-# )
-
-# xplat/third-party/liburing does not exist yet; disabling target
-# folly_xplat_library(
-#     name = "experimental_io_io_uring",
-#     srcs = [
-#         "experimental/io/IoUring.cpp",
-#     ],
-#     public_include_directories = [
-#         "..",
-#     ],
-#     raw_headers = [
-#         "experimental/io/IoUring.h",
-#     ],
-#     deps = [
-#         "//third-party/boost:boost",
-#         "//third-party/glog:glog",
-#         "//xplat/third-party/liburing:uring",
-#         ":exception",
-#         ":experimental_io_async_base",
-#         ":format",
-#         ":likely",
-#         ":portability_unistd",
-#         ":shared_mutex",
-#         ":string",
-#     ],
-# )
 
 non_fbcode_target(
     # @shim
@@ -5306,7 +4908,6 @@ fbcode_target(
     )],
     deps = [
         ":c_portability",
-        ":cpp_attributes",
         ":utility",
         "//folly/functional:invoke",
         "//folly/lang:c_string",
@@ -5527,7 +5128,6 @@ fbcode_target(
     headers = ["Fingerprint.h"],
     deps = [
         ":portability",
-        ":utility",
         "//folly/detail:fingerprint_polynomial",
     ],
     exported_deps = [
@@ -5583,7 +5183,6 @@ fbcode_target(
     ],
     deps = [
         ":constexpr_math",
-        ":cpp_attributes",
         "//folly/container:array",
     ],
     exported_deps = [
