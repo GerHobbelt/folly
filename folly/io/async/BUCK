@@ -712,6 +712,7 @@ non_fbcode_target(
         "//xplat/folly:conv",
         "//xplat/folly:exception_string",
         "//xplat/folly:string",
+        "//xplat/folly/lang:align",
     ],
     exported_deps = [
         "fbsource//xplat/folly/io:iobuf",
@@ -1395,8 +1396,8 @@ fbcode_target(
 )
 
 fbcode_target(
-    _kind = cpp_library,
     # @autodeps-skip
+    _kind = cpp_library,
     name = "liburing",
     headers = ["Liburing.h"],
     os_deps = [(
@@ -1646,6 +1647,7 @@ fbcode_target(
         "//folly:conv",
         "//folly:exception_string",
         "//folly:string",
+        "//folly/lang:align",
     ],
     exported_deps = [
         "//folly/io:iobuf",

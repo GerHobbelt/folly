@@ -619,7 +619,7 @@ TYPED_TEST(BitsAllUintsTest, GetBitAt) {
   for (std::size_t i = 0; i != kBitSize; ++i) {
     in[1] = T{0};
     in[2] = kOnes;
-    T bit = static_cast<T>(1UL << i);
+    T bit = T(T{1} << i);
     in[1] = in[1] | bit;
     in[2] = in[2] ^ bit;
     ASSERT_TRUE(folly::get_bit_at(in, kBitSize + i)) << "i=" << i;
@@ -634,19 +634,18 @@ TYPED_TEST(BitsAllUintsTest, GetBitAtLE) {
     return;
   }
 
-  {
-    std::uint64_t in = folly::set_n_least_significant_bits(0UL, 64);
+  for (std::size_t i = 0; i != 64; ++i) {
+    auto in = ~std::uint64_t(0);
     const auto* ptr = reinterpret_cast<const T*>(&in);
-
-    for (std::size_t i = 0; i != 64; ++i) {
-      EXPECT_TRUE(folly::get_bit_at(ptr, i));
-    }
-
-    in = 0;
-    for (std::size_t i = 0; i != 64; ++i) {
-      EXPECT_FALSE(folly::get_bit_at(ptr, i));
-    }
+    EXPECT_TRUE(folly::get_bit_at(ptr, i));
   }
+
+  for (std::size_t i = 0; i != 64; ++i) {
+    auto in = std::uint64_t(0);
+    const auto* ptr = reinterpret_cast<const T*>(&in);
+    EXPECT_FALSE(folly::get_bit_at(ptr, i));
+  }
+
   {
     const std::uint8_t in[] = {0b101, 0b1110, 0, 0, 0, 0, 0, 0};
     const auto* ptr = reinterpret_cast<const T*>(in);
