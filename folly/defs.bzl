@@ -114,8 +114,8 @@ def _compute_include_directories():
     base_path = native.package_name()
     if base_path == "xplat/folly":
         return [".."]
-    thrift_path = base_path[6:]
-    return ["/".join(len(thrift_path.split("/")) * [".."])]
+    folly_path = base_path[6:]
+    return ["/".join(len(folly_path.split("/")) * [".."])]
 
 def folly_xplat_library(
         name,
@@ -175,10 +175,6 @@ def folly_xplat_library(
         }) + select({
             "DEFAULT": [],
             "wa_android//tools/buck/build_defs/monorepo:bloks_sync_live_deps": [
-                "-fexceptions",
-                "-frtti",
-            ],
-            "wa_android//tools/buck/build_defs/monorepo:live_deps": [
                 "-fexceptions",
                 "-frtti",
             ],
