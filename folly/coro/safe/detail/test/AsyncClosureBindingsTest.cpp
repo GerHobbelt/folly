@@ -26,7 +26,7 @@ using namespace folly::bindings;
 namespace folly::coro::detail {
 
 struct HasCleanup : NonCopyableNonMovable {
-  AsNoexcept<Task<>> co_cleanup(async_closure_private_t) { co_return; }
+  as_noexcept<Task<>> co_cleanup(async_closure_private_t) { co_return; }
 };
 
 constexpr capture_private_t coro_safe_detail_bindings_test_private() {
@@ -119,7 +119,7 @@ constexpr bool check_regular_args() {
   // The `MoveMe` test makes an rvalue ref from an lvalue, but this here is
   // actually passing a prvalue.  The reason we test both scenarios is that
   // it's completely fine to plumb prvalues through `async_closure`, since the
-  // resulting task will either take it by-value, or it'll be a `NowTask`.
+  // resulting task will either take it by-value, or it'll be a `now_task`.
   // Since `bound_args{}` objects are immovable, it's quite hard for a user to
   // accidentally grab a dangling ref to a prvalue this way.
   check_one<async_closure_regular_arg<int, bind_wrapper_t<int&&>>>([]() {
@@ -155,14 +155,14 @@ constexpr bool check_capture_val_to_ref() {
     //
     //   co_await async_closure(
     //       safeAsyncScope<CancelViaParent>(),
-    //       [](auto scope) -> ClosureTask<void> {
+    //       [](auto scope) -> closure_task<void> {
     //         co_await async_closure(
     //             bound_args{scope, as_capture(123)},
-    //             [](auto outerScope, auto n) -> ClosureTask<void> {
+    //             [](auto outerScope, auto n) -> closure_task<void> {
     //               outerScope.with(co_await co_current_executor).schedule(
     //                   async_closure(
     //                       bound_args{n},
-    //                       [](auto n2) -> ClosureTask<void> {
+    //                       [](auto n2) -> closure_task<void> {
     //                         ++n2;
     //                         co_return;
     //                       }));

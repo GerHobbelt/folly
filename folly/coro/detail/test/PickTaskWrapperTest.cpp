@@ -28,57 +28,58 @@ namespace folly::coro {
 
 TEST(PickTaskWrapperTest, AllTestsAreStatic) {}
 
-// (unsafe, await now) -> NowTask
+// (unsafe, await now) -> now_task
 static_assert(
     std::is_same_v<
-        NowTask<int>,
-        detail::PickTaskWrapper<
+        now_task<int>,
+        detail::pick_task_wrapper<
             int,
             safe_alias::unsafe,
             /*await now*/ true>>);
 static_assert(
     std::is_same_v<
-        NowTaskWithExecutor<int>,
-        detail::PickTaskWithExecutorWrapper<
+        now_task_with_executor<int>,
+        detail::pick_task_with_executor_wrapper<
             int,
             safe_alias::unsafe,
             /*await now*/ true>>);
 
-// (maybe_value, movable) -> ValueTask
+// (maybe_value, movable) -> value_task
 static_assert(
     std::is_same_v<
-        ValueTask<int>,
-        detail::PickTaskWrapper<
+        value_task<int>,
+        detail::pick_task_wrapper<
             int,
             safe_alias::maybe_value,
             /*await now*/ false>>);
 static_assert(
     std::is_same_v<
-        SafeTaskWithExecutor<safe_alias::maybe_value, int>,
-        detail::PickTaskWithExecutorWrapper<
+        safe_task_with_executor<safe_alias::maybe_value, int>,
+        detail::pick_task_with_executor_wrapper<
             int,
             safe_alias::maybe_value,
             /*await now*/ false>>);
 
-// (co_cleanup_safe_ref, movable, wrapper) -> AsNoexcept<CoCleanupSafeTask<>>
+// (co_cleanup_safe_ref, movable, wrapper) ->
+// as_noexcept<co_cleanup_safe_task<>>
 static_assert(
     std::is_same_v<
-        AsNoexcept<CoCleanupSafeTask<int>, terminateOnCancel>,
-        detail::PickTaskWrapper<
+        as_noexcept<co_cleanup_safe_task<int>, terminateOnCancel>,
+        detail::pick_task_wrapper<
             int,
             safe_alias::co_cleanup_safe_ref,
             /*await now*/ false,
-            detail::AsNoexceptWithCancelCfg<terminateOnCancel>>>);
+            detail::as_noexcept_with_cancel_cfg<terminateOnCancel>>>);
 static_assert(
     std::is_same_v<
-        AsNoexcept<
-            SafeTaskWithExecutor<safe_alias::co_cleanup_safe_ref, int>,
+        as_noexcept<
+            safe_task_with_executor<safe_alias::co_cleanup_safe_ref, int>,
             terminateOnCancel>,
-        detail::PickTaskWithExecutorWrapper<
+        detail::pick_task_with_executor_wrapper<
             int,
             safe_alias::co_cleanup_safe_ref,
             /*await now*/ false,
-            detail::AsNoexceptWithCancelCfg<terminateOnCancel>>>);
+            detail::as_noexcept_with_cancel_cfg<terminateOnCancel>>>);
 
 } // namespace folly::coro
 

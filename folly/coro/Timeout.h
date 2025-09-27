@@ -21,9 +21,9 @@
 #include <folly/coro/Traits.h>
 #include <folly/coro/detail/PickTaskWrapper.h>
 #include <folly/futures/Future.h>
-// `timeout(coroFutureInt())` makes a `SafeTask`
+// `timeout(coroFutureInt())` makes a `safe_task`
 #include <folly/coro/safe/SafeTask.h>
-// `timeout(memberTask())` makes a `NowTask`
+// `timeout(memberTask())` makes a `now_task`
 #include <folly/coro/safe/NowTask.h>
 
 #if FOLLY_HAS_COROUTINES
@@ -31,13 +31,15 @@
 namespace folly::coro {
 
 namespace detail {
-// This doesn't try to apply `AsNoexcept` to the output, since `timeout` is
+// This doesn't try to apply `as_noexcept` to the output, since `timeout` is
 // expected to throw, and `timeoutNoDiscard()` may either complete with a
 // stopped state, or with an error.
 template <typename SemiAwaitable, typename TimekeeperPtr>
-using TimeoutTask = PickTaskWrapper<
+using TimeoutTask = pick_task_wrapper<
     typename semi_await_try_result_t<SemiAwaitable>::element_type,
-    std::min(safe_alias_of_v<TimekeeperPtr>, safe_alias_of_v<SemiAwaitable>),
+    std::min(
+        lenient_safe_alias_of_v<TimekeeperPtr>,
+        lenient_safe_alias_of_v<SemiAwaitable>),
     must_await_immediately_v<SemiAwaitable>>;
 } // namespace detail
 
@@ -65,7 +67,7 @@ template <
     typename SemiAwaitable,
     typename Duration,
     // Templated so we can take safe pointers like `capture<Timekeeper&>` from
-    // `folly/coro/safe`, and return a `SafeTask`.
+    // `folly/coro/safe`, and return a `safe_task`.
     typename TimekeeperPtr = std::nullptr_t>
 typename detail::TimeoutTask<SemiAwaitable, TimekeeperPtr> timeout(
     SemiAwaitable semiAwaitable,

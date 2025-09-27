@@ -101,7 +101,6 @@ non_fbcode_target(
         "//xplat/folly:synchronization_call_once",
         "//xplat/folly:synchronization_micro_spin_lock",
         "//xplat/folly:synchronized",
-        "//xplat/folly:system_at_fork",
         "//xplat/folly:utility",
         "//xplat/folly/concurrency/container:atomic_grow_array",
         "//xplat/folly/container:foreach",
@@ -109,6 +108,7 @@ non_fbcode_target(
         "//xplat/folly/detail:unique_instance",
         "//xplat/folly/lang:exception",
         "//xplat/folly/memory:sanitize_leak",
+        "//xplat/folly/system:at_fork",
     ],
     exported_deps = [
         "//xplat/folly/memory:malloc",
@@ -140,7 +140,7 @@ non_fbcode_target(
     ],
     deps = [
         "//xplat/folly:portability_gflags",
-        "//xplat/folly:system_pid",
+        "//xplat/folly/system:pid",
     ],
     exported_deps = [
         "//xplat/folly:glog",
@@ -151,11 +151,11 @@ non_fbcode_target(
         "//xplat/folly:portability_unistd",
         "//xplat/folly:scope_guard",
         "//xplat/folly:synchronization_atomic_struct",
-        "//xplat/folly:system_thread_id",
         "//xplat/folly/concurrency:cache_locality",
         "//xplat/folly/detail:futex",
         "//xplat/folly/memory:mallctl_helper",
         "//xplat/folly/memory:malloc",
+        "//xplat/folly/system:thread_id",
     ],
 )
 
@@ -488,8 +488,8 @@ non_fbcode_target(
     ],
     deps = [
         "//xplat/folly:conv",
-        "//xplat/folly:experimental_test_util",
-        "//xplat/folly:system_pid",
+        "//xplat/folly/system:pid",
+        "//xplat/folly/testing:test_util",
     ] + select({
         "DEFAULT": [],
         "ovr_config//os:linux": ["//xplat/folly:subprocess"],

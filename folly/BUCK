@@ -297,70 +297,6 @@ non_fbcode_target(
 
 non_fbcode_target(
     _kind = folly_xplat_library,
-    name = "experimental_test_util",
-    srcs = [
-        "testing/TestUtil.cpp",
-    ],
-    compiler_flags = select({
-        "DEFAULT": [],
-        "ovr_config//compiler:clang": [
-            "-Wno-narrowing",
-        ],
-    }),
-    fbandroid_deps = [
-        "//xplat/third-party/linker_lib:atomic",
-    ],
-    feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "testing/TestUtil.h",
-    ],
-    deps = [
-        "//third-party/boost:boost",
-    ],
-    exported_deps = [
-        "//third-party/boost:boost_regex",
-        "//third-party/glog:glog",
-        "//xplat/folly:exception",
-        "//xplat/folly:experimental_io_fs_util",
-        "//xplat/folly:file",
-        "//xplat/folly:file_util",
-        "//xplat/folly:memory",
-        "//xplat/folly:portability_fcntl",
-        "//xplat/folly:range",
-        "//xplat/folly:scope_guard",
-        "//xplat/folly:string",
-        "//xplat/folly/ext:test_ext",
-        "//xplat/folly/ext/buck2:test_ext",
-    ],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "testing_test_util",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = [
-        ":experimental_test_util",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_aux_vector",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:aux_vector"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_thread_id",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:thread_id"],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_library,
     name = "thread_local",
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
@@ -513,16 +449,6 @@ non_fbcode_target(
     ],
 )
 
-# Legacy alias
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "inline_executor",
-    feature = triage_InfrastructureSupermoduleOptou,
-    deps = [
-        "//xplat/folly/executors:inline_executor",
-    ],
-)
-
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "subprocess",
@@ -552,11 +478,11 @@ non_fbcode_target(
         ":portability_unistd",
         ":scope_guard",
         ":string",
-        ":system_at_fork",
-        ":system_shell",
         "//third-party/boost:boost_range",
         "//xplat/folly:portability_dirent",
         "//xplat/folly/lang:assume",
+        "//xplat/folly/system:at_fork",
+        "//xplat/folly/system:shell",
     ],
     exported_deps = [
         ":exception",
@@ -2243,10 +2169,10 @@ non_fbcode_target(
         "//xplat/folly:synchronization_lock",
         "//xplat/folly:synchronization_relaxed_atomic",
         "//xplat/folly:synchronization_sanitize_thread",
-        "//xplat/folly:system_thread_id",
         "//xplat/folly/chrono:hardware",
         "//xplat/folly/concurrency:cache_locality",
         "//xplat/folly/detail:futex",
+        "//xplat/folly/system:thread_id",
     ],
 )
 
@@ -2483,8 +2409,8 @@ non_fbcode_target(
         "//xplat/folly:synchronization_saturating_semaphore",
     ],
     exported_deps = [
-        "//xplat/folly:system_thread_name",
         "//xplat/folly/concurrency:cache_locality",
+        "//xplat/folly/system:thread_name",
     ],
 )
 
@@ -2703,10 +2629,10 @@ non_fbcode_target(
         "//xplat/folly:indestructible",
         "//xplat/folly:optional",
         "//xplat/folly:synchronization_detail_rcu-detail",
-        "//xplat/folly:system_at_fork",
         "//xplat/folly/detail:static_singleton_manager",
         "//xplat/folly/detail:turn_sequencer",
         "//xplat/folly/executors:queued_immediate_executor",
+        "//xplat/folly/system:at_fork",
     ],
 )
 
@@ -2874,14 +2800,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_thread_name",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:thread_name"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "varint",
     feature = triage_InfrastructureSupermoduleOptou,
@@ -2894,16 +2812,6 @@ non_fbcode_target(
         ":likely",
         ":portability",
         ":range",
-    ],
-)
-
-# Legacy alias
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "farmhash",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = [
-        ":external_farmhash_farmhash",
     ],
 )
 
@@ -2975,7 +2883,7 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":portability",
-        ":system_aux_vector",
+        "//xplat/folly/system:aux_vector",
     ],
 )
 
@@ -2997,7 +2905,7 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":portability",
-        ":system_aux_vector",
+        "//xplat/folly/system:aux_vector",
     ],
 )
 
@@ -3114,8 +3022,6 @@ non_fbcode_target(
         "//xplat/folly:synchronization_micro_spin_lock",
         "//xplat/folly:synchronization_pico_spin_lock",
         "//xplat/folly:synchronization_small_locks",
-        "//xplat/folly:system_thread_id",
-        "//xplat/folly:system_thread_name",
         "//xplat/folly:thread_local",
         "//xplat/folly:traits",
         "//xplat/folly:unit",
@@ -3137,6 +3043,8 @@ non_fbcode_target(
         "//xplat/folly/lang:uncaught_exceptions",
         "//xplat/folly/memory:arena",
         "//xplat/folly/memory:malloc",
+        "//xplat/folly/system:thread_id",
+        "//xplat/folly/system:thread_name",
     ],
 )
 
@@ -3263,8 +3171,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -3287,6 +3193,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         "//xplat/folly:c_portability",
         "//xplat/folly:chrono",
         "//xplat/folly:config",
@@ -3448,8 +3356,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -3472,6 +3378,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         ":extended_light",
         ":futures_barrier",
         ":futures_core",
@@ -3631,8 +3539,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -3656,6 +3562,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         "//third-party/boost:boost_filesystem",
         "//third-party/boost:boost_system",
         "//xplat/folly:discriminated_ptr",
@@ -3800,8 +3708,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -3824,6 +3730,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         "//third-party/boost:boost",
         "//third-party/boost:boost_regex",
         "//third-party/googletest:gmock_main",
@@ -3910,8 +3818,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -3934,6 +3840,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         "//third-party/boost:boost",
         "//third-party/boost:boost_regex",
         "//third-party/googletest:gmock_main",
@@ -4065,8 +3973,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:synchronization_micro_spin_lock",
         "fbsource//xplat/folly:synchronization_pico_spin_lock",
         "fbsource//xplat/folly:synchronization_small_locks",
-        "fbsource//xplat/folly:system_thread_id",
-        "fbsource//xplat/folly:system_thread_name",
         "fbsource//xplat/folly:thread_local",
         "fbsource//xplat/folly:traits",
         "fbsource//xplat/folly:unit",
@@ -4089,6 +3995,8 @@ non_fbcode_target(
         "fbsource//xplat/folly/lang:uncaught_exceptions",
         "fbsource//xplat/folly/memory:arena",
         "fbsource//xplat/folly/memory:malloc",
+        "fbsource//xplat/folly/system:thread_id",
+        "fbsource//xplat/folly/system:thread_name",
         "//third-party/boost:boost",
         "//third-party/boost:boost_system",
         "//third-party/boost:boost_thread",
@@ -4359,14 +4267,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_memory_mapping",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:memory_mapping"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "experimental_io_huge_pages",
     feature = triage_InfrastructureSupermoduleOptou,
@@ -4398,71 +4298,33 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_base",
     apple_sdks = DEFAULT_APPLE_SDKS,
-    raw_headers = [
-        "gen/Base.h",
-        "gen/Base-inl.h",
-    ],
-    deps = [
-        "//third-party/range-v3:range-v3",
-        "//xplat/folly:conv",
-        "//xplat/folly:gen_core",
-        "//xplat/folly:optional",
-        "//xplat/folly:portability",
-        "//xplat/folly:range",
-        "//xplat/folly:utility",
-        "//xplat/folly/container:access",
-        "//xplat/folly/container:f14_hash",
-        "//xplat/folly/functional:invoke",
-    ],
+    exported_deps = ["//xplat/folly/gen:base"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_file",
-    raw_headers = [
-        "gen/File.h",
-        "gen/File-inl.h",
-    ],
-    deps = [
-        ":exception",
-        ":file",
-        ":gen_base",
-        ":gen_string",
-        ":io_iobuf",
-    ],
+    exported_deps = ["//xplat/folly/gen:file"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_string",
-    raw_headers = [
-        "gen/String.h",
-        "gen/String-inl.h",
-    ],
-    exported_deps = [
-        ":conv",
-        ":gen_base",
-        ":io_iobuf",
-        ":portability",
-        ":range",
-        ":string",
-    ],
+    exported_deps = ["//xplat/folly/gen:string"],
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_core",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "gen/Core.h",
-        "gen/Core-inl.h",
-    ],
-    deps = [
-        ":portability",
-    ],
+    exported_deps = ["//xplat/folly/gen:core"],
 )
 
 non_fbcode_target(
@@ -4692,15 +4554,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_istream",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "gen/IStream.h",
-    ],
-    deps = [
-        ":gen_core",
-    ],
+    exported_deps = ["//xplat/folly/gen:istream"],
 )
 
 non_fbcode_target(
@@ -4801,14 +4659,6 @@ non_fbcode_target(
     name = "portability_gtest_prod",
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = ["portability/GTestProd.h"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_at_fork",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:at_fork"],
 )
 
 non_fbcode_target(
@@ -5119,14 +4969,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_pid",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:pid"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "logging_init",
     srcs = [
@@ -5212,9 +5054,9 @@ non_fbcode_target(
         ":portability_time",
         ":portability_unistd",
         ":string",
-        ":system_at_fork",
-        ":system_thread_id",
-        ":system_thread_name",
+        "//xplat/folly/system:at_fork",
+        "//xplat/folly/system:thread_id",
+        "//xplat/folly/system:thread_name",
     ],
     exported_deps = [
         ":c_portability",
@@ -5291,22 +5133,6 @@ non_fbcode_target(
     name = "experimental_env_util",
     feature = triage_InfrastructureSupermoduleOptou,
     exported_deps = ["//xplat/folly/system:env_util"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_shell",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:shell"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "system_hardware_concurrency",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/system:hardware_concurrency"],
 )
 
 non_fbcode_target(
@@ -5570,16 +5396,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_combine",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "gen/Combine.h",
-        "gen/Combine-inl.h",
-    ],
-    deps = [
-        ":gen_base",
-    ],
+    exported_deps = ["//xplat/folly/gen:combine"],
 )
 
 non_fbcode_target(
@@ -5595,19 +5416,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_parallel",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "gen/Parallel.h",
-        "gen/Parallel-inl.h",
-    ],
-    deps = [
-        ":experimental_event_count",
-        ":gen_base",
-        ":mpmc_queue",
-        ":scope_guard",
-    ],
+    exported_deps = ["//xplat/folly/gen:parallel"],
 )
 
 non_fbcode_target(
@@ -5748,20 +5561,11 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
+    # @shim
     _kind = folly_xplat_library,
     name = "gen_parallel_map",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "gen/ParallelMap.h",
-        "gen/ParallelMap-inl.h",
-    ],
-    deps = [
-        ":expected",
-        ":experimental_event_count",
-        ":gen_core",
-        ":mpmc_pipeline",
-        "//xplat/folly/functional:invoke",
-    ],
+    exported_deps = ["//xplat/folly/gen:parallel_map"],
 )
 
 non_fbcode_target(
@@ -6056,7 +5860,7 @@ non_fbcode_target(
         ":likely",
         ":safe_assert",
         ":singleton",
-        ":system_thread_name",
+        "//xplat/folly/system:thread_name",
     ],
     exported_deps = [
         ":chrono",

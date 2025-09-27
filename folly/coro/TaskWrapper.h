@@ -45,7 +45,7 @@
 /// ### WARNING: Do not blindly forward more APIs in `TaskWrapper.h`!
 ///
 /// Several existing wrappers are immediately-awaitable (`AwaitImmediately.h`).
-/// For those tasks (e.g. `NowTask`), API forwarding is risky:
+/// For those tasks (e.g. `now_task`), API forwarding is risky:
 ///   - Do NOT forward `semi()`, `start*()`, `unwrap()`, or other methods, or
 ///     CPOs that take the awaitable by-reference.  All of those make it
 ///     trivial to accidentally break the immediately-awaitable invariant, and
@@ -272,8 +272,9 @@ class TaskWrapperCrtp {
       must_await_immediately_t<typename Cfg::InnerTaskT>;
   using folly_private_noexcept_awaitable_t =
       noexcept_awaitable_t<typename Cfg::InnerTaskT>;
+  template <safe_alias Default>
   using folly_private_safe_alias_t =
-      safe_alias_of<folly_private_task_wrapper_inner_t>;
+      safe_alias_of<folly_private_task_wrapper_inner_t, Default>;
 
  private:
   using Inner = folly_private_task_wrapper_inner_t;
@@ -381,13 +382,13 @@ class TaskWithExecutorWrapperCrtp {
   // we still need to wrap the awaitable on that code path.
   //
   // NB: Passing by-&& here looks like it could compromise the safety of
-  // immediately-awaitable coros (`NowTask`, `NowTaskWithExecutor`).  With
+  // immediately-awaitable coros (`now_task`, `now_task_with_executor`).  With
   // by-value, `BlockingWaitTest.AwaitNowTaskWithExecutor` would not build.
   //
   // Supporting pass-by-value would require fixing a LOT of plumbing.
   //   - `WithAsyncStack.h` calls `is_tag_invocable_v`, which would fail on
-  //     `NowTaskWithExecutor` if this is by-value, since the implementation of
-  //     `is_tag_invocable_v` presents all args by-&&.
+  //     `now_task_with_executor` if this is by-value, since the implementation
+  //     of `is_tag_invocable_v` presents all args by-&&.
   //   - `CommutativeWrapperAwaitable` and `StackAwareViaIfAsyncAwaiter`,
   //     among others, also assume that `co_withAsyncStack` takes by-ref.
   //
@@ -413,7 +414,8 @@ class TaskWithExecutorWrapperCrtp {
   using folly_private_must_await_immediately_t =
       must_await_immediately_t<Inner>;
   using folly_private_task_without_executor_t = typename Cfg::WrapperTaskT;
-  using folly_private_safe_alias_t = safe_alias_of<Inner>;
+  template <safe_alias Default>
+  using folly_private_safe_alias_t = safe_alias_of<Inner, Default>;
 };
 
 } // namespace folly::coro

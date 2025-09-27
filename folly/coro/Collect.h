@@ -27,9 +27,9 @@
 #include <folly/coro/ViaIfAsync.h>
 #include <folly/coro/detail/PickTaskWrapper.h>
 #include <folly/coro/detail/Traits.h>
-// `collectAll(coroFutureInt())` makes a `SafeTask`
+// `collectAll(coroFutureInt())` makes a `safe_task`
 #include <folly/coro/safe/SafeTask.h>
-// `collectAll(memberTask())` makes a `NowTask`
+// `collectAll(memberTask())` makes a `now_task`
 #include <folly/coro/safe/NowTask.h>
 
 #include <functional>
@@ -85,19 +85,21 @@ class MoveRange {
   Container& container_;
 };
 
-// Future: Apply `AsNoexcept` to the task if the entire collection process is
+// Future: Apply `as_noexcept` to the task if the entire collection process is
 // noexcept-awaitable.  This would require reworking the implementation a bit,
-// since e.g. `CancellationToken::merge` can throw `bad_alloc`.
+// since e.g. `cancellation_token_merge` can throw `bad_alloc`.
 template <typename... SemiAwaitables>
-using CollectAllTask = PickTaskWrapper<
+using CollectAllTask = pick_task_wrapper<
     std::tuple<collect_all_component_t<remove_cvref_t<SemiAwaitables>>...>,
-    std::min({safe_alias::maybe_value, safe_alias_of_v<SemiAwaitables>...}),
+    std::min(
+        {safe_alias::maybe_value, lenient_safe_alias_of_v<SemiAwaitables>...}),
     (must_await_immediately_v<SemiAwaitables> || ...)>;
 
 template <typename... SemiAwaitables>
-using CollectAllTryTask = PickTaskWrapper<
+using CollectAllTryTask = pick_task_wrapper<
     std::tuple<collect_all_try_component_t<remove_cvref_t<SemiAwaitables>>...>,
-    std::min({safe_alias::maybe_value, safe_alias_of_v<SemiAwaitables>...}),
+    std::min(
+        {safe_alias::maybe_value, lenient_safe_alias_of_v<SemiAwaitables>...}),
     (must_await_immediately_v<SemiAwaitables> || ...)>;
 
 } // namespace detail
@@ -142,7 +144,7 @@ using CollectAllTryTask = PickTaskWrapper<
 //       co_await folly::coro::collectAll(doSomething(), doSomethingElse());
 //
 template <typename... SemiAwaitables>
-// Do NOT take awaitables by-reference, that would break `NowTask` safety.
+// Do NOT take awaitables by-reference, that would break `now_task` safety.
 auto collectAll(SemiAwaitables... awaitables)
     -> detail::CollectAllTask<SemiAwaitables...>;
 

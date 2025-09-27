@@ -53,11 +53,11 @@ non_fbcode_target(
         "//third-party/glog:glog",
         "//xplat/folly:executor",
         "//xplat/folly:scope_guard",
-        "//xplat/folly:system_thread_name",
         "//xplat/folly/concurrency:unbounded_queue",
         "//xplat/folly/container:f14_hash",
         "//xplat/folly/executors/thread_factory:named_thread_factory",
         "//xplat/folly/executors/thread_factory:thread_factory",
+        "//xplat/folly/system:thread_name",
     ],
 )
 
@@ -79,9 +79,9 @@ non_fbcode_target(
         "//xplat/folly:random",
         "//xplat/folly:range",
         "//xplat/folly:string",
-        "//xplat/folly:system_thread_name",
         "//xplat/folly/container:f14_hash",
         "//xplat/folly/container:intrusive_heap",
+        "//xplat/folly/system:thread_name",
     ],
 )
 
@@ -105,7 +105,7 @@ non_fbcode_target(
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = ["IOThreadPoolDeadlockDetectorObserver.h"],
     deps = [
-        "//xplat/folly:system_thread_id",
+        "//xplat/folly/system:thread_id",
     ],
     exported_deps = [
         "//xplat/folly:singleton",
@@ -252,11 +252,11 @@ non_fbcode_target(
         "//xplat/folly:function",
         "//xplat/folly:shared_mutex",
         "//xplat/folly:singleton",
-        "//xplat/folly:system_hardware_concurrency",
         "//xplat/folly/detail:async_trace",
         "//xplat/folly/executors:cpu_thread_pool_executor",
         "//xplat/folly/executors:inline_executor",
         "//xplat/folly/executors:io_thread_pool_executor",
+        "//xplat/folly/system:hardware_concurrency",
     ],
     exported_deps = [
         "//xplat/folly:executor",
@@ -592,7 +592,7 @@ non_fbcode_target(
     deps = [
         "//third-party/glog:glog",
         "//xplat/folly:function",
-        "//xplat/folly:system_thread_name",
+        "//xplat/folly/system:thread_name",
     ],
 )
 

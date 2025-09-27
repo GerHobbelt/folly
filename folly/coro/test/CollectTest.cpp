@@ -56,54 +56,54 @@ template <typename Fn, typename In, typename Out>
 struct SafeTaskTypeAssertions {
   static_assert(
       std::is_same_v<
-          decltype(Fn()(FOLLY_DECLVAL(NowTask<In>), FOLLY_DECLVAL(Task<In>))),
-          NowTask<std::tuple<Out, Out>>>);
+          decltype(Fn()(FOLLY_DECLVAL(now_task<In>), FOLLY_DECLVAL(Task<In>))),
+          now_task<std::tuple<Out, Out>>>);
   static_assert(
       std::is_same_v<
-          decltype(Fn()(FOLLY_DECLVAL(Task<In>), FOLLY_DECLVAL(NowTask<In>))),
-          NowTask<std::tuple<Out, Out>>>);
+          decltype(Fn()(FOLLY_DECLVAL(Task<In>), FOLLY_DECLVAL(now_task<In>))),
+          now_task<std::tuple<Out, Out>>>);
   static_assert(std::is_same_v<
                 decltype(Fn()(
-                    FOLLY_DECLVAL(NowTask<In>), FOLLY_DECLVAL(NowTask<In>))),
-                NowTask<std::tuple<Out, Out>>>);
+                    FOLLY_DECLVAL(now_task<In>), FOLLY_DECLVAL(now_task<In>))),
+                now_task<std::tuple<Out, Out>>>);
 
-  // collectAll(NowTask) -> NowTask
+  // collectAll(now_task) -> now_task
   static_assert(std::is_same_v<
-                NowTask<std::tuple<Out>>,
-                decltype(Fn()(FOLLY_DECLVAL(NowTask<In>)))>);
+                now_task<std::tuple<Out>>,
+                decltype(Fn()(FOLLY_DECLVAL(now_task<In>)))>);
   static_assert(std::is_same_v<
-                NowTask<std::tuple<Out>>,
-                decltype(Fn()(FOLLY_DECLVAL(NowTaskWithExecutor<In>)))>);
+                now_task<std::tuple<Out>>,
+                decltype(Fn()(FOLLY_DECLVAL(now_task_with_executor<In>)))>);
 
-  // collectAll(ValueTask or coro::Future) -> ValueTask
+  // collectAll(value_task or coro::Future) -> value_task
   static_assert(std::is_same_v<
-                ValueTask<std::tuple<Out>>,
-                decltype(Fn()(FOLLY_DECLVAL(ValueTask<In>)))>);
+                value_task<std::tuple<Out>>,
+                decltype(Fn()(FOLLY_DECLVAL(value_task<In>)))>);
   static_assert(std::is_same_v<
-                ValueTask<std::tuple<Out>>,
+                value_task<std::tuple<Out>>,
                 decltype(Fn()(FOLLY_DECLVAL(
-                    SafeTaskWithExecutor<safe_alias::maybe_value, In>)))>);
+                    safe_task_with_executor<safe_alias::maybe_value, In>)))>);
   static_assert(std::is_same_v<
-                ValueTask<std::tuple<Out>>,
+                value_task<std::tuple<Out>>,
                 decltype(Fn()(FOLLY_DECLVAL(coro::Future<In>)))>);
 
   // collectAll: returns the "least safe" wrapper
   static_assert(
       std::is_same_v<
-          NowTask<std::tuple<Out, Out>>,
+          now_task<std::tuple<Out, Out>>,
           decltype(Fn()(
-              FOLLY_DECLVAL(NowTask<In>), FOLLY_DECLVAL(ValueTask<In>)))>);
+              FOLLY_DECLVAL(now_task<In>), FOLLY_DECLVAL(value_task<In>)))>);
   static_assert(std::is_same_v<
                 Task<std::tuple<Out, Out>>,
                 decltype(Fn()(
-                    FOLLY_DECLVAL(Task<In>), FOLLY_DECLVAL(ValueTask<In>)))>);
+                    FOLLY_DECLVAL(Task<In>), FOLLY_DECLVAL(value_task<In>)))>);
   static_assert(
       std::is_same_v<
-          NowTask<std::tuple<Out, Out, Out>>,
+          now_task<std::tuple<Out, Out, Out>>,
           decltype(Fn()(
               FOLLY_DECLVAL(Task<In>),
-              FOLLY_DECLVAL(NowTask<In>),
-              FOLLY_DECLVAL(ValueTask<In>)))>);
+              FOLLY_DECLVAL(now_task<In>),
+              FOLLY_DECLVAL(value_task<In>)))>);
 };
 namespace {
 [[maybe_unused]] struct SafeTaskTypeAssertions<CollectAll, int, int>
@@ -124,8 +124,8 @@ class CollectAllTest : public testing::Test {};
 
 CO_TEST_F(CollectAllTest, NowTask) {
   auto [a, b] = co_await folly::coro::collectAll(
-      []() -> folly::coro::NowTask<int> { co_return 3; }(),
-      []() -> folly::coro::NowTask<int> { co_return 7; }());
+      []() -> folly::coro::now_task<int> { co_return 3; }(),
+      []() -> folly::coro::now_task<int> { co_return 7; }());
   EXPECT_EQ(3, a);
   EXPECT_EQ(7, b);
 }
@@ -493,8 +493,8 @@ class CollectAllTryTest : public testing::Test {};
 
 CO_TEST_F(CollectAllTryTest, NowTask) {
   auto [a, b] = co_await folly::coro::collectAllTry(
-      []() -> folly::coro::NowTask<void> { co_return; }(),
-      []() -> folly::coro::NowTask<int> {
+      []() -> folly::coro::now_task<void> { co_return; }(),
+      []() -> folly::coro::now_task<int> {
         if (false) {
           co_return 42;
         }

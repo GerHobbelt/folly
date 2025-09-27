@@ -91,7 +91,7 @@ namespace folly::coro {
 class AsyncObject;
 class AsyncScopeSlotObject;
 template <typename, size_t>
-class SafeAsyncScopeContextProxy;
+class safe_async_scope_context_proxy;
 template <typename>
 class AsyncObjectNonSlotPtr;
 } // namespace folly::coro
@@ -212,7 +212,7 @@ struct async_closure_scope_self_ref_hack {
   friend decltype(auto) async_closure_bind_inner_coro_arg(
       capture_private_t, Bs&, auto&);
   template <typename, size_t>
-  friend class folly::coro::SafeAsyncScopeContextProxy;
+  friend class folly::coro::safe_async_scope_context_proxy;
   friend class folly::coro::AsyncScopeSlotObject;
   // The innards are `protected`, since `transform_binding` lets this be
   // supplied from outside the closure machinery.  Any new client being
@@ -498,9 +498,11 @@ auto vtag_safety_of_async_closure_arg() {
     static_assert(!std::is_reference_v<CT>);
     // Stored captures are as safe as the type being stored.  For example, when
     // a closure stores a `BackgroundTask<Safety, T>`, it cannot be safer than
-    // `Safety`.  We don't use `safe_alias_of_v` here because `AsyncObject.h`
-    // specializes `capture_safety_impl_v`.
-    return vtag<capture_safety_impl_v<CT>>;
+    // `Safety`.
+    //
+    // While this replicates `lenient_safe_alias_of_v` logic, we don't directly
+    // use it here, since `AsyncObject.h` specializes `capture_safety_impl_v`.
+    return vtag<capture_safety_impl_v<CT, safe_alias::maybe_value>>;
   } else if constexpr ( //
       is_instantiation_of_v<async_closure_scope_self_ref_hack, T>) {
     // This is a closure made by `spawn_self_closure()` et al. It must:
@@ -513,7 +515,8 @@ auto vtag_safety_of_async_closure_arg() {
     if constexpr (ParentViewOfSafety) {
       return vtag<>;
     } else {
-      constexpr auto storage_safety = safe_alias_of_v<typename T::storage_type>;
+      constexpr auto storage_safety =
+          lenient_safe_alias_of_v<typename T::storage_type>;
       // In current usage, ref_hack can only contain `co_cleanup_capture<V&>`.
       static_assert(storage_safety == safe_alias::shared_cleanup);
       return vtag<storage_safety>;
@@ -521,7 +524,7 @@ auto vtag_safety_of_async_closure_arg() {
   } else if constexpr (is_any_capture<T>) {
     // "pass capture ref": Output of the `to_capture_ref` branch.
     static_assert(std::is_reference_v<typename T::capture_type>);
-    return vtag<safe_alias_of_v<T>>;
+    return vtag<lenient_safe_alias_of_v<T>>;
   } else if constexpr (std::is_same_v<capture_ref_measurement_stub, T>) {
     if constexpr (ParentViewOfSafety) {
       // Only allow capture-by-reference in `async_now_closure`s
@@ -534,7 +537,7 @@ auto vtag_safety_of_async_closure_arg() {
   } else {
     // "regular arg": A non-`capture` passed via forwarding reference.
     static_assert(is_instantiation_of_v<async_closure_regular_arg, T>);
-    return vtag<safe_alias_of_v<typename T::storage_type>>;
+    return vtag<lenient_safe_alias_of_v<typename T::storage_type>>;
   }
 }
 
@@ -549,7 +552,7 @@ auto vtag_safety_of_async_closure_arg() {
 // The doc in `scheduleScopeClosure()` justifies why our first call to this
 // function includes `ref_hack` args in the measurement (we want the
 // closure's own args downgraded to `after_cleanup_ref` safety), but not in
-// the second (we don't want the emitted `SafeTask` to be knocked down to
+// the second (we don't want the emitted `safe_task` to be knocked down to
 // `shared_cleanup` safety, since that would make it unschedulable).
 template <bool ParentViewOfSafety, typename TransformedBindingList>
 constexpr auto vtag_safety_of_async_closure_args() {
@@ -596,7 +599,7 @@ struct async_closure_invoke_member_bindings {
         // `scheduleScopeClosure` & `scheduleSelfClosure` give non-owning
         // pointers.  NB: This covers `SlotLimitedObjectPtr`.
         is_instantiation_of_v<async_closure_scope_self_ref_hack, T>;
-    // Invoking a `MemberTask` requires `force_outer_coro` iff the first arg
+    // Invoking a `member_task` requires `force_outer_coro` iff the first arg
     // is an owning capture.
     //
     // NB: Both implicit & explicit `as_capture()`s are assumed to be owning,
@@ -607,7 +610,7 @@ struct async_closure_invoke_member_bindings {
     // their member function `static` instead.
     static_assert(
         Cfg.force_outer_coro || !Cfg.is_invoke_member || arg0_is_non_owning_ptr,
-        "It looks like you want the `MemberTask` closure to own the object "
+        "It looks like you want the `member_task` closure to own the object "
         "instance. Use `async_now_closure(bound_args{&obj}, fn)` if that "
         "applies. The next best approach is to make your task `static`, "
         "with its first arg `auto self`. If that's not viable, then use "
@@ -686,7 +689,7 @@ constexpr auto async_closure_safeties_and_bindings(BoundArgs&& bargs) {
   // reuse this type list for the returned
   // `vtag_safety_of_async_closure_args`.  That vtag is used by
   // `async_closure` to compute the safety level for the resulting
-  // `SafeTask`.  This safety must NOT be increased by reference upgrades --
+  // `safe_task`.  This safety must NOT be increased by reference upgrades --
   // a reference's safety is only upgraded inside the child closure, but the
   // original safety applies in the parent closure, which is where the
   // returned `vtag` is consumed.
@@ -733,7 +736,7 @@ constexpr auto async_closure_safeties_and_bindings(BoundArgs&& bargs) {
   //
   //     To see that these downgrades are the correct behavior, imagine a chain
   //     of closures, each calling `spawn_self_closure()` to make the next.
-  //     `SafeAsyncScope` awaits these concurrently, so they must not take
+  //     `safe_async_scope` awaits these concurrently, so they must not take
   //     dependencies on each other's owned captures.
   constexpr auto internal_arg_min_safety = vtag_least_safe_alias(
       vtag_safety_of_async_closure_args<
@@ -742,10 +745,10 @@ constexpr auto async_closure_safeties_and_bindings(BoundArgs&& bargs) {
 
   // Compute the `after_cleanup_` downgrade/upgrade behavior for the closure.
   // Two possible scenarios:
-  //  - An `async_closure` takes a `SafeTask` and emits a `SafeTask`.  Then
+  //  - An `async_closure` takes a `safe_task` and emits a `safe_task`.  Then
   //    we'll have `==` iff we got a `co_cleanup_capture` ref from a parent.
   //  - An `async_closure` taking an unconstrained task (may have by-ref
-  //    args, ref captures), and emitting a `NowTask`.  In this case, the arg
+  //    args, ref captures), and emitting a `now_task`.  In this case, the arg
   //    safety doesn't actually matter -- the caller must always
   //    `force_shared_cleanup` simply because the lambda callable might
   //    capture a `co_cleanup` ref inside it.
