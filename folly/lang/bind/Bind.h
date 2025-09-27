@@ -87,8 +87,12 @@ enum class category_t {
   unset = 0,
   ref, // Follows reference category of the input, i.e. `InputT&&`.
   value, // Copies or moves, depending on input ref type.
-  copy, // Like `value`, but fails on rvalue input.
-  move // Like `value`, but fails on lvalue input.
+  // `bind_to_storage_policy`: Like `value`, but fails on rvalue input.
+  // `bind_as_argument`: Callee gets `folly::copy()` as an argument.
+  copy,
+  // `bind_to_storage_policy`: Like `value`, but fails on lvalue input.
+  // `bind_as_argument`: Callee gets the rvalue ref as an argument.
+  move
 };
 enum class constness_t {
   // The policy decides.  The standard storage & argument-binding policies use
@@ -384,6 +388,16 @@ using mut_ref_bind_info = decltype([](auto bi) {
   return bi;
 });
 
+using move_bind_info = decltype([](auto bi) {
+  bi.category = ext::category_t::move;
+  return bi;
+});
+
+using copy_bind_info = decltype([](auto bi) {
+  bi.category = ext::category_t::copy;
+  return bi;
+});
+
 } // namespace detail
 
 // `bind::in_place` and `bind::in_place_with` construct non-movable,
@@ -416,7 +430,7 @@ template <typename... Args>
 constexpr auto in_place_with(
     auto make_fn, Args&&... args [[clang::lifetimebound]]) {
   return detail::in_place_fn_args<
-      std::invoke_result_t<decltype(make_fn), Args&&...>,
+      decltype(make_fn(FOLLY_DECLVAL(Args&&)...)),
       decltype(make_fn),
       Args...>{std::move(make_fn), static_cast<Args&&>(args)...};
 }
@@ -479,9 +493,47 @@ struct mut_ref : ext::merge_update_args<detail::mut_ref_bind_info, Ts...> {
 template <typename... Ts>
 mut_ref(Ts&&...) -> mut_ref<ext::deduce_args_t<Ts>...>;
 
-// Future: Add `copied()` and `moved()` modifiers so the user can ensure
-// pass-by-value with copy-, or move-copy semantics.  This enforcement already
-// exists in `bind_to_storage_policy` and `category_t`.
+// `bind::copy` & `bind::move` -- see `category_t` for the behaviors in brief
+//
+// For APIs that use `bind::` modifiers to pass arguments (`safe_closure`),
+// these pick between passing an rvalue ref into the callee, or passing a
+// decay-copied prvalue (using `folly::copy`).
+//
+// For APIs that use `bind::` modifiers to store the inputs (`async_closure`
+// uses `bind_to_storage_policy`, e.g.), these verbs aren't very useful --
+// they're equivalent to the default store-by-value, plus a static assert.
+
+template <typename... Ts>
+struct move : ext::merge_update_args<detail::move_bind_info, Ts...> {
+  using ext::merge_update_args<detail::move_bind_info, Ts...>::
+      merge_update_args;
+};
+template <typename... Ts>
+move(Ts&&...) -> move<ext::deduce_args_t<Ts>...>;
+
+template <typename... Ts>
+struct copy : ext::merge_update_args<detail::copy_bind_info, Ts...> {
+  using ext::merge_update_args<detail::copy_bind_info, Ts...>::
+      merge_update_args;
+};
+template <typename... Ts>
+copy(Ts&&...) -> copy<ext::deduce_args_t<Ts>...>;
+
+namespace ext::detail { // Common detail for `AsArgument.h` and `ToStorage.h`
+// Similar to `std::as_const`, but only computes the type, and works on
+// rvalue references.
+//
+// Future: This **might** compile faster with a family of explicit
+// specializations, see e.g. `folly::like_t`'s implementation.
+template <typename T>
+using add_const_inside_ref_t = std::conditional_t<
+    std::is_rvalue_reference_v<T>,
+    typename std::add_const<std::remove_reference_t<T>>::type&&,
+    std::conditional_t<
+        std::is_lvalue_reference_v<T>,
+        typename std::add_const<std::remove_reference_t<T>>::type&,
+        typename std::add_const<std::remove_reference_t<T>>::type>>;
+} // namespace ext::detail
 
 } // namespace folly::bind
 

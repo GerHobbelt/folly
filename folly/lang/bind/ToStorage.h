@@ -52,33 +52,23 @@ template <auto BI, typename BindingType>
 // Formulated as a constraint to prevent object slicing
   requires std::same_as<decltype(BI), bind_info_t>
 class bind_to_storage_policy<binding_t<BI, BindingType>> {
+  // If `BindingType` is incomplete, it means we likely can't see the relevant
+  // `bind_to_storage_policy` specializations, either.
+  static_assert(require_sizeof<BindingType> >= 0);
   static_assert(
       !is_binding_t_type_in_place<BindingType> ||
           BI.category != category_t::ref,
       "`const_ref` / `mut_ref` is incompatible with `bind::in_place*`");
 
  protected:
-  // Similar to `std::as_const`, but only computes the type, and works on
-  // rvalue references.
-  //
-  // Future: This **might** compile faster with a family of explicit
-  // specializations, see e.g. `folly::like_t`'s implementation.
-  template <typename T>
-  using add_const_inside_ref = std::conditional_t<
-      std::is_rvalue_reference_v<T>,
-      typename std::add_const<std::remove_reference_t<T>>::type&&,
-      std::conditional_t<
-          std::is_lvalue_reference_v<T>,
-          typename std::add_const<std::remove_reference_t<T>>::type&,
-          typename std::add_const<std::remove_reference_t<T>>::type>>;
-
   constexpr static auto project_type() {
     if constexpr (BI.category == category_t::ref) {
       // By-reference: `const` by default
       if constexpr (BI.constness == constness_t::mut) {
         return std::type_identity<BindingType&&>{}; // Leave existing `const`
       } else {
-        return std::type_identity<add_const_inside_ref<BindingType>&&>{};
+        return std::type_identity<
+            detail::add_const_inside_ref_t<BindingType>&&>{};
       }
     } else {
       if constexpr (BI.category == category_t::copy) {
