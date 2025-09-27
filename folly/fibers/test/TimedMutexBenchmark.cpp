@@ -83,10 +83,10 @@ $ buck2 run @mode/opt folly/fibers/test:timed_mutex_benchmark  -- --bm_min_usec 
 ============================================================================
 [...]y/fibers/test/TimedMutexBenchmark.cpp     relative  time/iter   iters/s
 ============================================================================
-TimedRWMutexWritePriority_readers_1                        24.93ns    40.11M
-TimedRWMutexWritePriority_readers_2                       234.01ns     4.27M
-TimedRWMutexWritePriority_readers_4                       960.16ns     1.04M
-TimedRWMutexWritePriority_readers_8                         2.64us   379.30K
-TimedRWMutexWritePriority_readers_16                       14.03us    71.27K
-TimedRWMutexWritePriority_readers_32                       41.93us    23.85K
+TimedRWMutexWritePriority_readers_1                        21.95ns    45.55M
+TimedRWMutexWritePriority_readers_2                       132.08ns     7.57M
+TimedRWMutexWritePriority_readers_4                       306.85ns     3.26M
+TimedRWMutexWritePriority_readers_8                       954.79ns     1.05M
+TimedRWMutexWritePriority_readers_16                        2.34us   427.52K
+TimedRWMutexWritePriority_readers_32                        5.38us   185.74K
 #endif
