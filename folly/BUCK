@@ -475,6 +475,7 @@ non_fbcode_target(
         "//xplat/folly:cpp_attributes",
         "//xplat/folly:portability_config",
         "//xplat/folly:synchronization_relaxed_atomic",
+        "//xplat/folly/random:xoshiro256pp",
     ],
     exported_deps = [
         "//third-party/glog:glog",
@@ -2218,47 +2219,18 @@ non_fbcode_target(
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "io_shutdown_socket_set",
-    srcs = [
-        "io/ShutdownSocketSet.cpp",
-    ],
-    compiler_flags = [
-        "-fno-omit-frame-pointer",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "io/ShutdownSocketSet.h",
-    ],
-    deps = [
-        ":file_util",
-        ":portability_sockets",
-        "//third-party/glog:glog",
-        "//xplat/folly/net:net_ops",
-    ],
     exported_deps = [
-        ":file",
-        ":synchronization_relaxed_atomic",
-        "//xplat/folly/net:network_socket",
+        "//xplat/folly/io:shutdown_socket_set",
     ],
 )
 
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "io_socket_option_map",
-    srcs = [
-        "io/SocketOptionMap.cpp",
-        "io/SocketOptionValue.cpp",
-    ],
-    compiler_flags = [
-        "-fno-omit-frame-pointer",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "io/SocketOptionMap.h",
-        "io/SocketOptionValue.h",
-    ],
-    deps = [
-        ":portability_sockets",
-        "//xplat/folly/net:network_socket",
+    exported_deps = [
+        "//xplat/folly/io:socket_option_map",
     ],
 )
 
@@ -3213,6 +3185,20 @@ non_fbcode_target(
     ],
 )
 
+non_fbcode_target(
+    _kind = folly_xplat_library,
+    name = "external_rapidhash",
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = [
+        "external/rapidhash/rapidhash.h",
+    ],
+    exported_deps = [
+        ":bits",
+        ":cpp_attributes",
+        ":portability",
+    ],
+)
+
 # A basic pieces of folly
 #   Should only require glog and boost
 non_fbcode_target(
@@ -4153,57 +4139,18 @@ non_fbcode_target(
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "experimental_io_huge_pages",
-    srcs = [
-        "io/HugePages.cpp",
-    ],
-    compiler_flags = select({
-        "DEFAULT": [],
-        "ovr_config//build_mode:whatsapp": [
-            "-fexceptions",
-            "-frtti",
-        ],
-    }),
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "experimental/io/HugePages.h",
-        "io/HugePages.h",
-    ],
-    deps = [
-        ":conv",
-        ":cpp_attributes",
-        ":experimental_io_fs_util",
-        ":format",
-        ":gen_base",
-        ":gen_file",
-        ":gen_string",
-        ":portability_unistd",
-        ":range",
-        ":string",
-        "//third-party/boost:boost",
-        "//third-party/boost:boost_regex",
+    exported_deps = [
+        "//xplat/folly/experimental/io:huge_pages",
     ],
 )
 
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "experimental_io_fs_util",
-    srcs = [
-        "io/FsUtil.cpp",
-    ],
-    compiler_flags = select({
-        "DEFAULT": [],
-        "ovr_config//build_mode:whatsapp": [
-            "-fexceptions",
-            "-frtti",
-        ],
-    }),
-    raw_headers = [
-        "experimental/io/FsUtil.h",
-        "io/FsUtil.h",
-    ],
-    deps = [
-        "//third-party/boost:boost_filesystem",
-        "//xplat/folly:exception",
+    feature = triage_InfrastructureSupermoduleOptou,
+    exported_deps = [
+        "//xplat/folly/experimental/io:fs_util",
     ],
 )
 
@@ -4291,17 +4238,9 @@ non_fbcode_target(
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "io_global_shutdown_socket_set",
-    srcs = [
-        "io/GlobalShutdownSocketSet.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "io/GlobalShutdownSocketSet.h",
-    ],
-    deps = [
-        ":io_shutdown_socket_set",
-        ":singleton",
-        "//xplat/folly/concurrency/memory:read_mostly_shared_ptr",
+    exported_deps = [
+        "//xplat/folly/io:global_shutdown_socket_set",
     ],
 )
 
@@ -4408,6 +4347,18 @@ non_fbcode_target(
     ],
     deps = [
         ":external_farmhash_farmhash",
+    ],
+)
+
+non_fbcode_target(
+    _kind = folly_xplat_library,
+    name = "hash_rapidhash",
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = [
+        "hash/rapidhash.h",
+    ],
+    deps = [
+        ":external_rapidhash",
     ],
 )
 
@@ -5114,12 +5065,8 @@ non_fbcode_target(
     _kind = folly_xplat_library,
     name = "io_typed_io_buf",
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "io/TypedIOBuf.h",
-    ],
     exported_deps = [
-        ":io_iobuf",
-        "//xplat/folly/memory:malloc",
+        "//xplat/folly/io:typed_io_buf",
     ],
 )
 
@@ -5876,28 +5823,9 @@ non_fbcode_target(
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "io_record_io",
-    srcs = [
-        "io/RecordIO.cpp",
-    ],
     feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = [
-        "io/RecordIO.h",
-        "io/RecordIO-inl.h",
-    ],
-    deps = [
-        ":exception",
-        ":file",
-        ":file_util",
-        ":hash_spooky_hash_v2",
-        ":io_iobuf",
-        ":memory",
-        ":portability",
-        ":portability_unistd",
-        ":range",
-        ":scope_guard",
-        ":string",
-        ":system_memory_mapping",
-        "//xplat/folly/detail:iterators",
+    exported_deps = [
+        "//xplat/folly/io:record_io",
     ],
 )
 
@@ -7474,6 +7402,7 @@ fbcode_target(
         ":traits",
         "//folly/functional:invoke",
         "//folly/lang:bits",
+        "//folly/random:xoshiro256pp",
     ],
     external_deps = [
         "glog",

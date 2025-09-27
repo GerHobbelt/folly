@@ -19,6 +19,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <ostream>
 #include <random>
 
 #include <folly/Likely.h>
@@ -29,12 +30,13 @@
 #endif
 
 namespace folly {
-template <typename ResType>
 
+template <typename ResType>
 class xoshiro256pp {
  public:
   using result_type = ResType;
-  static constexpr result_type default_seed = 0x8690c864c6e0b716;
+  static constexpr result_type default_seed =
+      static_cast<result_type>(0x8690c864c6e0b716);
 
   // While this is not the actual size of the state, it is the size of the input
   // seed that we allow. Any uses of a larger state in the form of a seed_seq
@@ -99,6 +101,10 @@ class xoshiro256pp {
   vector_type state[VecResCount][StateSize]{};
   uint64_t cur = ResultCount;
 
+  template <typename Size, typename CharT, typename Traits>
+  friend std::basic_ostream<CharT, Traits>& operator<<(
+      std::basic_ostream<CharT, Traits>& os, const xoshiro256pp<Size>& rng);
+
   template <typename T>
   static inline T seed_vec(uint64_t& seed) {
     if constexpr (sizeof(T) != sizeof(uint64_t)) {
@@ -146,6 +152,16 @@ class xoshiro256pp {
     return res[cur++];
   }
 };
+
+template <typename Size, typename CharT, typename Traits>
+std::basic_ostream<CharT, Traits>& operator<<(
+    std::basic_ostream<CharT, Traits>& os, const xoshiro256pp<Size>& rng) {
+  for (auto i2 : rng.res) {
+    os << i2 << " ";
+  }
+  os << "cur: " << rng.cur;
+  return os;
+}
 
 using xoshiro256pp_32 = xoshiro256pp<uint32_t>;
 using xoshiro256pp_64 = xoshiro256pp<uint64_t>;
