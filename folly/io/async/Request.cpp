@@ -658,6 +658,14 @@ void RequestContext::clearContextData(const RequestToken& val) {
   return prevCtx;
 }
 
+RequestContext::StaticContext::~StaticContext() {
+  // If there is an active request context, reset requestContext before
+  // destroying it, as RequestData destructors (or onClear()) could try to
+  // access the current request context and copy a shared_ptr while being
+  // destroyed.
+  std::ignore = std::exchange(requestContext, {});
+}
+
 namespace {
 thread_local bool getStaticContextCalled = false;
 }
@@ -717,5 +725,11 @@ RequestContext::setShallowCopyContext() {
   }
   return nullptr;
 }
+
+#ifndef NDEBUG
+DCheckRequestContextRestoredGuard::~DCheckRequestContextRestoredGuard() {
+  CHECK_EQ(prev_.get(), RequestContext::try_get());
+}
+#endif
 
 } // namespace folly

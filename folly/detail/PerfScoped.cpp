@@ -24,7 +24,11 @@
 #include <folly/testing/TestUtil.h>
 #endif
 
+#include <filesystem>
 #include <stdexcept>
+#include <thread>
+
+#include <boost/regex.hpp>
 
 namespace folly {
 namespace detail {
@@ -40,10 +44,10 @@ std::vector<std::string> prependCommonArgs(
   std::vector<std::string> res{std::string(kPerfBinaryPath)};
   res.insert(res.end(), passed.begin(), passed.end());
 
-  res.push_back("-p");
+  res.emplace_back("-p");
   res.push_back(folly::to<std::string>(get_cached_pid()));
   if (output) {
-    res.push_back("--output");
+    res.emplace_back("--output");
     res.push_back(output->path().string());
   }
   return res;
@@ -71,6 +75,8 @@ class PerfScoped::PerfScopedImpl {
   PerfScopedImpl& operator=(PerfScopedImpl&&) = delete;
 
   ~PerfScopedImpl() noexcept {
+    waitUntilAttached();
+
     proc_.sendSignal(SIGINT);
     proc_.wait();
 
@@ -80,6 +86,22 @@ class PerfScoped::PerfScopedImpl {
   }
 
  private:
+  void waitUntilAttached() {
+    const boost::regex regex{R"(anon_inode:\[perf_event(:\w+)?\])"};
+    const auto slashproc = std::filesystem::path("/proc");
+    const auto fddir = slashproc / folly::to<std::string>(proc_.pid()) / "fd";
+    while (true) {
+      for (const auto& entry : std::filesystem::directory_iterator(fddir)) {
+        std::error_code ec;
+        const auto target = std::filesystem::read_symlink(entry.path(), ec);
+        if (boost::regex_match(target.string(), regex)) {
+          return;
+        }
+      }
+      std::this_thread::yield();
+    }
+  }
+
   test::TemporaryFile outputFile_;
   Subprocess proc_;
   std::string* output_;

@@ -176,7 +176,9 @@ TEST(Result, movable) {
 
 TEST(Result, refCopiable) {
   auto intPtr = std::make_unique<int>(1337);
-  result<std::unique_ptr<int>&> mIntPtrRef1 = std::ref(intPtr);
+  result mIntPtrRef1 = std::ref(intPtr);
+  static_assert(
+      std::is_same_v<result<std::unique_ptr<int>&>, decltype(mIntPtrRef1)>);
   auto mIntPtrRef2 = mIntPtrRef1.copy();
   *(mIntPtrRef2.value_or_throw()) += 1;
   EXPECT_EQ(1338, *mIntPtrRef1.value_or_throw());
@@ -222,15 +224,14 @@ RESULT_CO_TEST(Result, ofLvalueReferenceWrapper) {
   // Yes, you can declare `result<reference_wrapper<V>>`.  This is one way to
   // mutate values through `const result<Ref>` (the other being `result<V*>`).
   {
-    result r = std::ref(n);
-    static_assert(
-        std::is_same_v<result<std::reference_wrapper<int>>, decltype(r)>);
+    result<std::reference_wrapper<int>> r = std::ref(n);
     // The `.get()` is here to show that a ref-wrapper is being returned.
     EXPECT_EQ(3, (co_await or_unwind(std::move(r))).get());
   }
-  // To store `result<V&>` you must declare the type -- no CTAD.
+  // To store `result<V&>`, you can use CTAD
   {
-    result<int&> r = std::ref(n);
+    result r = std::ref(n);
+    static_assert(std::is_same_v<result<int&>, decltype(r)>);
     EXPECT_EQ(3, co_await or_unwind(std::move(r)));
   }
 }
@@ -239,18 +240,45 @@ RESULT_CO_TEST(Result, ofRvalueReferenceWrapper) {
   // Yes, you can declare `result<rvalue_reference_wrapper<V>>`.
   {
     int n = 3;
-    result r = rref(std::move(n));
-    static_assert(
-        std::is_same_v<result<rvalue_reference_wrapper<int>>, decltype(r)>);
+    result<rvalue_reference_wrapper<int>> r = rref(std::move(n));
     // The `.get()` is here to show that a ref-wrapper is being returned.
     EXPECT_EQ(3, (co_await or_unwind(std::move(r))).get());
   }
-  // To store `result<V&&>` you must declare the type -- no CTAD.
+  // To store `result<V&&>`, you can use CTAD
   {
     int n = 3;
-    result<int&&> r = rref(std::move(n));
+    result r = rref(std::move(n));
+    static_assert(std::is_same_v<result<int&&>, decltype(r)>);
     EXPECT_EQ(3, co_await or_unwind(std::move(r)));
   }
+}
+
+RESULT_CO_TEST(Result, forbidUnsafeCopyOfResultRef) {
+  int n = 42;
+
+  result rc = std::cref(n);
+  static_assert(std::is_same_v<result<const int&>, decltype(rc)>);
+  { // Safe copies of ref -- `rc` has `const` inside, cannot be discarded
+    result rc2 = rc.copy();
+    EXPECT_EQ(42, (co_await or_unwind(rc2)));
+    result rc3 = std::as_const(rc).copy();
+    EXPECT_EQ(42, (co_await or_unwind(rc3)));
+  }
+  static_assert(requires { rc.copy(); });
+  static_assert(requires { std::as_const(rc).copy(); });
+
+  result<int&> r = std::ref(n);
+  { // Safe copy of ref -- `r` has no `const` to discard
+    result r2 = r.copy();
+    EXPECT_EQ(42, (co_await or_unwind(r2)));
+  }
+  // Unsafe: copying `const result<int&>` would discard the outer `const`
+  //   result r3 = std::as_const(r).copy();
+  static_assert(requires { r.copy(); });
+  [](const auto& cr) {
+    // This `requires` won't even compile outside a template context.
+    static_assert(!requires { cr.copy(); });
+  }(r);
 }
 
 // Check `?.value_or_throw()` and `co_await ?` return types for various ways of

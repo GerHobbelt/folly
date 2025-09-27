@@ -84,6 +84,18 @@ class SettingWrapper {
   std::conditional_t<IsSmallPOD<T>, T, const T&> value() const {
     return operator*();
   }
+  /**
+   * Same as value() but registers this setting as an observer dependency. If
+   * this setting is used to compute an observer, subsequent setting updates
+   * will trigger the recomputation of that observer.
+   */
+  std::conditional_t<IsSmallPOD<T>, T, const T&>
+  valueRegisterObserverDependency() {
+    if (FOLLY_UNLIKELY(observer_detail::ObserverManager::inManagerThread())) {
+      registerObserverDependency();
+    }
+    return operator*();
+  }
 
   /**
    * Returns the setting's value from snapshot. Following two forms are
@@ -94,6 +106,11 @@ class SettingWrapper {
    */
   std::conditional_t<IsSmallPOD<T>, T, const T&> value(
       const Snapshot& snapshot) const;
+
+  /**
+   * Returns an Observer<T> that's updated whenever this setting is updated.
+   */
+  const folly::observer::Observer<T>& observer() { return core_.observer(); }
 
   /**
    * Atomically updates the setting's current value. The next call to
@@ -163,6 +180,8 @@ class SettingWrapper {
   explicit SettingWrapper(SettingCore<T, Tag>& core) : core_(core) {}
 
  private:
+  FOLLY_NOINLINE void registerObserverDependency() { observer().getSnapshot(); }
+
   SettingCore<T, Tag>& core_;
   friend class folly::settings::Snapshot;
 };
@@ -190,6 +209,19 @@ struct Accessor {
   }
 };
 } // namespace detail
+
+#if defined(_MSC_VER)
+// MSVC does not support section attributes
+#define FOLLY_SETTINGS_DETAIL_SECTION_ATTRIBUTE /* nothing */
+#elif defined(__APPLE__)
+// Mach-O: section attribute needs segment,section
+#define FOLLY_SETTINGS_DETAIL_SECTION_ATTRIBUTE \
+  gnu::section("__DATA,.folly.settings")
+#else
+// ELF: section attribute just needs section name
+#define FOLLY_SETTINGS_DETAIL_SECTION_ATTRIBUTE \
+  gnu::section(".folly.settings.cache")
+#endif
 
 /**
  * Defines a setting.
@@ -222,15 +254,14 @@ struct Accessor {
   /* Fastpath optimization, see notes in FOLLY_SETTINGS_DEFINE_LOCAL_FUNC__.  \
      Aggregate all off these together in a single section for better TLB      \
      and cache locality. */                                                   \
-  __attribute__((__section__(".folly.settings.cache"))) ::std::atomic<        \
+  [[FOLLY_SETTINGS_DETAIL_SECTION_ATTRIBUTE]] ::std::atomic<                  \
       ::folly::settings::detail::                                             \
           SettingCore<_Type, FOLLY_SETTINGS_TAG__##_project##_##_name>*>      \
       FOLLY_SETTINGS_CACHE__##_project##_##_name;                             \
   /* Location for the small value cache (if _Type is small and trivial).      \
      Intentionally located right after the pointer cache above to take        \
      advantage of the prefetching */                                          \
-  __attribute__((                                                             \
-      __section__(".folly.settings.cache"))) ::std::atomic<uint64_t>          \
+  [[FOLLY_SETTINGS_DETAIL_SECTION_ATTRIBUTE]] ::std::atomic<::std::uint64_t>  \
       FOLLY_SETTINGS_TRIVIAL__##_project##_##_name;                           \
   /* Meyers singleton to avoid SIOF */                                        \
   FOLLY_NOINLINE ::folly::settings::detail::                                  \
@@ -267,22 +298,23 @@ struct Accessor {
 /**
  * Declares a setting that's defined elsewhere.
  */
-#define FOLLY_SETTING_DECLARE(_project, _name, _Type)                          \
-  struct FOLLY_SETTINGS_TAG__##_project##_##_name;                             \
-  extern ::std::atomic<::folly::settings::detail::SettingCore<                 \
-      _Type,                                                                   \
-      FOLLY_SETTINGS_TAG__##_project##_##_name>*>                              \
-      FOLLY_SETTINGS_CACHE__##_project##_##_name;                              \
-  extern ::std::atomic<uint64_t> FOLLY_SETTINGS_TRIVIAL__##_project##_##_name; \
-  ::folly::settings::detail::                                                  \
-      SettingCore<_Type, FOLLY_SETTINGS_TAG__##_project##_##_name>&            \
-          FOLLY_SETTINGS_FUNC__##_project##_##_name();                         \
-  extern ::folly::settings::detail::Accessor<                                  \
-      _Type,                                                                   \
-      &FOLLY_SETTINGS_TRIVIAL__##_project##_##_name,                           \
-      FOLLY_SETTINGS_TAG__##_project##_##_name,                                \
-      FOLLY_SETTINGS_CACHE__##_project##_##_name,                              \
-      FOLLY_SETTINGS_FUNC__##_project##_##_name>                               \
+#define FOLLY_SETTING_DECLARE(_project, _name, _Type)               \
+  struct FOLLY_SETTINGS_TAG__##_project##_##_name;                  \
+  extern ::std::atomic<::folly::settings::detail::SettingCore<      \
+      _Type,                                                        \
+      FOLLY_SETTINGS_TAG__##_project##_##_name>*>                   \
+      FOLLY_SETTINGS_CACHE__##_project##_##_name;                   \
+  extern ::std::atomic<::std::uint64_t>                             \
+      FOLLY_SETTINGS_TRIVIAL__##_project##_##_name;                 \
+  ::folly::settings::detail::                                       \
+      SettingCore<_Type, FOLLY_SETTINGS_TAG__##_project##_##_name>& \
+          FOLLY_SETTINGS_FUNC__##_project##_##_name();              \
+  extern ::folly::settings::detail::Accessor<                       \
+      _Type,                                                        \
+      &FOLLY_SETTINGS_TRIVIAL__##_project##_##_name,                \
+      FOLLY_SETTINGS_TAG__##_project##_##_name,                     \
+      FOLLY_SETTINGS_CACHE__##_project##_##_name,                   \
+      FOLLY_SETTINGS_FUNC__##_project##_##_name>                    \
       FOLLY_SETTINGS_ACCESSOR__##_project##_##_name
 
 /**

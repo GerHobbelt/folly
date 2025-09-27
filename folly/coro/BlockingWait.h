@@ -25,6 +25,7 @@
 #include <folly/coro/detail/Malloc.h>
 #include <folly/coro/detail/Traits.h>
 #include <folly/executors/ManualExecutor.h>
+#include <folly/executors/SequencedExecutor.h>
 #include <folly/fibers/Baton.h>
 #include <folly/lang/MustUseImmediately.h>
 #include <folly/synchronization/Baton.h>
@@ -271,7 +272,9 @@ auto makeRefBlockingWaitTask(Awaitable&& awaitable)
   co_yield co_await static_cast<Awaitable&&>(awaitable);
 }
 
-class BlockingWaitExecutor final : public folly::DrivableExecutor {
+class BlockingWaitExecutor final
+    : public folly::DrivableExecutor,
+      public SequencedExecutor {
  public:
   ~BlockingWaitExecutor() override {
     while (keepAliveCount_.load() > 0) {
@@ -284,7 +287,8 @@ class BlockingWaitExecutor final : public folly::DrivableExecutor {
     {
       auto wQueue = queue_.wlock();
       empty = wQueue->empty();
-      wQueue->push_back(std::move(func));
+      wQueue->emplace_back(
+          std::move(func), folly::RequestContext::saveContext());
     }
     if (empty) {
       baton_.post();
@@ -296,10 +300,12 @@ class BlockingWaitExecutor final : public folly::DrivableExecutor {
     baton_.reset();
 
     folly::fibers::runInMainContext([&]() {
-      std::vector<Func> funcs;
-      queue_.swap(funcs);
-      for (auto& func : funcs) {
-        std::exchange(func, nullptr)();
+      std::vector<BlockingWaitTaskInfo> infos;
+      queue_.swap(infos);
+      RequestContextSaverScopeGuard guard;
+      for (auto& info : infos) {
+        folly::RequestContext::setContext(std::move(info.rctx));
+        std::exchange(info.func, nullptr)();
       }
     });
   }
@@ -331,7 +337,14 @@ class BlockingWaitExecutor final : public folly::DrivableExecutor {
         std::memory_order_relaxed));
   }
 
-  folly::Synchronized<std::vector<Func>> queue_;
+  struct BlockingWaitTaskInfo {
+    Func func;
+    std::shared_ptr<folly::RequestContext> rctx;
+    BlockingWaitTaskInfo(Func f, std::shared_ptr<folly::RequestContext> r)
+        : func(std::move(f)), rctx(std::move(r)) {}
+  };
+
+  folly::Synchronized<std::vector<BlockingWaitTaskInfo>> queue_;
   fibers::Baton baton_;
 
   std::atomic<ssize_t> keepAliveCount_{0};

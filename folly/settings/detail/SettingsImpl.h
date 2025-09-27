@@ -23,18 +23,24 @@
 #include <type_traits>
 #include <unordered_map>
 
+#include <fmt/format.h>
+
 #include <folly/Conv.h>
 #include <folly/Function.h>
 #include <folly/Optional.h>
 #include <folly/Portability.h>
 #include <folly/SharedMutex.h>
 #include <folly/ThreadLocal.h>
+#include <folly/Traits.h>
 #include <folly/Utility.h>
 #include <folly/concurrency/SingletonRelaxedCounter.h>
 #include <folly/container/F14Set.h>
 #include <folly/lang/Aligned.h>
+#include <folly/observer/Observer.h>
+#include <folly/observer/SimpleObservable.h>
 #include <folly/settings/Immutables.h>
 #include <folly/settings/Types.h>
+#include <folly/synchronization/DelayedInit.h>
 #include <folly/synchronization/RelaxedAtomic.h>
 
 namespace folly {
@@ -510,6 +516,20 @@ std::string_view TypedSettingCore<T>::getUpdateReason(
   return contents.updateReason;
 }
 
+template <typename F>
+struct NamedObserverCreator {
+  NamedObserverCreator(std::string name, F&& creator)
+      : name_(std::move(name)), creator_(std::forward<F>(creator)) {}
+
+  auto operator()() { return creator_(); }
+
+  const std::string& getName() const { return name_; }
+
+ private:
+  std::string name_;
+  F creator_;
+};
+
 template <class T, typename Tag>
 class SettingCore : public TypedSettingCore<T> {
  public:
@@ -553,6 +573,13 @@ class SettingCore : public TypedSettingCore<T> {
     return CallbackHandle(std::move(callbackPtr), *this);
   }
 
+  /**
+   * Returns an Observer<T> that's updated whenever this setting is updated.
+   */
+  const observer::Observer<T>& observer() {
+    return observer_.try_emplace_with([this]() { return createObserver(); });
+  }
+
   SettingCore(
       SettingMetadata meta,
       T defaultValue,
@@ -568,6 +595,7 @@ class SettingCore : public TypedSettingCore<T> {
 
   F14FastSet<std::shared_ptr<UpdateCallback>> callbacks_;
   std::atomic<bool> hasHadCallbacks_{false};
+  DelayedInit<observer::Observer<T>> observer_;
 
   void setImpl(
       const T& t, std::string_view reason, SnapshotBase* snapshot) override {
@@ -613,6 +641,33 @@ class SettingCore : public TypedSettingCore<T> {
     for (auto& callbackPtr : callbacksSnapshot) {
       auto& callback = *callbackPtr;
       callback(contents);
+    }
+  }
+  /**
+   * Creates a folly::observer::Observer<T> for this setting that's updated
+   * whenever this setting is updated.
+   */
+  observer::Observer<T> createObserver() {
+    // Make observable a unique_ptr so it can be moved and captured in the
+    // setting update callback
+    auto setting = this->getWithHint(this->trivialStorage_);
+    auto observable = std::make_unique<observer::SimpleObservable<T>>(setting);
+    auto observer = observable->getObserver();
+    auto callbackHandle = addCallback(
+        [observable = std::move(observable)](const auto& newContents) {
+          observable->setValue(newContents.value);
+        });
+    // Create a wrapped observer to capture the callback handle and keep it
+    // alive as long as the observer is alive
+    auto& meta = this->meta();
+    NamedObserverCreator creator(
+        fmt::format("FOLLY_SETTING_{}_{}", meta.project, meta.name),
+        [callbackHandle = std::move(callbackHandle),
+         observer = std::move(observer)]() { return **observer; });
+    if constexpr (IsEqualityComparable<T>::value) {
+      return observer::makeValueObserver(std::move(creator));
+    } else {
+      return observer::makeObserver(std::move(creator));
     }
   }
 };

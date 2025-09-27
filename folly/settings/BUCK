@@ -8,8 +8,6 @@ load(
 
 oncall("fbcode_entropy_wardens_folly")
 
-# !!!! fbcode/folly/settings/TARGETS was merged into this file, see https://fburl.com/workplace/xl8l9yuo for more info !!!!
-
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "settings",
@@ -23,7 +21,6 @@ non_fbcode_target(
     ],
     deps = [
         "fbsource//third-party/fmt:fmt",
-        "fbsource//xplat/folly/synchronization:relaxed_atomic",
         "//xplat/folly:conv",
         "//xplat/folly:cpp_attributes",
         "//xplat/folly:function",
@@ -33,13 +30,18 @@ non_fbcode_target(
         "//xplat/folly:shared_mutex",
         "//xplat/folly:synchronized",
         "//xplat/folly:thread_local",
+        "//xplat/folly:traits",
         "//xplat/folly:utility",
         "//xplat/folly/concurrency:singleton_relaxed_counter",
         "//xplat/folly/container:f14_hash",
         "//xplat/folly/container:map_util",
         "//xplat/folly/lang:aligned",
+        "//xplat/folly/observer:observer",
+        "//xplat/folly/observer:simple_observable",
         "//xplat/folly/settings:immutables",
         "//xplat/folly/settings:types",
+        "//xplat/folly/synchronization:delayed_init",
+        "//xplat/folly/synchronization:relaxed_atomic",
     ],
 )
 
@@ -54,10 +56,10 @@ fbcode_target(
         "detail/SettingsImpl.h",
     ],
     deps = [
-        "fbsource//third-party/fmt:fmt",
         "//folly:synchronized",
     ],
     exported_deps = [
+        "fbsource//third-party/fmt:fmt",
         ":immutables",
         ":types",
         "//folly:conv",
@@ -68,11 +70,15 @@ fbcode_target(
         "//folly:portability",
         "//folly:shared_mutex",
         "//folly:thread_local",
+        "//folly:traits",
         "//folly:utility",
         "//folly/concurrency:singleton_relaxed_counter",
         "//folly/container:f14_hash",
         "//folly/container:map_util",
         "//folly/lang:aligned",
+        "//folly/observer:observer",
+        "//folly/observer:simple_observable",
+        "//folly/synchronization:delayed_init",
         "//folly/synchronization:relaxed_atomic",
     ],
 )

@@ -311,6 +311,14 @@ class RequestContext {
   explicit RequestContext(intptr_t rootId);
 
   struct StaticContext {
+    StaticContext() = default;
+    ~StaticContext();
+
+    StaticContext(const StaticContext&) = delete;
+    StaticContext(StaticContext&&) = delete;
+    StaticContext& operator=(const StaticContext&) = delete;
+    StaticContext& operator=(StaticContext&&) = delete;
+
     std::shared_ptr<RequestContext> requestContext;
     std::atomic<intptr_t> rootId{0};
   };
@@ -616,6 +624,30 @@ struct ShallowCopyRequestContextScopeGuard {
   }
 
   std::shared_ptr<RequestContext> prev_;
+};
+
+// Debug-only guard that ensures that the current request context at destruction
+// is the same as the one at construction.
+class [[maybe_unused]] DCheckRequestContextRestoredGuard {
+#ifndef NDEBUG
+ public:
+  [[nodiscard]] DCheckRequestContextRestoredGuard()
+      : prev_(RequestContext::saveContext()) {}
+
+  ~DCheckRequestContextRestoredGuard();
+
+  DCheckRequestContextRestoredGuard(const DCheckRequestContextRestoredGuard&) =
+      delete;
+  DCheckRequestContextRestoredGuard& operator=(
+      const DCheckRequestContextRestoredGuard&) = delete;
+  DCheckRequestContextRestoredGuard(DCheckRequestContextRestoredGuard&&) =
+      delete;
+  DCheckRequestContextRestoredGuard& operator=(
+      DCheckRequestContextRestoredGuard&&) = delete;
+
+ private:
+  std::shared_ptr<RequestContext> prev_;
+#endif
 };
 
 template <class Traits>

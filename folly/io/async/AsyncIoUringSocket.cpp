@@ -277,9 +277,11 @@ void AsyncIoUringSocket::connect(
     // IP_BIND_ADDRESS_NO_PORT forces the OS to find a unique port relying
     // on only the local tuple. This limits the range of available ephemeral
     // ports.  Using the IP_BIND_ADDRESS_NO_PORT delays assigning a port until
-    // connect expanding the available port range.
-    if (bindAddr.getPort() == 0 && bindAddressNoPort_) {
-      if (setSockOpt(IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &one, sizeof(one))) {
+    // connect expanding the available port range, unless
+    // setBindAddressNoPort() is called.
+    if (bindAddr.getPort() == 0) {
+      if (bindAddressNoPort_ &&
+          setSockOpt(IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &one, sizeof(one))) {
         auto errnoCopy = errno;
         callback->connectErr(AsyncSocketException(
             AsyncSocketException::NOT_OPEN,
@@ -540,9 +542,8 @@ void AsyncIoUringSocket::ReadSqe::setReadCallback(
       << " inflight=" << inFlight() << " good_=" << parent_->good()
       << " submitNow=" << submitNow;
 
-  if (callback == readCallback_) {
-    // copied from AsyncSocket
-    VLOG(9) << "cb the same";
+  if (callback == readCallback_ && (!submitNow || inFlight())) {
+    VLOG(9) << "cb the same, skipping";
     return;
   }
   setReadCbCount_++;
@@ -1282,7 +1283,7 @@ void AsyncIoUringSocket::processWriteQueue() noexcept {
     shutdownWriteNow();
     return;
   }
-  if (state_ != State::Established) {
+  if (state_ != State::Established && !connecting()) {
     failAllWrites();
     return;
   }
