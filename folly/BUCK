@@ -4584,10 +4584,8 @@ non_fbcode_target(
     name = "maybe_managed_ptr",
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = ["MaybeManagedPtr.h"],
-    deps = [
-    ],
-    exported_deps = [
-    ],
+    deps = [],
+    exported_deps = [],
 )
 
 # !!!! fbcode/folly/TARGETS was merged into this file, see https://fburl.com/workplace/xl8l9yuo for more info !!!!
@@ -6315,8 +6313,6 @@ fbcode_target(
     _kind = cpp_library,
     name = "maybe_managed_ptr",
     headers = ["MaybeManagedPtr.h"],
-    deps = [
-    ],
-    exported_deps = [
-    ],
+    deps = [],
+    exported_deps = [],
 )

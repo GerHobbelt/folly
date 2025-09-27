@@ -275,6 +275,10 @@ TEST(ThreadPoolExecutorTest, CPUPoolStats) {
   poolStats<CPUThreadPoolExecutor>();
 }
 
+TEST(ThreadPoolExecutorTest, EDFPoolStats) {
+  poolStats<EDFThreadPoolExecutor>();
+}
+
 TEST(ThreadPoolExecutorTest, IOPoolStats) {
   poolStats<IOThreadPoolExecutor>();
 }
@@ -1043,11 +1047,8 @@ TEST(ThreadPoolExecutorTest, DynamicThreadAddRemoveRace) {
 }
 
 TEST(ThreadPoolExecutorTest, AddPerf) {
-  auto queue = std::make_unique<
-      UnboundedBlockingQueue<CPUThreadPoolExecutor::CPUTask>>();
   CPUThreadPoolExecutor e(
       kIsSanitizeThread ? 25 : 1000,
-      std::move(queue),
       std::make_shared<NamedThreadFactory>("CPUThreadPool"));
   e.setThreadDeathTimeout(std::chrono::milliseconds(1));
   for (int i = 0; i < 10000; i++) {
