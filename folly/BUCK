@@ -497,6 +497,13 @@ non_fbcode_target(
     srcs = [
         "File.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "File.h",
@@ -525,6 +532,13 @@ non_fbcode_target(
     srcs = [
         "FileUtil.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "FileUtil.h",
@@ -944,7 +958,13 @@ non_fbcode_target(
     ],
     compiler_flags = [
         "-fno-omit-frame-pointer",
-    ],
+    ] + select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "String.h",
@@ -2061,6 +2081,13 @@ non_fbcode_target(
     srcs = [
         "ExceptionWrapper.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "ExceptionWrapper.h",
@@ -3896,6 +3923,9 @@ non_fbcode_target(
     raw_headers = [
         "stats/detail/DoubleRadixSort.h",
     ],
+    deps = [
+        "//third-party/glog:glog",
+    ],
 )
 
 non_fbcode_target(
@@ -4097,6 +4127,13 @@ non_fbcode_target(
     srcs = [
         "system/MemoryMapping.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "system/MemoryMapping.h",
@@ -4119,6 +4156,13 @@ non_fbcode_target(
     srcs = [
         "io/HugePages.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "experimental/io/HugePages.h",
@@ -4146,6 +4190,13 @@ non_fbcode_target(
     srcs = [
         "io/FsUtil.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     raw_headers = [
         "experimental/io/FsUtil.h",
         "io/FsUtil.h",
@@ -4659,10 +4710,13 @@ non_fbcode_target(
         "stats/TDigest.h",
     ],
     deps = [
+        ":overload",
         ":range",
         ":stats_detail_double_radix_sort",
         ":utility",
         "//third-party/glog:glog",
+        "//xplat/folly/algorithm:binary_heap",
+        "//xplat/folly/memory:malloc",
     ],
 )
 
@@ -4831,6 +4885,13 @@ non_fbcode_target(
     srcs = [
         "Unicode.cpp",
     ],
+    compiler_flags = select({
+        "DEFAULT": [],
+        "ovr_config//build_mode:whatsapp": [
+            "-fexceptions",
+            "-frtti",
+        ],
+    }),
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "Unicode.h",
@@ -6332,7 +6393,6 @@ fbcode_target(
     srcs = ["ClockGettimeWrappers.cpp"],
     headers = ["ClockGettimeWrappers.h"],
     deps = [
-        ":c_portability",
         ":likely",
     ],
     exported_deps = [

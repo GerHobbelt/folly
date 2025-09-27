@@ -25,6 +25,7 @@
 #include <folly/detail/tuple.h>
 #include <folly/lang/Assume.h>
 #include <folly/lang/Bindings.h>
+#include <folly/lang/named/Bindings.h>
 
 ///
 /// Please read the user- and developer-facing docs in `Capture.md`.
@@ -114,11 +115,11 @@ struct capture_bind_info_t : folly::bindings::ext::bind_info_t {
       : folly::bindings::ext::bind_info_t(std::move(bi)), captureKind_(ap) {}
 };
 
-template <capture_kind Kind>
+template <capture_kind Kind, typename UpdateBI = std::identity>
 struct as_capture_bind_info {
   // Using `auto` prevents object slicing
   constexpr auto operator()(auto bi) {
-    return capture_bind_info_t{std::move(bi), Kind};
+    return capture_bind_info_t{UpdateBI{}(std::move(bi)), Kind};
   }
 };
 
@@ -167,10 +168,52 @@ template <typename... Ts>
 as_capture_indirect(Ts&&...)
     -> as_capture_indirect<folly::bindings::ext::deduce_bound_args_t<Ts>...>;
 
+// Sugar for `as_capture{const_ref{...}}`
+template <typename... Ts>
+struct capture_const_ref
+    : ::folly::bindings::ext::merge_update_bound_args<
+          detail::as_capture_bind_info<
+              detail::capture_kind::plain,
+              ::folly::bindings::detail::const_ref_bind_info>,
+          Ts...> {
+  using ::folly::bindings::ext::merge_update_bound_args<
+      detail::as_capture_bind_info<
+          detail::capture_kind::plain,
+          ::folly::bindings::detail::const_ref_bind_info>,
+      Ts...>::merge_update_bound_args;
+};
+template <typename... Ts>
+capture_const_ref(Ts&&...)
+    -> capture_const_ref<folly::bindings::ext::deduce_bound_args_t<Ts>...>;
+// Sugar for `as_capture{mut_ref{...}}`
+template <typename... Ts>
+struct capture_mut_ref
+    : ::folly::bindings::ext::merge_update_bound_args<
+          detail::as_capture_bind_info<
+              detail::capture_kind::plain,
+              ::folly::bindings::detail::mut_ref_bind_info>,
+          Ts...> {
+  using ::folly::bindings::ext::merge_update_bound_args<
+      detail::as_capture_bind_info<
+          detail::capture_kind::plain,
+          ::folly::bindings::detail::mut_ref_bind_info>,
+      Ts...>::merge_update_bound_args;
+};
+template <typename... Ts>
+capture_mut_ref(Ts&&...)
+    -> capture_mut_ref<folly::bindings::ext::deduce_bound_args_t<Ts>...>;
+
+// Sugar for `as_capture{make_in_place<T>(...)}`
 template <typename T>
 auto capture_in_place(auto&&... as [[clang::lifetimebound]]) {
   return as_capture(
       ::folly::bindings::make_in_place<T>(static_cast<decltype(as)>(as)...));
+}
+// Sugar for `as_capture{make_in_place_with(fn, ...)}`
+auto capture_in_place_with(
+    auto make_fn, auto&&... as [[clang::lifetimebound]]) {
+  return as_capture(::folly::bindings::make_in_place_with(
+      std::move(make_fn), static_cast<decltype(as)>(as)...));
 }
 
 template <typename T>
@@ -234,7 +277,7 @@ class capture_private_t {
   friend struct CapturesTest;
   template <typename, template <typename> class, typename>
   friend class capture_crtp_base;
-  template <typename, auto>
+  template <typename, auto, size_t>
   friend class capture_binding_helper;
   template <auto>
   friend auto bind_captures_to_closure(auto&&, auto);
@@ -590,6 +633,9 @@ class capture_storage : public capture_crtp_base<Derived, RefArgT, V> {
       async_closure_private_t, auto&&, const exception_wrapper*);
   template <typename> // For the `capture` specializations only!
   friend struct AsyncObjectRefForSlot;
+  template <typename ArgMap, size_t ArgI, typename Arg>
+  friend decltype(auto) async_closure_resolve_backref(
+      capture_private_t, auto&, Arg&);
 
   constexpr auto& get_lref() noexcept { return v_; }
   constexpr const auto& get_lref() const noexcept { return v_; }
