@@ -57,7 +57,7 @@ class ZeroCopyMMapMemStoreFallback : public ZeroCopyMemStore {
   void put(ZeroCopyMemStore::Entry* /*entry*/) override {}
 };
 
-#if TCP_ZEROCOPY_RECEIVE
+#if defined(TCP_ZEROCOPY_RECEIVE)
 std::unique_ptr<folly::IOBuf> getRXZeroCopyIOBuf(
     ZeroCopyMemStore::EntryPtr&& ptr) {
   auto* entry = ptr.release();
@@ -992,8 +992,9 @@ void AsyncSocket::connect(
       // IP_BIND_ADDRESS_NO_PORT forces the OS to find a unique port relying
       // on only the local tuple. This limits the range of available ephemeral
       // ports.  Using the IP_BIND_ADDRESS_NO_PORT delays assigning a port until
-      // connect expanding the available port range.
-      if (bindAddr.getPort() == 0) {
+      // connect expanding the available port range, unless
+      // enablePortAssignmentOnZero() is called.
+      if (bindAddr.getPort() == 0 && bindAddressNoPort_) {
         if (netops_->setsockopt(
                 fd_, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &one, sizeof(one))) {
           auto errnoCopy = errno;
@@ -3081,7 +3082,7 @@ void AsyncSocket::splitIovecArray(
 }
 
 AsyncSocket::ReadCode AsyncSocket::processZeroCopyRead() {
-#if TCP_ZEROCOPY_RECEIVE
+#if defined(TCP_ZEROCOPY_RECEIVE)
   if (zerocopyReadDisabled_) {
     return ReadCode::READ_NOT_SUPPORTED;
   }

@@ -1120,6 +1120,7 @@ void IoUringBackend::initSubmissionLinked() {
           .bufferShift = sizeShift,
           .ringSizeShift = ringShift,
           .useHugePages = false,
+          .useIncrementalBuffers = options_.enableIncrementalBuffers,
       };
       for (size_t i = 0; i < options_.providedBufRings; i++) {
         bufferProviders_.push_back(
@@ -1173,11 +1174,7 @@ void IoUringBackend::delayedInit() {
   }
 
   if (useReqBatching()) {
-    int iowait_ret = ::io_uring_set_iowait(&ioRing_, false);
-    if (iowait_ret) {
-      LOG(FATAL) << "Failed to set NO_IOWAIT flag: "
-                 << folly::errnoStr(-iowait_ret);
-    }
+    ::io_uring_set_iowait(&ioRing_, false);
   }
 
   if (options_.registerRingFd) {

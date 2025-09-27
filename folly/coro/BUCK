@@ -138,16 +138,15 @@ fbcode_target(
     srcs = [],
     headers = ["AsyncScope.h"],
     exported_deps = [
-        ":coroutine",
-        ":current_executor",
-        ":detail_barrier",
-        ":detail_barrier_task",
-        ":task",
         "//folly:cancellation_token",
         "//folly:exception_wrapper",
+        "//folly/coro:coroutine",
+        "//folly/coro:current_executor",
+        "//folly/coro:detail_barrier",
+        "//folly/coro:detail_barrier_task",
+        "//folly/coro:task",
         "//folly/futures:core",
         "//folly/portability:source_location",
-        "//folly/synchronization:relaxed_atomic",
     ],
     exported_external_deps = [
         "glog",
@@ -1105,29 +1104,12 @@ non_fbcode_target(
 
 fbcode_target(
     _kind = cpp_library,
-    name = "ready",
-    headers = ["Ready.h"],
-    exported_deps = [":error"],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_cxx_library,
-    name = "ready",
-    feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = ["Ready.h"],
-    exported_deps = [":error"],
-)
-
-### this line is a hint for source control merge
-
-fbcode_target(
-    _kind = cpp_library,
     name = "result",
     headers = ["Result.h"],
     exported_deps = [
         ":error",
         "//folly:try",
-        "//folly/result:result",
+        "//folly/result:try",
     ],
 )
 
@@ -1139,7 +1121,7 @@ non_fbcode_target(
     exported_deps = [
         ":error",
         "//xplat/folly:try",
-        "//xplat/folly/result:result",
+        "//xplat/folly/result:try",
     ],
 )
 

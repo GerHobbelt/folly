@@ -19,7 +19,6 @@
 #include <folly/ExceptionWrapper.h>
 #include <folly/Expected.h>
 #include <folly/OperationCancelled.h>
-#include <folly/coro/Coroutine.h>
 #include <folly/lang/Align.h> // for `hardware_constructive_interference_size`
 #include <folly/lang/RValueReferenceWrapper.h>
 #include <folly/portability/GTestProd.h>
@@ -43,6 +42,7 @@
 ///   - Can store & and && references.  Think of them as syntax sugar for
 ///     `std::reference_wrapper` and `folly::rvalue_reference_wrapper`.
 ///
+///        #include <folly/result/coro.h>
 ///        struct FancyIntMap {
 ///          int n;
 ///          result<int&> at(int i) {
@@ -51,29 +51,36 @@
 ///          }
 ///        };
 ///        FancyIntMap m{.n = 12};
-///        int& n1 = co_await m.at(30); // points at 12
+///        int& n1 = co_await or_unwind(m.at(30)); // points at 12
 ///        result<int&> rn2 = m.at(20); // has error
-///        co_return n1 + co_await std::move(rn2); // propagates error
+///        // On error, copies and propagates `exception_ptr` to the parent.
+///        // When errors are hot, `std::move()` is appropriate.
+///        co_return n1 + co_await or_unwind(rn2);
 ///
 ///     Key things to remember:
 ///       - `result<V&&>` is "use-once" -- and it must be r-value qualified to
 ///         access the reference inside.
-///       - `const result<V&>` gives non-`const` access to `V&`, just as `const
-///         result<V*>` would.
+///       - `const result<V&>` only gives `const V&` access to the contents.
+///         It should be rare that you need the opposite behavior.  If you do,
+///         use `result<std::reference_wrapper<V>>` or `vector<result<V*>>`.
 ///
 ///   - `has_stopped()` & `stopped_result` to nudge `folly` to the C++26 idea
 ///     that cancellation is NOT an error, see https://wg21.link/P1677 & P2300.
 ///
 ///   - Easy short-circuiting of "error" / "stopped" status to the caller:
+///     * In both `result<T>` coroutines and `folly::coro` coroutines:
+///       - `co_await or_unwind(resultFn())` returns `T&&` from a `result<T>`,
+///         or propagates error/stopped to the parent. Same for:
+///           * `co_await or_unwind(std::move(res))`
+///           * `co_await or_unwind(res.copy())`
+///           * `co_await or_unwind(folly::copy(res))`
+///       - `co_await or_unwind(res) -> T&`. Copies `exception_ptr` on error.
+///       - `co_await or_unwind(std::as_const(res)) -> const T&`
+///       - `co_await stopped_result` or `non_value_result{YourErr{}}` to
+///         end the coroutine with an error without throwing.
 ///     * In `folly::coro` coroutines:
 ///       - `co_await co_await_result(x())` makes `result<X>`, does not throw.
-///       - `co_await co_ready(syncResultFn())` extracts `T` from a
-///          `result<T>`, or propagates error/stopped.
-///       - `co_yield co_result(std::move(res))` returns a `result<T>`.
-///     * In synchronous `result<T>` coroutines,
-///       - `co_await std::move(res)` and `folly::copy(res)` give you `T`,
-///       - `co_await std::ref(res)` gives you `T&` -- ditto for `std::cref`
-///         and `folly::cref`.
+///       - `co_yield co_result(std::move(res))` completes with a `result<T>`.
 ///     * While you should strongly prefer to write `result<T>` coroutines,
 ///       propagation in non-coroutine `result<T>` functions is also easy:
 ///         if (!res.has_value()) {
@@ -296,6 +303,9 @@ using result_ref_wrap = conditional_t< // Reused by `result_generator`
         std::reference_wrapper<std::remove_reference_t<T>>,
         T>>;
 
+template <typename, typename>
+class or_unwind_crtp;
+
 // Shared implementation for `T` non-`void` and `void`
 template <typename Derived, typename T>
 class result_crtp {
@@ -316,9 +326,11 @@ class result_crtp {
   template <typename>
   friend class folly::result; // The simple conversion ctor uses `exp_`
 
-  friend struct detail::result_promise<T>;
-  friend struct detail::result_promise_return<T>;
-  friend struct detail::result_await_suspender;
+  friend struct result_promise<T>;
+  friend struct result_promise_return<T>;
+  friend struct result_await_suspender;
+  template <typename, typename>
+  friend class or_unwind_crtp; // `await_suspend` uses `exp_`
 
   friend inline bool operator==(const result_crtp& a, const result_crtp& b) {
     // FIXME: This logic is meant to follow `std::expected`, so once that's in
@@ -442,10 +454,9 @@ class result_crtp {
   /// Normally, you would:
   ///   - `folly::get_exception<Ex>(res)` to test for a specific error.
   ///   - `res.has_stopped()` to test for cancellation.
-  ///   - `co_await std::move(res)` to propagate unhandled error/cancellation
-  ///     in a `result` sync coroutine.
-  ///   - `co_await co_ready(std::move(res))` to propagate unhandled states in
-  ///     a `folly::coro` async coroutine.
+  ///   - `co_await or_unwind(std::move(res))` to propagate unhandled
+  ///     error/cancellation in `result` sync coroutines, or in `folly::coro`
+  ///     async task coroutines.
   ///
   /// Design notes:
   ///
@@ -577,14 +588,14 @@ class FOLLY_NODISCARD [[FOLLY_ATTR_CLANG_CORO_AWAIT_ELIDABLE]] result final
   /// These are a special case because such copies are cheap*, and because
   /// good alternatives for populating trivially copiable data are few:
   ///   - Copy-construct the value into the `result`.
-  ///   - Less efficient: Default-initialize the `result` and assign a
-  ///     `folly::copy()`, or use a mutable value reference to populate it.
+  ///   - Less efficient: Default-initialize the `result` and assign
+  ///     `folly::copy(T)`, or use a mutable value reference to populate it.
   ///   - Future: Implement in-place construction, to handle very hot code.
   ///
   /// This constructor is deliberately restricted to objects that fit in a
   /// cache-line.  This is a heuristic to require larger copies to be explicit
-  /// via `folly::copy()`.  If it proves fragile across different
-  /// architectures, it can be relaxed later.
+  /// via folly::copy()`.  If it proves fragile across different architectures,
+  /// it can be relaxed later.
   ///
   /// Notes:
   ///   - For now, we omitted the analogous ctor to copy `result<V&>`, for the
@@ -602,7 +613,7 @@ class FOLLY_NODISCARD [[FOLLY_ATTR_CLANG_CORO_AWAIT_ELIDABLE]] result final
       : base{std::in_place, t} {}
 
   /// No copy assignment.  When appropriate, use a mutable `value_or_throw()`
-  /// reference, or assign `folly::copy(rhs)` to be explicit.
+  /// reference, or assign `rhs.copy()` to be explicit.
 
   /// Simple copy/move conversion; `result_crtp` also has a fallible conversion.
   ///
@@ -652,18 +663,30 @@ class FOLLY_NODISCARD [[FOLLY_ATTR_CLANG_CORO_AWAIT_ELIDABLE]] result final
 
   /// Retrieve reference `T`.
   ///
-  /// NB Unlike the value-type versions, these can't mutate the reference
-  /// wrapper inside `this`.  Assign a ref-wrapper to `res` to do that.
-  ///
-  /// L-value refs follow `std::reference_wrapper`, exposing the underlying ref
-  /// type regardless of the instance's qualification.  We never add `const`
-  /// for reasons sketched in the test `checkAwaitResumeTypeForRefResult`.
-  T value_or_throw() const&
+  /// NB Unlike the value-type versions, accesors cannot mutate the reference
+  /// wrapper inside `this`.  Assign a ref-wrapper to the `result` to do that.
+
+  /// Lvalue result-ref propagate `const`: `const result<T&>` -> `const T&`.
+  /// See a discussion of the trade-offs in `docs/result.md`.
+  like_t<const int&, T> value_or_throw() const&
+    requires std::is_lvalue_reference_v<T>
+  {
+    this->throw_if_no_value();
+    return std::as_const(this->exp_->get());
+  }
+  T value_or_throw() &
     requires std::is_lvalue_reference_v<T>
   {
     this->throw_if_no_value();
     return this->exp_->get();
   }
+  T value_or_throw() &&
+    requires std::is_lvalue_reference_v<T>
+  {
+    this->throw_if_no_value();
+    return this->exp_->get();
+  }
+
   // R-value refs follow `folly::rvalue_reference_wrapper`.  They model
   // single-use references, and thus require `&&` qualification.
   T value_or_throw() &&
@@ -699,235 +722,14 @@ struct is_result : std::false_type {};
 template <typename T>
 struct is_result<result<T>> : std::true_type {};
 
-// This short-circuiting coroutine implementation was modeled on
-// `folly/Expected.h`. Please try to port any compiler fixes or
-// optimizations across both.
-namespace detail {
-
-template <typename>
-struct result_promise_base;
-
-template <typename T>
-struct result_promise_return {
-  result<T> storage_{expected_detail::EmptyTag{}};
-  result<T>*& pointer_;
-
-  /* implicit */ result_promise_return(result_promise_base<T>& p) noexcept
-      : pointer_{p.value_} {
-    pointer_ = &storage_;
-  }
-  result_promise_return(result_promise_return const&) = delete;
-  void operator=(result_promise_return const&) = delete;
-  result_promise_return(result_promise_return&&) = delete;
-  void operator=(result_promise_return&&) = delete;
-  // Remove this once clang 15 is well-forgotten. From D42260201:
-  // letting dtor be trivial makes the coroutine crash
-  ~result_promise_return() {}
-
-  /* implicit */ operator result<T>() {
-    // Simplify this once clang 15 is well-forgotten. From D42260201:
-    // handle both deferred and eager return-object conversion
-    // behaviors see docs for detect_promise_return_object_eager_conversion
-    if (coro::detect_promise_return_object_eager_conversion()) {
-      assert(storage_.is_expected_empty());
-      return result<T>{expected_detail::EmptyTag{}, pointer_}; // eager
-    } else {
-      assert(!storage_.is_expected_empty());
-      return std::move(storage_); // deferred
-    }
-  }
-};
-
-template <typename T>
-struct result_promise_base {
-  result<T>* value_ = nullptr;
-
-  result_promise_base() = default;
-  result_promise_base(result_promise_base const&) = delete;
-  void operator=(result_promise_base const&) = delete;
-  result_promise_base(result_promise_base&&) = delete;
-  void operator=(result_promise_base&&) = delete;
-  ~result_promise_base() = default;
-
-  FOLLY_NODISCARD folly::coro::suspend_never initial_suspend() const noexcept {
-    return {};
-  }
-  FOLLY_NODISCARD folly::coro::suspend_never final_suspend() const noexcept {
-    return {};
-  }
-  void unhandled_exception() noexcept {
-    *value_ = non_value_result::from_current_exception();
-  }
-
-  result_promise_return<T> get_return_object() noexcept { return *this; }
-};
-
-template <typename T>
-struct result_promise<T, typename std::enable_if<!std::is_void_v<T>>::type>
-    : public result_promise_base<T> {
-  // For reference types, this deliberately requires users to `co_return`
-  // one of `std::ref`, `std::cref`, or `folly::rref`.
-  //
-  // The default for `U` is tested in `returnImplicitCtor`.
-  template <typename U = T>
-  void return_value(U&& u) {
-    auto& v = *this->value_;
-    expected_detail::ExpectedHelper::assume_empty(v.exp_);
-    v = static_cast<U&&>(u);
-  }
-};
-
-template <typename T>
-struct result_promise<T, typename std::enable_if<std::is_void_v<T>>::type>
-    : public result_promise_base<T> {
-  // When the coroutine uses `return;` you can fail via `co_await err`.
-  void return_void() { this->value_->exp_.emplace(unit); }
-};
-
-template <typename T>
-using result_promise_handle = folly::coro::coroutine_handle<result_promise<T>>;
-
-// This is separate to let future https://fburl.com/result-generator-impl reuse
-// the awaitables below.
-struct result_await_suspender {
-  // Future: check if all these `FOLLY_ALWAYS_INLINE`s aren't a pessimization.
-  template <typename T, typename U>
-  FOLLY_ALWAYS_INLINE void operator()(T&& t, result_promise_handle<U> handle) {
-    auto& v = *handle.promise().value_;
-    expected_detail::ExpectedHelper::assume_empty(v.exp_);
-    // `T` can be `non_value_result&&`, or one of a few `result<T>` refs.
-    if constexpr (std::is_same_v<non_value_result, std::remove_cvref_t<T>>) {
-      v.exp_ = Unexpected{std::forward<T>(t)};
-    } else {
-      v.exp_ = Unexpected{std::forward<T>(t).non_value()};
-    }
-    // Abort the rest of the coroutine. resume() is not going to be called
-    handle.destroy();
-  }
-};
-
-// There's no `result` in the name as a hint to lift this to a shared header as
-// soon as another usecase arises.
-template <typename AwaitSuspender>
-struct non_value_awaitable {
-  non_value_result non_value_;
-
-  constexpr std::false_type await_ready() const noexcept { return {}; }
-  [[noreturn]] void await_resume() {
-    compiler_may_unsafely_assume_unreachable();
-  }
-  FOLLY_ALWAYS_INLINE void await_suspend(auto h) {
-    AwaitSuspender()(std::move(non_value_), h);
-  }
-};
-
-template <typename T, typename AwaitSuspender>
-struct result_owning_awaitable {
-  result<T> storage_;
-
-  bool await_ready() const noexcept { return storage_.has_value(); }
-  drop_unit_t<T> await_resume() { return std::move(storage_).value_or_throw(); }
-  FOLLY_ALWAYS_INLINE void await_suspend(auto h) {
-    AwaitSuspender()(std::move(storage_), h);
-  }
-};
-
-// We won't have a `folly::rvalue_reference_wrapper` counterpart because
-// awaiting rvalue `result`s is handled by `result_owning_awaitable`, which
-// avoids exposing some dangling reference footguns to the user.
-template <
-    typename T,
-    template <typename>
-    class ConstWrapper,
-    typename AwaitSuspender>
-struct result_ref_awaitable {
-  using ResultT = ConstWrapper<result<T>>;
-  constexpr static bool kIsConstRef = !std::is_same_v<ResultT, result<T>>;
-
-  std::reference_wrapper<ResultT> storage_;
-
-  bool await_ready() const noexcept { return storage_.get().has_value(); }
-
-  // Awaiting a ref to `result<Value>` returns a ref to the value.
-  T& await_resume()
-    requires(!std::is_reference_v<T> && !kIsConstRef)
-  {
-    return storage_.get().value_or_throw();
-  }
-  const T& await_resume()
-    requires(!std::is_reference_v<T> && kIsConstRef)
-  {
-    return storage_.get().value_or_throw();
-  }
-  // Awaiting a ref to `result<Reference>` returns the reference itself.
-  T await_resume()
-    requires std::is_reference_v<T>
-  {
-    return storage_.get().value_or_throw();
-  }
-
-  FOLLY_ALWAYS_INLINE void await_suspend(auto h) {
-    // We can't move the error even out of a mutable l-value reference to
-    // `result`, because the user isn't counting on `co_await std::ref(m)` to
-    // mutate the `result`.
-    AwaitSuspender()(storage_.get(), h);
-  }
-};
-
-} // namespace detail
-
-// co_await stopped_result
-inline auto /* implicit */ operator co_await(stopped_result_t s) {
-  return detail::non_value_awaitable<detail::result_await_suspender>{
-      .non_value_ = non_value_result{s}};
-}
-
-// co_await std::move(res).non_value()
-//
-// Pass-by-&& to discourage accidental copies of `std::exception_ptr`.
-inline auto /* implicit */ operator co_await(non_value_result && nvr) {
-  return detail::non_value_awaitable<detail::result_await_suspender>{
-      .non_value_ = std::move(nvr)};
-}
-
-// co_await resultFunc()
-//
-// DO NOT add a copyable overload for small, trivially copyable types,
-// since this is (a) rare, (b) will make the error path slower.  See the
-// discussion of `co_await std::{move,ref,cref}` in `result.md`.
-template <typename T>
-auto /* implicit */ operator co_await(result<T>&& r) {
-  return detail::result_owning_awaitable<T, detail::result_await_suspender>{
-      .storage_ = std::move(r)};
-}
-
-// co_await std::ref(resultVal)
-template <typename T>
-auto /* implicit */ operator co_await(std::reference_wrapper<result<T>> rr) {
-  return detail::result_ref_awaitable<
-      T,
-      std::type_identity_t,
-      detail::result_await_suspender>{.storage_ = std::move(rr)};
-}
-
-// co_await std::cref(resultVal)
-template <typename T>
-auto /* implicit */ operator co_await(
-    std::reference_wrapper<const result<T>> cr) {
-  return detail::result_ref_awaitable< //
-      T,
-      std::add_const_t,
-      detail::result_await_suspender>{.storage_ = std::move(cr)};
-}
-
 /// Wraps the return value from the lambda `fn` in a `result`, putting any
 /// thrown exception into its "error" state.
 ///
 ///   return result_catch_all([&](){ return riskyWork(); });
 ///
-/// Useful when you need a subroutine **definitely** not to throw. In contrast:
-///   - `result<>` coroutines catch unhandled exceptions, but can throw due to
-///     argument copy/move ctors, or due to `bad_alloc`.
+/// Note:
+///   - `result<>` coroutines catch unhandled exceptions, but can additionally
+///     throw `bad_alloc` for coro frame allocations (but see LLVM PR 152623).
 ///   - Like all functions, `result<>` non-coroutines let exceptions fly.
 template <typename F, typename RetF = decltype(FOLLY_DECLVAL(F&&)())>
 // Wrap the return type of `fn` with `result` unless it already is `result`.

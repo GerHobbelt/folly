@@ -1,6 +1,7 @@
 load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
 load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
-load("@fbsource//xplat/folly:defs.bzl", "folly_xplat_library")
+load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
+load("@fbsource//xplat/folly:defs.bzl", "folly_xplat_cxx_library", "folly_xplat_library")
 load("@fbsource//xplat/pfh/triage_InfrastructureSupermoduleOptou:DEFS.bzl", "triage_InfrastructureSupermoduleOptou")
 
 oncall("fbcode_entropy_wardens_folly")
@@ -53,6 +54,8 @@ non_fbcode_target(
         "Hash.h",
     ],
     deps = [
+        ":fnv_hash",
+        ":hsieh_hash",
         ":murmur_hash",
         ":spooky_hash_v1",
         ":spooky_hash_v2",
@@ -170,6 +173,8 @@ fbcode_target(
     name = "hash",
     headers = ["Hash.h"],
     exported_deps = [
+        ":fnv_hash",
+        ":hsieh_hash",
         ":murmur_hash",
         ":spooky_hash_v1",
         ":spooky_hash_v2",
@@ -226,5 +231,28 @@ fbcode_target(
         "//folly:c_portability",
         "//folly/lang:bits",
         "//folly/portability:constexpr",
+    ],
+)
+
+fb_dirsync_cpp_library(
+    name = "fnv_hash",
+    headers = [
+        "FnvHash.h",
+    ],
+    feature = triage_InfrastructureSupermoduleOptou,
+    use_raw_headers = True,
+    xplat_impl = folly_xplat_cxx_library,
+)
+
+fb_dirsync_cpp_library(
+    name = "hsieh_hash",
+    headers = [
+        "HsiehHash.h",
+    ],
+    feature = triage_InfrastructureSupermoduleOptou,
+    use_raw_headers = True,
+    xplat_impl = folly_xplat_cxx_library,
+    exported_deps = [
+        "//folly/lang:bits",
     ],
 )
