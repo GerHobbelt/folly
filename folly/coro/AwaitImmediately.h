@@ -33,8 +33,9 @@ namespace folly::coro {
 //
 // To create a new immediately-awaitable type, follow this protocol:
 //   - Derive from `public AddMustAwaitImmediately<YourBase>`.
-//   - Implement `getUnsafeMover(ForMustAwaitImmediately)`, but first read "A
-//     note on object slicing" below, and review the existing examples.
+//   - Implement `getUnsafeMover(ForMustAwaitImmediately) && noexcept`, but
+//     first read the ENTIRE docblock of `mustAwaitImmediatelyUnsafeMover()`
+//     with the notes on object slicing and `noexcept` behavior.
 //
 // To handle immediately-awaitables, `folly::coro` APIs must follow these rules:
 //
@@ -138,12 +139,19 @@ class MustAwaitImmediatelyUnsafeMover {
 
  public:
   // `Outer*` is just for type deduction and should be `nullptr`.
-  MustAwaitImmediatelyUnsafeMover(Outer*, InnerMover m) : mover_(std::move(m)) {
+  MustAwaitImmediatelyUnsafeMover(Outer*, InnerMover m) noexcept
+      : mover_(std::move(m)) {
+    // See mustAwaitImmediatelyUnsafeMover docblock
+    static_assert(std::is_nothrow_move_constructible_v<InnerMover>);
     // See "A note on object slicing" below
     static_assert(
         sizeof(Outer) == sizeof(decltype(FOLLY_DECLVAL(InnerMover)())));
   }
-  Outer operator()() && { return Outer{std::move(mover_)()}; }
+  Outer operator()() && noexcept {
+    // See mustAwaitImmediatelyUnsafeMover docblock
+    static_assert(noexcept(Outer{std::move(mover_)()}));
+    return Outer{std::move(mover_)()};
+  }
 };
 
 // Analog of `MustAwaitImmediatelyUnsafeMover` for movable (semi)awaitables.
@@ -153,8 +161,11 @@ struct NoOpMover {
   T t_;
 
  public:
-  explicit NoOpMover(T t) : t_(std::move(t)) {}
-  T operator()() && { return std::move(t_); }
+  explicit NoOpMover(T t) noexcept : t_(std::move(t)) {
+    // See mustAwaitImmediatelyUnsafeMover docblock
+    static_assert(std::is_nothrow_move_constructible_v<T>);
+  }
+  T operator()() && noexcept { return std::move(t_); }
 };
 
 // Overload tag / passkey for the customizable method `getUnsafeMover`.
@@ -171,7 +182,13 @@ using unsafe_mover_for_must_await_immediately_t =
 // the awaitable be used outside of its original full-expression.
 //
 // This wraps `getUnsafeMover` for types that implement it, and provides
-// a no-op fallback for those that don't.
+// a no-op fallback for those that don't. Required semantics:
+//
+//  - It's a destructive operation -- hence the r-value qualifier
+//  - It takes ownership of the internals of `awaitable`.
+//  - It returns a mover value (never a reference), whose `operator() &&` is a
+//    single-use operation that returns a new awaitable equivalent to the
+//    original `awaitable` that was passed in & moved out.
 //
 // ## A note on object slicing -- for `getUnsafeMover` implementations
 //
@@ -188,6 +205,13 @@ using unsafe_mover_for_must_await_immediately_t =
 //     the wrapping/unwrapping will cause the custom logic will run at an
 //     unexpected time.  Such wrapper types MUST customize `getUnsafeMover` to
 //     return a custom mover that handles this correctly.
+//
+// ## A note on `noexcept` discipline
+//
+// This `static_assert`s that constructing **and** using a mover is `noexcept`.
+// This could, of course, be relaxed via `noexcept(noexcept(...))` logic, but
+// IMO no `folly::coro` awaitables SHOULD have throwing move ctors, so this
+// requirement is Actually Fine (until proven otherwise).
 template <
     typename Awaitable,
     typename DetectRes = detected_or<
@@ -196,11 +220,16 @@ template <
         Awaitable>>
 // CAREFUL: Passing by `&&` can violate the immediately-awaitable restriction!
 typename DetectRes::type mustAwaitImmediatelyUnsafeMover(
-    Awaitable&& awaitable) {
+    Awaitable&& awaitable) noexcept {
+  static_assert(noexcept(FOLLY_DECLVAL(typename DetectRes::type&&)()));
   if constexpr (DetectRes::value_t::value) {
+    static_assert(noexcept(static_cast<Awaitable&&>(awaitable).getUnsafeMover(
+        ForMustAwaitImmediately{})));
     return static_cast<Awaitable&&>(awaitable).getUnsafeMover(
         ForMustAwaitImmediately{});
   } else {
+    static_assert(
+        std::is_nothrow_constructible_v<NoOpMover<Awaitable>, Awaitable&&>);
     return NoOpMover<Awaitable>{static_cast<Awaitable&&>(awaitable)};
   }
 }

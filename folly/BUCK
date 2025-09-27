@@ -17,8 +17,9 @@ load(
     "WINDOWS",
 )
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
+load("@fbsource//xplat/pfh/triage_InfrastructureSupermoduleOptou:DEFS.bzl", "triage_InfrastructureSupermoduleOptou")
 load(
-    "@fbsource//xplat/folly:defs.bzl",
+    ":defs.bzl",
     "CXXFLAGS",
     "DEFAULT_APPLE_SDKS",
     "FBANDROID_CPPFLAGS",
@@ -30,7 +31,6 @@ load(
     "folly_xplat_library",
     "should_enable_gflags",
 )
-load("@fbsource//xplat/pfh/triage_InfrastructureSupermoduleOptou:DEFS.bzl", "triage_InfrastructureSupermoduleOptou")
 load(":folly_extended_library.bzl", "folly_extended_xplat_library")
 
 oncall("fbcode_entropy_wardens_folly")
@@ -47,7 +47,6 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":constexpr_math",
-        ":functional_invoke",
         ":likely",
         ":portability",
         ":portability_config",
@@ -55,6 +54,7 @@ non_fbcode_target(
         ":portability_malloc",
         ":traits",
         ":utility",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:align",
         "//xplat/folly/lang:exception",
         "//xplat/folly/lang:thunk",
@@ -142,7 +142,6 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":benchmark_util",
-        ":functional_invoke",
         ":portability",
         ":portability_gflags",
         ":preprocessor",
@@ -151,6 +150,7 @@ non_fbcode_target(
         ":traits",
         "//third-party/boost:boost",
         "//third-party/glog:glog",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -183,7 +183,6 @@ non_fbcode_target(
     exported_deps = [
         "//third-party/glog:glog",
         "//xplat/folly:function",
-        "//xplat/folly:functional_apply_tuple",
         "//xplat/folly:likely",
         "//xplat/folly:preprocessor",
         "//xplat/folly:shared_mutex",
@@ -191,6 +190,7 @@ non_fbcode_target(
         "//xplat/folly:traits",
         "//xplat/folly:utility",
         "//xplat/folly/container:foreach",
+        "//xplat/folly/functional:apply_tuple",
     ],
 )
 
@@ -312,7 +312,6 @@ non_fbcode_target(
     ],
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
-        "experimental/TestUtil.h",
         "testing/TestUtil.h",
     ],
     deps = [
@@ -387,12 +386,12 @@ non_fbcode_target(
         "SingletonThreadLocal.h",
     ],
     exported_deps = [
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:scope_guard",
         "//xplat/folly:thread_local",
         "//xplat/folly/detail:iterators",
         "//xplat/folly/detail:singleton",
         "//xplat/folly/detail:unique_instance",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:hint",
     ],
 )
@@ -416,7 +415,6 @@ non_fbcode_target(
     ],
     exported_deps = [
         "//third-party/glog:glog",
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:portability",
         "//xplat/folly:portability_sys_time",
         "//xplat/folly:portability_unistd",
@@ -425,6 +423,7 @@ non_fbcode_target(
         "//xplat/folly:thread_local",
         "//xplat/folly:traits",
         "//xplat/folly/detail:file_util_detail",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:bits",
     ],
 )
@@ -599,16 +598,6 @@ non_fbcode_target(
         "//xplat/folly:conv",
         "//xplat/folly:hash_hash",
         "//xplat/folly:string",
-    ],
-)
-
-# Legacy alias
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "turnsequencer",
-    feature = triage_InfrastructureSupermoduleOptou,
-    deps = [
-        "//xplat/folly/detail:turn_sequencer",
     ],
 )
 
@@ -1759,22 +1748,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "functional_invoke",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/functional:invoke"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "functional_traits",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/functional:traits"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "function",
     fbobjc_complete_nullability = True,
@@ -1784,29 +1757,13 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":cpp_attributes",
-        ":functional_invoke",
         ":portability",
         ":traits",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:align",
         "//xplat/folly/lang:exception",
         "//xplat/folly/lang:new",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "functional_apply_tuple",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/functional:apply_tuple"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "functional_partial",
-    feature = triage_InfrastructureSupermoduleOptou,
-    exported_deps = ["//xplat/folly/functional:partial"],
 )
 
 non_fbcode_target(
@@ -1902,8 +1859,8 @@ non_fbcode_target(
     deps = [
         "//xplat/folly:c_portability",
         "//xplat/folly:cpp_attributes",
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:utility",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:c_string",
     ] + select({
         "//xplat/folly:folly_demangle_macos_disable_iberty_config": [],
@@ -1975,10 +1932,10 @@ non_fbcode_target(
         ":demangle",
         ":exception_string",
         ":fbstring",
-        ":functional_traits",
         ":portability",
         ":traits",
         ":utility",
+        "//xplat/folly/functional:traits",
         "//xplat/folly/lang:assume",
         "//xplat/folly/lang:exception",
     ],
@@ -2225,9 +2182,9 @@ non_fbcode_target(
         "Overload.h",
     ],
     exported_deps = [
-        ":functional_invoke",
         ":portability",
         ":traits",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -2459,11 +2416,11 @@ non_fbcode_target(
         "synchronization/CallOnce.h",
     ],
     exported_deps = [
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:likely",
         "//xplat/folly:micro_lock",
         "//xplat/folly:portability",
         "//xplat/folly:shared_mutex",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -2492,7 +2449,6 @@ non_fbcode_target(
     exported_deps = [
         "//third-party/glog:glog",
         "//xplat/folly:constexpr_math",
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:likely",
         "//xplat/folly:optional",
         "//xplat/folly:portability",
@@ -2506,6 +2462,7 @@ non_fbcode_target(
         "//xplat/folly:utility",
         "//xplat/folly/chrono:hardware",
         "//xplat/folly/detail:futex",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:align",
         "//xplat/folly/lang:bits",
         "//xplat/folly/lang:exception",
@@ -2650,9 +2607,9 @@ non_fbcode_target(
         "synchronization/Lock.h",
     ],
     exported_deps = [
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:portability",
         "//xplat/folly:traits",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:exception",
     ],
 )
@@ -2910,9 +2867,9 @@ non_fbcode_target(
     ],
     exported_deps = [
         "//xplat/folly:function",
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:traits",
         "//xplat/folly:utility",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -3122,9 +3079,6 @@ non_fbcode_target(
         "//xplat/folly:format",
         "//xplat/folly:format_traits",
         "//xplat/folly:function",
-        "//xplat/folly:functional_apply_tuple",
-        "//xplat/folly:functional_invoke",
-        "//xplat/folly:functional_partial",
         "//xplat/folly:glog",
         "//xplat/folly:indestructible",
         "//xplat/folly:intrusive_list",
@@ -3173,6 +3127,9 @@ non_fbcode_target(
         "//xplat/folly/container:iterator",
         "//xplat/folly/container:sparse_byte_set",
         "//xplat/folly/detail:futex",
+        "//xplat/folly/functional:apply_tuple",
+        "//xplat/folly/functional:invoke",
+        "//xplat/folly/functional:partial",
         "//xplat/folly/lang:bits",
         "//xplat/folly/lang:checked_math",
         "//xplat/folly/lang:exception",
@@ -3271,9 +3228,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -3322,6 +3276,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
@@ -3336,9 +3293,6 @@ non_fbcode_target(
         "//xplat/folly:constexpr_math",
         "//xplat/folly:cpp_attributes",
         "//xplat/folly:function",
-        "//xplat/folly:functional_apply_tuple",
-        "//xplat/folly:functional_invoke",
-        "//xplat/folly:functional_partial",
         "//xplat/folly:indexed_mem_pool",
         "//xplat/folly:likely",
         "//xplat/folly:math",
@@ -3359,7 +3313,6 @@ non_fbcode_target(
         "//xplat/folly:synchronization_lifo_sem",
         "//xplat/folly:synchronized",
         "//xplat/folly:traits",
-        "//xplat/folly:turnsequencer",
         "//xplat/folly:unit",
         "//xplat/folly/concurrency:concurrent_hash_map",
         "//xplat/folly/concurrency:priority_unbounded_queue_set",
@@ -3369,6 +3322,7 @@ non_fbcode_target(
         "//xplat/folly/container:evicting_cache_map",
         "//xplat/folly/container:foreach",
         "//xplat/folly/detail:socket_fast_open",
+        "//xplat/folly/detail:turn_sequencer",
         "//xplat/folly/executors:cpu_thread_pool_executor",
         "//xplat/folly/executors:global_executor",
         "//xplat/folly/executors:inline_executor",
@@ -3377,6 +3331,9 @@ non_fbcode_target(
         "//xplat/folly/executors/task_queue:priority_lifo_sem_mpmc_queue",
         "//xplat/folly/executors/task_queue:priority_unbounded_blocking_queue",
         "//xplat/folly/executors/task_queue:unbounded_blocking_queue",
+        "//xplat/folly/functional:apply_tuple",
+        "//xplat/folly/functional:invoke",
+        "//xplat/folly/functional:partial",
         "//xplat/folly/io/async:async_base",
         "//xplat/folly/io/async:async_signal_handler",
         "//xplat/folly/io/async:async_socket_base",
@@ -3456,9 +3413,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -3507,6 +3461,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
@@ -3528,7 +3485,7 @@ non_fbcode_target(
         "//xplat/folly:portability_sys_mman",
         "//xplat/folly:singleton",
         "//xplat/folly:try",
-        "//xplat/folly:turnsequencer",
+        "//xplat/folly/detail:turn_sequencer",
         "//xplat/folly/executors:executor_with_priority",
         "//xplat/folly/executors:inline_executor",
         "//xplat/folly/executors:manual_executor",
@@ -3639,9 +3596,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -3690,6 +3644,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/io:typed_io_buf",
         "fbsource//xplat/folly/lang:bits",
@@ -3808,9 +3765,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -3859,6 +3813,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
@@ -3918,9 +3875,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -3969,6 +3923,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
@@ -4073,9 +4030,6 @@ non_fbcode_target(
         "fbsource//xplat/folly:format",
         "fbsource//xplat/folly:format_traits",
         "fbsource//xplat/folly:function",
-        "fbsource//xplat/folly:functional_apply_tuple",
-        "fbsource//xplat/folly:functional_invoke",
-        "fbsource//xplat/folly:functional_partial",
         "fbsource//xplat/folly:glog",
         "fbsource//xplat/folly:indestructible",
         "fbsource//xplat/folly:intrusive_list",
@@ -4124,6 +4078,9 @@ non_fbcode_target(
         "fbsource//xplat/folly/container:iterator",
         "fbsource//xplat/folly/container:sparse_byte_set",
         "fbsource//xplat/folly/detail:futex",
+        "fbsource//xplat/folly/functional:apply_tuple",
+        "fbsource//xplat/folly/functional:invoke",
+        "fbsource//xplat/folly/functional:partial",
         "fbsource//xplat/folly/io:iobuf",
         "fbsource//xplat/folly/lang:bits",
         "fbsource//xplat/folly/lang:checked_math",
@@ -4280,12 +4237,12 @@ non_fbcode_target(
     ],
     deps = [
         ":exception_wrapper",
-        ":functional_invoke",
         ":likely",
         ":memory",
         ":portability",
         ":unit",
         ":utility",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/lang:exception",
     ],
 )
@@ -4387,7 +4344,6 @@ non_fbcode_target(
     deps = [
         ":c_portability",
         ":conv",
-        ":stats_digest_builder",
         "//third-party/glog:glog",
         "//xplat/folly/lang:exception",
     ],
@@ -4452,7 +4408,6 @@ non_fbcode_target(
     deps = [
         "//third-party/range-v3:range-v3",
         "//xplat/folly:conv",
-        "//xplat/folly:functional_invoke",
         "//xplat/folly:gen_core",
         "//xplat/folly:optional",
         "//xplat/folly:portability",
@@ -4460,6 +4415,7 @@ non_fbcode_target(
         "//xplat/folly:utility",
         "//xplat/folly/container:access",
         "//xplat/folly/container:f14_hash",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -4990,8 +4946,8 @@ non_fbcode_target(
         "Lazy.h",
     ],
     deps = [
-        ":functional_invoke",
         ":optional",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -5003,13 +4959,13 @@ non_fbcode_target(
         "hash/Hash.h",
     ],
     deps = [
-        ":functional_apply_tuple",
         ":hash_murmur_hash",
         ":hash_spooky_hash_v1",
         ":hash_spooky_hash_v2",
         ":traits",
         ":utility",
         "//xplat/folly:c_portability",
+        "//xplat/folly/functional:apply_tuple",
         "//xplat/folly/lang:bits",
     ],
 )
@@ -5802,9 +5758,9 @@ non_fbcode_target(
     deps = [
         ":expected",
         ":experimental_event_count",
-        ":functional_invoke",
         ":gen_core",
         ":mpmc_pipeline",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -5833,8 +5789,8 @@ non_fbcode_target(
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = ["ConcurrentLazy.h"],
     deps = [
-        ":functional_invoke",
         ":synchronization_delayed_init",
+        "//xplat/folly/functional:invoke",
     ],
 )
 
@@ -6104,7 +6060,6 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":chrono",
-        ":functional_invoke",
         ":futures_detail_core",
         ":futures_detail_types",
         ":futures_portability",
@@ -6130,6 +6085,7 @@ non_fbcode_target(
         "//xplat/folly/executors:timed_drivable_executor",
         "//xplat/folly/experimental/coro:traits",
         "//xplat/folly/fibers:core",
+        "//xplat/folly/functional:invoke",
         "//xplat/folly/io/async:async_base",
         "//xplat/folly/lang:exception",
         "//xplat/folly/lang:pretty",
