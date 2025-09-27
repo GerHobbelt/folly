@@ -170,11 +170,13 @@ namespace __cxxabiv1 {
 
 //  the definition until llvm v10.0.0-rc2
 struct __folly_cxa_exception_sans_reserve {
+  using dtor_ret_t = std::conditional_t<folly::kIsArchWasm, void*, void>;
+
 #if defined(__LP64__) || defined(_WIN64) || defined(_LIBCXXABI_ARM_EHABI)
   size_t referenceCount;
 #endif
   std::type_info* exceptionType;
-  void (*exceptionDestructor)(void*);
+  dtor_ret_t (*exceptionDestructor)(void*);
   void (*unexpectedHandler)();
   std::terminate_handler terminateHandler;
   __folly_cxa_exception_sans_reserve* nextException;
@@ -197,12 +199,14 @@ struct __folly_cxa_exception_sans_reserve {
 
 //  the definition since llvm v10.0.0-rc2
 struct __folly_cxa_exception_with_reserve {
+  using dtor_ret_t = std::conditional_t<folly::kIsArchWasm, void*, void>;
+
 #if defined(__LP64__) || defined(_WIN64) || defined(_LIBCXXABI_ARM_EHABI)
   void* reserve;
   size_t referenceCount;
 #endif
   std::type_info* exceptionType;
-  void (*exceptionDestructor)(void*);
+  dtor_ret_t (*exceptionDestructor)(void*);
   void (*unexpectedHandler)();
   std::terminate_handler terminateHandler;
   __folly_cxa_exception_with_reserve* nextException;
@@ -694,6 +698,15 @@ std::exception_ptr catch_current_exception_(Try&& t) noexcept {
   return catch_exception(static_cast<Try&&>(t), current_exception);
 }
 
+template <typename Value>
+static std::exception_ptr make_exception_ptr_from_rep_(Value value) noexcept {
+  static_assert(sizeof(std::exception_ptr) == sizeof(Value));
+  static_assert(alignof(std::exception_ptr) == alignof(Value));
+  std::exception_ptr ptr;
+  std::memcpy(&ptr, &value, sizeof(value));
+  return ptr;
+}
+
 #if defined(__GLIBCXX__)
 
 std::exception_ptr make_exception_ptr_with_(
@@ -707,7 +720,7 @@ std::exception_ptr make_exception_ptr_with_(
     scope_guard_ rollback{std::bind(abi::__cxa_free_exception, object)};
     arg.ctor(object, func);
     rollback.dismiss();
-    return reinterpret_cast<std::exception_ptr&&>(object);
+    return make_exception_ptr_from_rep_(object);
   });
 }
 
@@ -731,6 +744,9 @@ std::exception_ptr make_exception_ptr_with_(
   auto type = const_cast<std::type_info*>(arg.type);
 #if _LIBCPP_VERSION >= 180000 && _LIBCPP_AVAILABILITY_HAS_INIT_PRIMARY_EXCEPTION
   (void)abi::__cxa_init_primary_exception(object, type, arg.dtor);
+  cxxabi_with_cxa_exception(object, [&](auto exception) {
+    exception->referenceCount = 1;
+  });
 #else
   cxxabi_with_cxa_exception(object, [&](auto exception) {
 #if defined(__FreeBSD__)
@@ -753,7 +769,7 @@ std::exception_ptr make_exception_ptr_with_(
     scope_guard_ rollback{std::bind(abi::__cxa_free_exception, object)};
     arg.ctor(object, func);
     rollback.dismiss();
-    return reinterpret_cast<std::exception_ptr&&>(object);
+    return make_exception_ptr_from_rep_(object);
   });
 }
 

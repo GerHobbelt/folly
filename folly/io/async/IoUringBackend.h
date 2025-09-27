@@ -296,7 +296,9 @@ class IoUringBackend : public EventBaseBackendBase {
   // from EventBaseBackendBase
   int getPollableFd() const override { return ioRing_.ring_fd; }
   int getNapiId() const override { return napiId_; }
-  int issueRecvZc(int fd, void* buf, unsigned int nbytes) override;
+  void queueRecvZc(
+      int fd, void* buf, unsigned long nbytes, RecvZcCallback&& callback)
+      override;
 
   event_base* getEventBase() override { return nullptr; }
 
@@ -1084,12 +1086,6 @@ class IoUringBackend : public EventBaseBackendBase {
       ::io_uring_sqe_set_data(sqe, this);
       sqe->ioprio |= IORING_RECV_MULTISHOT;
     }
-
-    bool isDone() noexcept { return done_; }
-    void done() noexcept { done_ = true; }
-
-   private:
-    bool done_{false};
   };
 
   size_t getActiveEvents(WaitForEventsMode waitForEvents);
