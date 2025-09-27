@@ -14,18 +14,38 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <folly/container/irange.h>
 
-#include <folly/settings/Settings.h>
+#include <gtest/gtest.h>
 
-FOLLY_SETTING_DECLARE(follytest, some_unused_flag, std::string);
+TEST(IRangeTest, SingleArg) {
+  int sum = 0;
+  for (const auto i : folly::irange(10)) {
+    sum += i;
+  }
+  EXPECT_EQ(sum, 45);
+}
 
-namespace a_ns {
+TEST(IRangeTest, TwoArg) {
+  int sum = 0;
+  for (const auto i : folly::irange(4, 10)) {
+    sum += i;
+  }
+  EXPECT_EQ(sum, 39);
+}
 
-FOLLY_SETTING_DECLARE(follytest, public_flag_to_a, int);
+TEST(IRangeTest, BigFirst) {
+  int sum = 0;
+  for (const auto i : folly::irange(11, 10)) {
+    sum += i;
+  }
+  EXPECT_EQ(sum, 0);
+}
 
-int a_func();
-void setRemote(int value);
-int getRemote();
-
-} // namespace a_ns
+TEST(IRangeTest, FirstConvertsBig) {
+  int sum = 0;
+  for (const auto i : folly::irange(-1u, 10u)) {
+    sum += i;
+  }
+  EXPECT_EQ(sum, 0);
+}

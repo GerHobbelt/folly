@@ -14,18 +14,11 @@
  * limitations under the License.
  */
 
-#pragma once
+#include <folly/system/HardwareConcurrency.h>
 
-#include <folly/settings/Settings.h>
+#include <folly/portability/GTest.h>
 
-FOLLY_SETTING_DECLARE(follytest, some_unused_flag, std::string);
-
-namespace a_ns {
-
-FOLLY_SETTING_DECLARE(follytest, public_flag_to_a, int);
-
-int a_func();
-void setRemote(int value);
-int getRemote();
-
-} // namespace a_ns
+TEST(HardwareConcurrency, ReturnsNonzero) {
+  auto concurrency = folly::hardware_concurrency();
+  EXPECT_GT(concurrency, 0u);
+}

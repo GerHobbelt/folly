@@ -559,14 +559,14 @@ struct BaseAsyncGeneratorPromise<true> {
 
 template <typename Reference, typename Value, bool RequiresCleanup = false>
 class AsyncGeneratorPromise final
-    : public ExtendedCoroutinePromise,
+    : public ExtendedCoroutinePromiseCrtp<
+          AsyncGeneratorPromise<Reference, Value, RequiresCleanup>>,
       BaseAsyncGeneratorPromise<RequiresCleanup> {
   class YieldAwaiter {
    public:
     bool await_ready() noexcept { return false; }
-    coroutine_handle<> await_suspend(
-        coroutine_handle<AsyncGeneratorPromise> h) noexcept {
-      AsyncGeneratorPromise& promise = h.promise();
+    coroutine_handle<> await_suspend_promise(
+        AsyncGeneratorPromise& promise) noexcept {
       // Pop AsyncStackFrame first as clearContext() clears the frame state.
       folly::popAsyncStackFrameCallee(promise.getAsyncFrame());
       promise.clearContext();
@@ -576,6 +576,10 @@ class AsyncGeneratorPromise final
         return handle.getHandle();
       }
       return promise.continuation_.getHandle();
+    }
+    coroutine_handle<> await_suspend(
+        coroutine_handle<AsyncGeneratorPromise> h) noexcept {
+      return await_suspend_promise(h.promise());
     }
     void await_resume() noexcept {}
   };
@@ -745,6 +749,7 @@ class AsyncGeneratorPromise final
 
   template <typename Awaitable>
   auto await_transform(NothrowAwaitable<Awaitable> awaitable) {
+    static_assert(!noexcept_awaitable_v<Awaitable>); // Doc on NothrowAwaitable
     bypassExceptionThrowing_ = BypassExceptionThrowing::REQUESTED;
     return await_transform(
         folly::ext::must_use_immediately_unsafe_mover(awaitable.unwrap())());
@@ -813,19 +818,17 @@ class AsyncGeneratorPromise final
 
   folly::AsyncStackFrame& getAsyncFrame() noexcept { return asyncFrame_; }
 
-  std::pair<ExtendedCoroutineHandle, AsyncStackFrame*> getErrorHandle(
-      exception_wrapper& ex) final {
-    if (bypassExceptionThrowing_ == BypassExceptionThrowing::ACTIVE) {
-      auto yieldAwaiter = yield_value(co_error(std::move(ex)));
+  static std::optional<ExtendedCoroutineHandle::ErrorHandle> getErrorHandleImpl(
+      AsyncGeneratorPromise& me, exception_wrapper& ex) {
+    if (me.bypassExceptionThrowing_ == BypassExceptionThrowing::ACTIVE) {
+      auto yieldAwaiter = me.yield_value(co_error(std::move(ex)));
       DCHECK(!yieldAwaiter.await_ready());
-      return {
-          yieldAwaiter.await_suspend(
-              coroutine_handle<AsyncGeneratorPromise>::from_promise(*this)),
+      return ExtendedCoroutineHandle::ErrorHandle{
+          yieldAwaiter.await_suspend_promise(me),
           // yieldAwaiter.await_suspend pops a frame
-          getAsyncFrame().getParentFrame()};
+          me.getAsyncFrame().getParentFrame()};
     }
-    return {
-        coroutine_handle<AsyncGeneratorPromise>::from_promise(*this), nullptr};
+    return std::nullopt;
   }
 
  private:

@@ -54,6 +54,8 @@ static constexpr bool msgErrQueueSupported =
     false;
 #endif // FOLLY_HAVE_MSG_ERRQUEUE
 
+static constexpr bool kSupportReflectTos = kIsLinuxActual;
+
 AsyncServerSocket::AcceptCallback::~AcceptCallback() = default;
 
 const uint32_t AsyncServerSocket::kDefaultMaxAcceptAtOnce;
@@ -287,7 +289,9 @@ void AsyncServerSocket::useExistingSockets(
 #if defined(__linux__)
     if (noTransparentTls_) {
       // Ignore return value, errors are ok
-      netops::setsockopt(fd, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
+      __u8 optval = FOLLY_SO_TTLS_TRUSTED_VAL_ENCRYPTED;
+      netops::setsockopt(
+          fd, SOL_SOCKET, FOLLY_SO_TTLS_TRUSTED, &optval, sizeof(optval));
     }
 #endif
 
@@ -341,7 +345,9 @@ void AsyncServerSocket::bindSocket(
 #if defined(__linux__)
   if (noTransparentTls_) {
     // Ignore return value, errors are ok
-    netops::setsockopt(fd, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
+    __u8 optval = FOLLY_SO_TTLS_TRUSTED_VAL_ENCRYPTED;
+    netops::setsockopt(
+        fd, SOL_SOCKET, FOLLY_SO_TTLS_TRUSTED, &optval, sizeof(optval));
   }
 #endif
 
@@ -507,7 +513,9 @@ void AsyncServerSocket::bind(uint16_t port) {
 #if defined(__linux__)
     if (noTransparentTls_) {
       // Ignore return value, errors are ok
-      netops::setsockopt(s, SOL_SOCKET, SO_NO_TRANSPARENT_TLS, nullptr, 0);
+      __u8 optval = FOLLY_SO_TTLS_TRUSTED_VAL_ENCRYPTED;
+      netops::setsockopt(
+          s, SOL_SOCKET, FOLLY_SO_TTLS_TRUSTED, &optval, sizeof(optval));
     }
 #endif
 
@@ -837,7 +845,7 @@ NetworkSocket AsyncServerSocket::createSocket(int family) {
  * TOS derived from the client's connect request
  */
 void AsyncServerSocket::setTosReflect(bool enable) {
-  if (!kIsLinux || !enable) {
+  if (!kSupportReflectTos || !enable) {
     tosReflect_ = false;
     return;
   }
@@ -861,7 +869,7 @@ void AsyncServerSocket::setTosReflect(bool enable) {
 }
 
 void AsyncServerSocket::setListenerTos(uint32_t tos) {
-  if (!kIsLinux || tos == 0) {
+  if (!kSupportReflectTos || tos == 0) {
     listenerTos_ = 0;
     return;
   }
@@ -1040,7 +1048,7 @@ void AsyncServerSocket::handlerReady(
 
     // Connection accepted, get the SYN packet from the client if
     // TOS reflect is enabled
-    if (kIsLinux && clientSocket != NetworkSocket() && tosReflect_) {
+    if (kSupportReflectTos && clientSocket != NetworkSocket() && tosReflect_) {
       std::array<uint32_t, 64> buffer;
       socklen_t len = sizeof(buffer);
       int ret = netops::getsockopt(

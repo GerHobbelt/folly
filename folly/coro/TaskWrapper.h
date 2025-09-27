@@ -122,6 +122,36 @@ inline constexpr bool is_task_promise_or_wrapper_v =
 
 template <typename T, typename WrapperTask, typename Promise>
 class TaskPromiseWrapperBase {
+ private:
+  // Detail of `is_promise_type_punning_safe`. Implementation notes:
+  //  - This needs a body because GCC doesn't want `d` referenced in a `->` type
+  //    signature.
+  //  - To use this with the cheaper-to-compile `FOLLY_DECLVAL`, which is
+  //    `nullptr`, this must be in an unevaluated context, since patently-null
+  //    static casts are special in that they discard offsets.  So, the below
+  //    equality would always be true during constant evaluation.
+  template <typename Me>
+  static FOLLY_CONSTEVAL auto promise_at_offset0(Me me) {
+    return std::bool_constant<
+        static_cast<const void*>(&me) ==
+        static_cast<const void*>(&me.promise_)>{};
+  }
+
+  // CRITICAL SAFETY CHECK: `&promise_` must be the same as `this`, and both
+  // objects must have the same size.  This is required since some promise
+  // operations (notably `get_return_object()` need to obtain a
+  // `coroutine_handle<Promise>` to allow the wrapped coro not to know about
+  // the wrapper.  At the same time, the actual promise is
+  // `TaskPromiseWrapperBase`.  Punning promises & handles in this way is
+  // technically UB, but it's practically safe so long as the layouts of
+  // `Promise` and `TaskPromiseWrapperBase` are identical, which is what we
+  // verify here.
+  static FOLLY_CONSTEVAL bool is_promise_type_punning_safe() {
+    return require_sizeof<Promise> == require_sizeof<TaskPromiseWrapperBase> &&
+        decltype(promise_at_offset0(
+            FOLLY_DECLVAL(TaskPromiseWrapperBase)))::value;
+  }
+
  protected:
   static_assert(
       is_task_or_wrapper_v<WrapperTask, T>,
@@ -139,6 +169,11 @@ class TaskPromiseWrapperBase {
   using TaskWrapperInnerPromise = Promise;
 
   WrapperTask get_return_object() noexcept {
+    // CRITICAL: This assert justifies why it is practically safe to rely on
+    // the `from_promise` UB in `TaskPromiseCrtpBase::get_return_object`.
+    //
+    // PS The assert isn't at class scope, since the type would be incomplete.
+    static_assert(is_promise_type_punning_safe());
     return WrapperTask{promise_.get_return_object()};
   }
 
@@ -186,6 +221,16 @@ class TaskPromiseWrapperBase {
   auto& executorRef(TaskPromisePrivate tag) {
     return promise_.executorRef(tag);
   }
+
+  // These next two definitions forward `getErrorHandle` behavior to the
+  // innermost promise object.  See `ExtendedCoroutineHandle` for docs.
+
+  using use_extended_handle_concept = ExtendedCoroutineHandle::PrivateTag;
+
+  static ExtendedCoroutineHandle::PromiseBase* getPromiseBase(
+      ExtendedCoroutineHandle::PrivateTag priv, TaskPromiseWrapperBase* me) {
+    return Promise::getPromiseBase(priv, &me->promise_);
+  }
 };
 
 template <typename T, typename WrapperTask, typename Promise>
@@ -198,6 +243,9 @@ class TaskPromiseWrapper
  public:
   template <typename U = T> // see "`co_return` with implicit ctor" test
   auto return_value(U&& value) {
+    static_assert( // See `is_promise_type_punning_safe` for rationale
+        require_sizeof<TaskPromiseWrapper> ==
+        require_sizeof<TaskPromiseWrapperBase<T, WrapperTask, Promise>>);
     return this->promise_.return_value(std::forward<U>(value));
   }
 };
@@ -210,7 +258,12 @@ class TaskPromiseWrapper<void, WrapperTask, Promise>
   ~TaskPromiseWrapper() = default;
 
  public:
-  void return_void() noexcept { this->promise_.return_void(); }
+  void return_void() noexcept {
+    static_assert( // See `is_promise_type_punning_safe` for rationale
+        require_sizeof<TaskPromiseWrapper> ==
+        require_sizeof<TaskPromiseWrapperBase<void, WrapperTask, Promise>>);
+    this->promise_.return_void();
+  }
 };
 
 // Mixin for TaskWrapper.h configs for `Task` & `TaskWithExecutor` types

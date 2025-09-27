@@ -82,9 +82,7 @@ class TaskPromiseBase {
     bool await_ready() noexcept { return false; }
 
     template <typename Promise>
-    FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES coroutine_handle<>
-    await_suspend(coroutine_handle<Promise> coro) noexcept {
-      auto& promise = coro.promise();
+    coroutine_handle<> await_suspend_promise(Promise& promise) noexcept {
       // If ScopeExitTask has been attached, then we expect that the
       // ScopeExitTask will handle the lifetime of the async stack. See
       // ScopeExitTaskPromise's FinalAwaiter for more details.
@@ -112,6 +110,12 @@ class TaskPromiseBase {
         return handle.getHandle();
       }
       return promise.continuationRef(privateTag()).getHandle();
+    }
+
+    template <typename Promise>
+    FOLLY_CORO_AWAIT_SUSPEND_NONTRIVIAL_ATTRIBUTES coroutine_handle<>
+    await_suspend(coroutine_handle<Promise> coro) noexcept {
+      return await_suspend_promise(coro.promise());
     }
 
     [[noreturn]] void await_resume() noexcept { folly::assume_unreachable(); }
@@ -178,6 +182,7 @@ class TaskPromiseBase {
 
   template <typename Awaitable>
   auto await_transform(NothrowAwaitable<Awaitable> awaitable) {
+    static_assert(!noexcept_awaitable_v<Awaitable>); // Doc on NothrowAwaitable
     bypassExceptionThrowing_ = BypassExceptionThrowing::REQUESTED;
     return await_transform(
         folly::ext::must_use_immediately_unsafe_mover(awaitable.unwrap())());
@@ -247,7 +252,7 @@ class TaskPromiseBase {
 template <typename Promise, typename T>
 class TaskPromiseCrtpBase
     : public TaskPromiseBase,
-      public ExtendedCoroutinePromise {
+      public ExtendedCoroutinePromiseCrtp<Promise> {
  public:
   using StorageType = detail::lift_lvalue_reference_t<T>;
 
@@ -275,24 +280,22 @@ class TaskPromiseCrtpBase
     return do_safe_point(*this);
   }
 
+  static std::optional<ExtendedCoroutineHandle::ErrorHandle> getErrorHandleImpl(
+      Promise& me, exception_wrapper& ex) {
+    if (me.bypassExceptionThrowing_ == BypassExceptionThrowing::ACTIVE) {
+      auto finalAwaiter = me.yield_value(co_error(std::move(ex)));
+      DCHECK(!finalAwaiter.await_ready());
+      return ExtendedCoroutineHandle::ErrorHandle{
+          finalAwaiter.await_suspend_promise(me),
+          // finalAwaiter.await_suspend pops a frame
+          me.getAsyncFrame().getParentFrame()};
+    }
+    return std::nullopt;
+  }
+
  protected:
   TaskPromiseCrtpBase() noexcept = default;
   ~TaskPromiseCrtpBase() = default;
-
-  std::pair<ExtendedCoroutineHandle, AsyncStackFrame*> getErrorHandle(
-      exception_wrapper& ex) final {
-    auto& me = *static_cast<Promise*>(this);
-    if (bypassExceptionThrowing_ == BypassExceptionThrowing::ACTIVE) {
-      auto finalAwaiter = yield_value(co_error(std::move(ex)));
-      DCHECK(!finalAwaiter.await_ready());
-      return {
-          finalAwaiter.await_suspend(
-              coroutine_handle<Promise>::from_promise(me)),
-          // finalAwaiter.await_suspend pops a frame
-          getAsyncFrame().getParentFrame()};
-    }
-    return {coroutine_handle<Promise>::from_promise(me), nullptr};
-  }
 
   Try<StorageType> result_;
 };
@@ -1003,6 +1006,10 @@ Task<drop_unit_t<T>> makeResultTask(Try<T> t) {
 template <typename Promise, typename T>
 inline Task<T>
 detail::TaskPromiseCrtpBase<Promise, T>::get_return_object() noexcept {
+  // Watch out: When used with `TaskWrapper`, this relies on "practically safe"
+  // UB wherein this handle is only valid because `TaskPromise` and the true
+  // "wrapper promise" of the wrapper coro coincide in layout exactly.
+  // Documented in `TaskPromiseWrapperBase::is_promise_type_punning_safe`.
   return Task<T>{
       coroutine_handle<Promise>::from_promise(*static_cast<Promise*>(this))};
 }

@@ -64,7 +64,7 @@ namespace {
 
 #if defined __linux__
 // to store libc's original setsockopt()
-typedef int (*setsockopt_ptr)(int, int, int, const void*, socklen_t);
+using setsockopt_ptr = int (*)(int, int, int, const void*, socklen_t);
 setsockopt_ptr real_setsockopt_ = nullptr;
 
 // global struct to initialize before main runs. we can init within a test,
@@ -83,13 +83,24 @@ GlobalStatic globalStatic;
 
 } // namespace
 
-// we intercept setsoctopt to test setting NO_TRANSPARENT_TLS opt
+// Intercepting setsockopt to test system behavior with disabled TTLS.
 // this name has to be global
 int setsockopt(
     int sockfd, int level, int optname, const void* optval, socklen_t optlen) {
-  if (optname == SO_NO_TRANSPARENT_TLS) {
+  /**
+   *This is a @deprecated approach to disabling TTLS and should be
+   *removed after completing the migration to FOLLY_SO_TTLS_TRUSTED.
+   */
+  if (optname == FOLLY_SO_NO_TRANSPARENT_TLS) {
     globalStatic.ttlsDisabledSet.insert(folly::NetworkSocket::fromFd(sockfd));
     return 0;
+  }
+  if (optname == FOLLY_SO_TTLS_TRUSTED && optval != nullptr) {
+    __u8 optValue = *(__u8*)optval;
+    if (optValue == FOLLY_SO_TTLS_TRUSTED_VAL_ENCRYPTED) {
+      globalStatic.ttlsDisabledSet.insert(folly::NetworkSocket::fromFd(sockfd));
+      return 0;
+    }
   }
   return real_setsockopt_(sockfd, level, optname, optval, optlen);
 }
