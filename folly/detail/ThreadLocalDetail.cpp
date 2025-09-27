@@ -70,18 +70,128 @@ bool ThreadEntrySet::basicSanity() const {
   auto const size = threadElements.size();
   rand_engine rng;
   std::uniform_int_distribution<size_t> dist{0, size - 1};
-  if (dist(rng) < constexpr_log2(size)) {
+  if (!(dist(rng) < constexpr_log2(size))) {
     return true;
   }
-  return //
-      threadElements.size() == entryToVectorSlot.size() &&
-      std::all_of(
-          entryToVectorSlot.begin(),
-          entryToVectorSlot.end(),
-          [&](auto const& kvp) {
-            return kvp.second < threadElements.size() &&
-                threadElements[kvp.second].threadEntry == kvp.first;
-          });
+  for (auto const& kvp : entryToVectorSlot) {
+    if (!(kvp.second < threadElements.size() &&
+          threadElements[kvp.second].threadEntry == kvp.first)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void ThreadEntrySet::clear() {
+  DCHECK(basicSanity());
+  entryToVectorSlot.clear();
+  threadElements.clear();
+}
+
+int64_t ThreadEntrySet::getIndexFor(ThreadEntry* entry) const {
+  auto iter = entryToVectorSlot.find(entry);
+  if (iter != entryToVectorSlot.end()) {
+    return static_cast<int64_t>(iter->second);
+  }
+  return -1;
+}
+
+void* ThreadEntrySet::getPtrForThread(ThreadEntry* entry) const {
+  auto index = getIndexFor(entry);
+  if (index < 0) {
+    return nullptr;
+  }
+  return threadElements[static_cast<size_t>(index)].wrapper.ptr;
+}
+
+bool ThreadEntrySet::contains(ThreadEntry* entry) const {
+  DCHECK(basicSanity());
+  return entryToVectorSlot.find(entry) != entryToVectorSlot.end();
+}
+
+bool ThreadEntrySet::insert(ThreadEntry* entry) {
+  DCHECK(basicSanity());
+  auto iter = entryToVectorSlot.find(entry);
+  if (iter != entryToVectorSlot.end()) {
+    // Entry already present. Sanity check and exit.
+    DCHECK_EQ(entry, threadElements[iter->second].threadEntry);
+    return false;
+  }
+  threadElements.emplace_back(entry);
+  auto idx = threadElements.size() - 1;
+  entryToVectorSlot[entry] = idx;
+  return true;
+}
+
+bool ThreadEntrySet::insert(const Element& element) {
+  DCHECK(basicSanity());
+  auto iter = entryToVectorSlot.find(element.threadEntry);
+  if (iter != entryToVectorSlot.end()) {
+    // Entry already present. Skip copying over element. Caller
+    // responsible for handling acceptability of this behavior.
+    DCHECK_EQ(element.threadEntry, threadElements[iter->second].threadEntry);
+    return false;
+  }
+  threadElements.push_back(element);
+  auto idx = threadElements.size() - 1;
+  entryToVectorSlot[element.threadEntry] = idx;
+  return true;
+}
+
+ThreadEntrySet::Element ThreadEntrySet::erase(ThreadEntry* entry) {
+  DCHECK(basicSanity());
+  auto iter = entryToVectorSlot.find(entry);
+  if (iter == entryToVectorSlot.end()) {
+    // Entry not present.
+    return Element{nullptr};
+  }
+  auto idx = iter->second;
+  DCHECK_LT(idx, threadElements.size());
+  entryToVectorSlot.erase(iter);
+  Element last = threadElements.back();
+  Element current = threadElements[idx];
+  if (idx != threadElements.size() - 1) {
+    threadElements[idx] = last;
+    entryToVectorSlot[last.threadEntry] = idx;
+  }
+  threadElements.pop_back();
+  DCHECK(basicSanity());
+  if (compressible()) {
+    compress();
+  }
+  DCHECK(basicSanity());
+  return current;
+}
+
+bool ThreadEntrySet::compressible() const {
+  // We choose a sufficiently-large multiplier so that there is no risk of a
+  // following insert growing the vector and then a following erase shrinking
+  // the vector, since that way lies non-amortized-O(N)-complexity costs for
+  // both insert and erase ops.
+  constexpr size_t const mult = 4;
+  auto& vec = threadElements;
+  return std::max(size_t(1), vec.size()) * mult <= vec.capacity();
+}
+
+bool ThreadEntry::cachedInSetMatchesElementsArray(uint32_t id) {
+  if constexpr (!kIsDebug) {
+    return true;
+  }
+
+  if (removed_) {
+    // Pointer in entry set and elements array need not match anymore.
+    return true;
+  }
+
+  auto rlock = meta->allId2ThreadEntrySets_[id].tryRLock();
+  if (!rlock) {
+    // Try lock failed. Skip checking in this case. Avoids
+    // getting stuck in case this validation is called when
+    // already holding the entry set lock.
+    return true;
+  }
+
+  return elements[id].ptr == rlock->getPtrForThread(this);
 }
 
 void ThreadEntrySet::compress() {
@@ -559,6 +669,33 @@ void ThreadEntry::cleanupElement(uint32_t id) {
   elements[id].dispose(TLPDestructionMode::THIS_THREAD);
   // Cleanup
   elements[id].cleanup();
+}
+
+void ThreadEntry::resetElementImplAfterSet(
+    const ElementWrapper& element, uint32_t id) {
+  auto& set = meta->allId2ThreadEntrySets_[id];
+  auto rlock = set.rlock();
+  cleanupElement(id);
+  elements[id] = element;
+  if (removed_) {
+    // Elements no longer being mirrored in the ThreadEntrySet.
+    // Thread must have cleared itself from the set when it started exiting.
+    DCHECK(!rlock->contains(this));
+    return;
+  }
+  if (element.ptr != nullptr && !rlock->contains(this)) {
+    meta->ensureThreadEntryIsInSet(this, set, rlock);
+  }
+  auto slot = rlock->getIndexFor(this);
+  if (slot < 0) {
+    // Not present in ThreadEntrySet implies the value was never set to be
+    // non-null and new value in element.ptr is nullptr as well.
+    DCHECK(!element.ptr);
+    DCHECK(!elements[id].ptr);
+    return;
+  }
+  size_t uslot = static_cast<size_t>(slot);
+  rlock.asNonConstUnsafe().threadElements[uslot].wrapper = element;
 }
 
 FOLLY_STATIC_CTOR_PRIORITY_MAX
