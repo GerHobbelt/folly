@@ -327,8 +327,7 @@ static folly::Indestructible<SQGroupInfoRegistry> sSQGroupInfoRegistry;
 
 template <class... Args>
 IoUringProvidedBufferRing::UniquePtr makeProvidedBufferRing(Args&&... args) {
-  return IoUringProvidedBufferRing::UniquePtr(
-      new IoUringProvidedBufferRing(std::forward<Args>(args)...));
+  return IoUringProvidedBufferRing::create(std::forward<Args>(args)...);
 }
 
 #else
@@ -1122,7 +1121,11 @@ void IoUringBackend::initSubmissionLinked() {
           .ringSizeShift = ringShift,
           .useHugePages = false,
       };
-      bufferProvider_ = makeProvidedBufferRing(this->ioRingPtr(), options);
+      for (size_t i = 0; i < options_.providedBufRings; i++) {
+        bufferProviders_.push_back(
+            makeProvidedBufferRing(this->ioRingPtr(), options));
+        options.gid = nextBufferProviderGid();
+      }
     } catch (const IoUringProvidedBufferRing::LibUringCallError& ex) {
       LOG(ERROR) << folly::to<std::string>(
           "failed to make provided buffer ring, buffer count: ",

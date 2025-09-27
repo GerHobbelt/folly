@@ -27,7 +27,7 @@
 #include <folly/lang/Exception.h>
 #include <folly/synchronization/Hazptr.h>
 
-#ifdef __aarch64__
+#if FOLLY_AARCH64 && FOLLY_F14_CRC_INTRINSIC_AVAILABLE
 #include <arm_acle.h>
 #include <arm_neon.h>
 #elif FOLLY_SSE_PREREQ(4, 2) && !FOLLY_MOBILE
@@ -537,8 +537,6 @@ class alignas(64) BucketTable {
   Iterator cend() { return Iterator(nullptr); }
 
  private:
-  // Could be optimized to avoid an extra pointer dereference by
-  // allocating buckets_ at the same time.
   class Buckets
       : public hazptr_obj_base<
             Buckets,
@@ -546,8 +544,8 @@ class alignas(64) BucketTable {
             concurrenthashmap::HazptrTableDeleter> {
     using BucketRoot = hazptr_root<Node, Atom>;
 
-    Buckets() {}
-    ~Buckets() {}
+    Buckets() = default;
+    ~Buckets() = default;
 
    public:
     static Buckets* create(size_t count, hazptr_obj_cohort<Atom>* cohort) {
@@ -830,7 +828,9 @@ class alignas(64) BucketTable {
 
 } // namespace bucket
 
-#if (FOLLY_SSE_PREREQ(4, 2) || FOLLY_AARCH64) && \
+#if (                                                        \
+    FOLLY_SSE_PREREQ(4, 2) ||                                \
+    (FOLLY_AARCH64 && FOLLY_F14_CRC_INTRINSIC_AVAILABLE)) && \
     FOLLY_F14_VECTOR_INTRINSICS_AVAILABLE
 
 namespace simd {
@@ -1083,8 +1083,8 @@ class alignas(64) SIMDTable {
   };
 
   class Chunks : public hazptr_obj_base<Chunks, Atom, HazptrTableDeleter> {
-    Chunks() {}
-    ~Chunks() {}
+    Chunks() = default;
+    ~Chunks() = default;
 
    public:
     static Chunks* create(size_t count, hazptr_obj_cohort<Atom>* cohort) {

@@ -157,17 +157,23 @@ non_fbcode_target(
 non_fbcode_target(
     _kind = folly_xplat_library,
     name = "asyncio_executor",
+    srcs = [
+        "AsyncioExecutor.cpp",
+    ],
+    enable_static_variant = False,
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "AsyncioExecutor.h",
     ],
     deps = [
         ":weak",
+        "//xplat/folly:chrono",
         "//xplat/folly:exception_string",
         "//xplat/folly:function",
         "//xplat/folly/executors:drivable_executor",
         "//xplat/folly/executors:sequenced_executor",
         "//xplat/folly/io/async:async_base",
+        "//xplat/folly/portability:gflags",
     ],
 )
 
@@ -461,17 +467,22 @@ non_fbcode_target(
 fbcode_target(
     _kind = cpp_library,
     name = "asyncio_executor",
+    srcs = [
+        "AsyncioExecutor.cpp",
+    ],
     headers = [
         "AsyncioExecutor.h",
     ],
     modular_headers = False,
     exported_deps = [
         ":weak",
+        "//folly:chrono",
         "//folly:exception_string",
         "//folly:function",
         "//folly/executors:drivable_executor",
         "//folly/executors:sequenced_executor",
         "//folly/io/async:async_base",
+        "//folly/portability:gflags",
     ],
 )
 

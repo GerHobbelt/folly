@@ -99,7 +99,7 @@ AsyncIoUringSocket::AsyncIoUringSocket(EventBase* evb, Options&& options)
     : evb_(evb), options_(std::move(options)) {
   backend_ = getBackendFromEventBase(evb);
 
-  if (!backend_->bufferProvider()) {
+  if (!backend_->hasBufferProvider()) {
     throw std::runtime_error("require a IoUringBackend with a buffer provider");
   }
   readSqe_ = ReadSqe::UniquePtr(new ReadSqe(this));
@@ -202,7 +202,7 @@ bool AsyncIoUringSocket::supports(EventBase* eb) {
   if (!io) {
     io = IoUringEventBaseLocal::try_get(eb);
   }
-  return io && io->bufferProvider() != nullptr;
+  return io && io->hasBufferProvider();
 }
 
 bool AsyncIoUringSocket::supportsZcRx(EventBase* eb) {
@@ -450,7 +450,7 @@ void AsyncIoUringSocket::readEOF() {
 void AsyncIoUringSocket::readError() {
   VLOG(4) << " AsyncIoUringSocket::readError() this=" << this;
   state_ = State::Error;
-  failAllWrites();
+  shutdownFlags_ |= ShutFlags_Read | ShutFlags_Write;
 }
 
 void AsyncIoUringSocket::setReadCB(ReadCallback* callback) {
@@ -654,6 +654,11 @@ void AsyncIoUringSocket::ReadSqe::callback(const io_uring_cqe* cqe) noexcept {
     } else if (res < 0) {
       // assume ECANCELED is not an unrecoverable error state, but we do still
       // have to propogate to the callback as they presumably called the cancel.
+      auto callback = readCallback_;
+      if (parent_ && res != -ECANCELED) {
+        readCallback_ = nullptr;
+        parent_->readError();
+      }
       AsyncSocketException::AsyncSocketExceptionType err;
       std::string error;
       switch (res) {
@@ -671,9 +676,9 @@ void AsyncIoUringSocket::ReadSqe::callback(const io_uring_cqe* cqe) noexcept {
               ")");
           break;
       }
-      readCallback_->readErr(AsyncSocketException(err, std::move(error)));
+      callback->readErr(AsyncSocketException(err, error));
       if (parent_ && res != -ECANCELED) {
-        parent_->readError();
+        parent_->failAllWrites();
       }
     } else {
       uint64_t const cb_was = setReadCbCount_;
