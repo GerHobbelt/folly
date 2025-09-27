@@ -18,7 +18,7 @@
 
 #include <folly/coro/Noexcept.h>
 #include <folly/coro/safe/SafeTask.h>
-#include <folly/coro/safe/detail/AsyncClosureBindings.h>
+#include <folly/coro/safe/detail/BindAsyncClosure.h>
 #include <folly/detail/tuple.h>
 
 #if FOLLY_HAS_IMMOVABLE_COROUTINES
@@ -323,9 +323,9 @@ template <typename ArgMap, size_t ArgI, typename Arg>
 decltype(auto) async_closure_resolve_backref(
     capture_private_t priv, auto& tup, Arg&) {
   constexpr auto Tag = Arg::folly_bindings_identifier_tag;
-  // `AsyncClosureBindings.h` populates tags via `named_bind_info_tag_v`, which
+  // `BindAsyncClosure.h` populates tags via `named_bind_info_tag_v`, which
   // uses `no_tag_t` to mean "no tag was set" -- so you can't look it up.
-  static_assert(!std::is_same_v<folly::bindings::ext::no_tag_t, decltype(Tag)>);
+  static_assert(!std::is_same_v<folly::bind::ext::no_tag_t, decltype(Tag)>);
   // This will fail on missing, or ambiguous tags.
   using Entry = decltype(async_closure_backref_get<Tag>(FOLLY_DECLVAL(ArgMap)));
   static_assert(
@@ -343,9 +343,9 @@ decltype(auto) async_closure_resolve_backref(
   return capture<Source&>(priv, forward_bind_wrapper(target.get_lref()));
 }
 
-// Replace `"x"_id` backreferences in the args of `capture_in_place` and
-// `capture_in_place_with` with `capture<T&>` references to the corresponding
-// capture storage.
+// Replace `"x"_id` backreferences in the args of `bind::capture_in_place` and
+// `bind::capture_in_place_with` with `capture<T&>` references to the
+// corresponding capture storage.
 //
 // Backrefs may ONLY point to capture storage -- any args moved into the inner
 // coro are subject to unspecified destruction order, and so could not safely
@@ -360,14 +360,14 @@ template <typename ArgMap, size_t ArgI, typename T, typename... Args>
 struct async_closure_backref_populator<
     ArgMap,
     ArgI,
-    bind_wrapper_t<folly::bindings::detail::in_place_args_maker<T, Args...>>> {
+    bind_wrapper_t<folly::bind::detail::in_place_args_maker<T, Args...>>> {
   using BindWrap =
-      bind_wrapper_t<folly::bindings::detail::in_place_args_maker<T, Args...>>;
+      bind_wrapper_t<folly::bind::detail::in_place_args_maker<T, Args...>>;
   auto operator()(capture_private_t priv, auto& tup, BindWrap&& bw) const {
     return lite_tuple::apply(
         [&](Args&&... args) {
           return unsafe_tuple_to_bind_wrapper(
-              folly::bindings::make_in_place_with([&]() {
+              bind::in_place_with([&]() {
                 return T{[&]() -> decltype(auto) {
                   if constexpr (requires(Args a) {
                                   a.folly_bindings_identifier_tag;
@@ -444,7 +444,7 @@ decltype(auto) async_closure_bind_inner_coro_arg(
     // the storage type.
     return storage_ref.template to_capture_ref</*shared*/ true>(priv);
   } else if constexpr (
-      // "own": Move stored `as_capture()` into inner coro.
+      // "own": Move stored `bind::capture()` into inner coro.
       is_instantiation_of_v<async_closure_inner_stored_arg, Bs> ||
       // `scheduleSelfClosure` / `scheduleScopeClosure` self-references.
       is_instantiation_of_v<async_closure_scope_self_ref_hack, Bs>) {
@@ -455,7 +455,7 @@ decltype(auto) async_closure_bind_inner_coro_arg(
     return std::move(bs);
   } else { // "regular": Non-`capture` binding.
     static_assert(is_instantiation_of_v<async_closure_regular_arg, Bs>);
-    // We don't inspect `storage_type` here -- `detail/AsyncClosureBindings.h`
+    // We don't inspect `storage_type` here -- `detail/BindAsyncClosure.h`
     // should have ensured that `bind_info_t` was in a default, no-op state.
     return std::move(bs).bindWrapper_.what_to_bind();
   }
@@ -486,7 +486,7 @@ struct with_tag {
 //
 // Rationale: "Eager" is the only option matching user expectations, since
 // regular coroutine args are bound eagerly too.  Implementation-wise, all
-// `lang/Bindings.h` logic has to be resolved within the current statement,
+// `lang/bind/Bind.h` logic has to be resolved within the current statement,
 // since the auxiliary reference-bearing objects aren't valid beyond that.
 template <auto Cfg>
 auto bind_captures_to_closure(auto&& make_inner_coro, auto safeties_and_binds) {

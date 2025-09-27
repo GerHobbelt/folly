@@ -140,6 +140,17 @@ namespace detail {
 namespace small_vector_detail {
 
 /*
+ * Just because a type is trivially copyable doesn't mean we should copy
+ * it. A copy constructor that is deleted is still considered trivial.
+ *
+ * If a type is not move constructible, it shouldn't be relocated. We
+ * should avoid resizing in general.
+ */
+template <typename T>
+inline constexpr bool should_trivially_copy =
+    std::is_trivially_copyable_v<T> && std::is_move_constructible_v<T>;
+
+/*
  * Move objects in memory to the right into some uninitialized memory, where
  * the region overlaps. Then call create() for each hole in reverse order.
  *
@@ -150,7 +161,7 @@ namespace small_vector_detail {
  * extra copies and moves for non-trivial types.
  */
 template <class T, class Create>
-typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
+typename std::enable_if<!should_trivially_copy<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -204,7 +215,7 @@ moveObjectsRightAndCreate(
 // memory may be uninitialized, and std::move_backward() won't work when it
 // can't memmove().
 template <class T, class Create>
-typename std::enable_if<std::is_trivially_copyable_v<T>>::type
+typename std::enable_if<should_trivially_copy<T>>::type
 moveObjectsRightAndCreate(
     T* const first,
     T* const lastConstructed,
@@ -342,7 +353,8 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
    * ranges don't overlap.
    */
   template <class T>
-  typename std::enable_if<!std::is_trivially_copyable_v<T>>::type
+  typename std::enable_if<
+      !detail::small_vector_detail::should_trivially_copy<T>>::type
   moveToUninitialized(T* first, T* last, T* out) {
     std::size_t idx = 0;
     {
@@ -363,7 +375,8 @@ struct IntegralSizePolicy<SizeType, true, AlwaysUseHeap>
 
   // Specialization for trivially copyable types.
   template <class T>
-  typename std::enable_if<std::is_trivially_copyable_v<T>>::type
+  typename std::enable_if<
+      detail::small_vector_detail::should_trivially_copy<T>>::type
   moveToUninitialized(T* first, T* last, T* out) {
     std::memmove(
         static_cast<void*>(out),
@@ -533,7 +546,7 @@ class small_vector
     }
 
     auto n = o.size();
-    makeSize(n);
+    makeSize</* IgnoreExistingData */ true>(n);
     {
       auto rollback = makeGuard([&] { freeHeap(); });
       std::uninitialized_copy(o.begin(), o.begin() + n, begin());
@@ -1076,7 +1089,7 @@ class small_vector
   }
 
   void copyWholeInlineStorageTrivial(small_vector const& o) {
-    static_assert(std::is_trivially_copyable_v<Value>);
+    static_assert(detail::small_vector_detail::should_trivially_copy<Value>);
     FOLLY_PUSH_WARNING
     FOLLY_GCC_DISABLE_WARNING("-Warray-bounds")
     std::copy(o.u.buffer(), o.u.buffer() + MaxInline, u.buffer());
@@ -1185,7 +1198,7 @@ class small_vector
 
   template <typename InitFunc>
   void doConstruct(size_type n, InitFunc&& func) {
-    makeSize(n);
+    makeSize</* IgnoreExistingData */ true>(n);
     assert(size() == 0);
     this->incrementSize(n);
     {
@@ -1218,18 +1231,26 @@ class small_vector
     return static_cast<size_type>(std::min<size_t>(c, max_size()));
   }
 
+  template <bool IgnoreExistingData = false>
   void makeSize(size_type newSize) {
     if (newSize <= capacity()) {
       return;
     }
-    makeSizeInternal(newSize, false, [](void*) { assume_unreachable(); }, 0);
+    auto emplaceFunc = [](void*) { assume_unreachable(); };
+    makeSizeInternal<
+        /* Insert */ false,
+        IgnoreExistingData,
+        decltype(emplaceFunc)>(newSize, std::move(emplaceFunc), 0);
   }
 
   template <typename EmplaceFunc>
   void makeSize(size_type newSize, EmplaceFunc&& emplaceFunc, size_type pos) {
     assert(size() == capacity());
-    makeSizeInternal(
-        newSize, true, std::forward<EmplaceFunc>(emplaceFunc), pos);
+
+    makeSizeInternal<
+        /* Insert */ true,
+        /* IgnoreExistingData */ false,
+        EmplaceFunc>(newSize, std::forward<EmplaceFunc>(emplaceFunc), pos);
   }
 
   /*
@@ -1242,12 +1263,9 @@ class small_vector
    * NOTE: If reallocation is not needed, insert must be false,
    * because we only know how to emplace elements into new memory.
    */
-  template <typename EmplaceFunc>
+  template <bool Insert, bool IgnoreExistingData, typename EmplaceFunc>
   void makeSizeInternal(
-      size_type newSize,
-      bool insert,
-      EmplaceFunc&& emplaceFunc,
-      size_type pos) {
+      size_type newSize, EmplaceFunc&& emplaceFunc, size_type pos) {
     if (newSize > max_size()) {
       throw_exception<std::length_error>("max_size exceeded in small_vector");
     }
@@ -1300,11 +1318,12 @@ class small_vector
       auto rollback = makeGuard([&] { //
         sizedFree(newh, sizeBytes);
       });
-      if (insert) {
+      if constexpr (Insert) {
+        static_assert(!IgnoreExistingData);
         // move and insert the new element
         this->moveToUninitializedEmplace(
             begin(), end(), newp, pos, std::forward<EmplaceFunc>(emplaceFunc));
-      } else {
+      } else if constexpr (!IgnoreExistingData) {
         // move without inserting new element
         if (data()) {
           this->moveToUninitialized(begin(), end(), newp);
@@ -1388,7 +1407,8 @@ class small_vector
       sizeof(InlineStorageType) <= hardware_constructive_interference_size / 2;
 
   static constexpr bool kShouldCopyWholeInlineStorageTrivial =
-      std::is_trivially_copyable_v<Value> && kMayCopyWholeInlineStorage;
+      detail::small_vector_detail::should_trivially_copy<Value> &&
+      kMayCopyWholeInlineStorage;
 
   static bool constexpr kHasInlineCapacity = !BaseType::kAlwaysUseHeap &&
       sizeof(HeapPtrWithCapacity) < sizeof(InlineStorageType);

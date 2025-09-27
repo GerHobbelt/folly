@@ -16,12 +16,10 @@
 
 #include <folly/coro/Noexcept.h>
 #include <folly/coro/Task.h>
-#include <folly/coro/safe/detail/AsyncClosureBindings.h>
+#include <folly/coro/safe/detail/BindAsyncClosure.h>
 #include <folly/portability/GTest.h>
 
 #if FOLLY_HAS_IMMOVABLE_COROUTINES
-
-using namespace folly::bindings;
 
 namespace folly::coro::detail {
 
@@ -51,7 +49,7 @@ constexpr void check_one_no_shared_cleanup(auto arg_fn) {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{arg_fn()})),
+                       .is_invoke_member = false}>(bind::args{arg_fn()})),
           lite_tuple::
               tuple<vtag_t<ExpectedSafety>, lite_tuple::tuple<ExpectedT>>>);
 }
@@ -66,7 +64,7 @@ constexpr void check_one_shared_cleanup(auto arg_fn) {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{
+                       .is_invoke_member = false}>(bind::args{
               arg_fn(),
               // Triggers "shared cleanup" downgrade logic.
               // NB: Without the second `&`, this would look like
@@ -92,16 +90,16 @@ constexpr bool check_empty() {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{})),
+                       .is_invoke_member = false}>(bind::args{})),
           lite_tuple::tuple<vtag_t<>, lite_tuple::tuple<>>>);
   return true;
 }
 
 static_assert(check_empty());
 
-// Somewhat redundant with `lang/Bindings.h` tests, but we should show that
-// these work "as expected".  No `make_in_place` coverage here since we
-// don't allow those on the "regular" path.
+// Somewhat redundant with `lang/bind/Bind.h` tests, but we should show that
+// these work "as expected".  No `bind::in_place` coverage here since we don't
+// allow those on the "regular" path.
 constexpr bool check_regular_args() {
   int x = 7;
   check_one<async_closure_regular_arg<int, bind_wrapper_t<int&>>>(
@@ -120,7 +118,7 @@ constexpr bool check_regular_args() {
   // actually passing a prvalue.  The reason we test both scenarios is that
   // it's completely fine to plumb prvalues through `async_closure`, since the
   // resulting task will either take it by-value, or it'll be a `now_task`.
-  // Since `bound_args{}` objects are immovable, it's quite hard for a user to
+  // Since `bind::args{}` objects are immovable, it's quite hard for a user to
   // accidentally grab a dangling ref to a prvalue this way.
   check_one<async_closure_regular_arg<int, bind_wrapper_t<int&&>>>([]() {
     return 5;
@@ -157,11 +155,11 @@ constexpr bool check_capture_val_to_ref() {
     //       safeAsyncScope<CancelViaParent>(),
     //       [](auto scope) -> closure_task<void> {
     //         co_await async_closure(
-    //             bound_args{scope, as_capture(123)},
+    //             bind::args{scope, bind::capture(123)},
     //             [](auto outerScope, auto n) -> closure_task<void> {
     //               outerScope.with(co_await co_current_executor).schedule(
     //                   async_closure(
-    //                       bound_args{n},
+    //                       bind::args{n},
     //                       [](auto n2) -> closure_task<void> {
     //                         ++n2;
     //                         co_return;
@@ -298,7 +296,7 @@ constexpr bool check_capture_lref_to_rref() {
   async_closure_safeties_and_bindings<async_closure_bindings_cfg{
       .force_outer_coro = false,
       .force_shared_cleanup = false,
-      .is_invoke_member = false}>(bound_args{
+      .is_invoke_member = false}>(bind::args{
       co_cleanup_capture<HasCleanup&>{priv, forward_bind_wrapper(cleanup)}});
 #endif
 
@@ -341,12 +339,12 @@ static_assert(check_capture_rref_to_rref());
 constexpr bool check_owned_capture_int() {
   check_one_no_shared_cleanup<
       async_closure_inner_stored_arg<capture<int>, bind_wrapper_t<int&&>>>(
-      []() { return as_capture(5); });
+      []() { return bind::capture(5); });
   // In this test, a `co_cleanup_capture` ref is passed as an argument, but
   // importantly, that doesn't force the closure to have an outer coro.
   check_one_shared_cleanup<async_closure_inner_stored_arg<
       after_cleanup_capture<int>,
-      bind_wrapper_t<int&&>>>([]() { return as_capture(5); });
+      bind_wrapper_t<int&&>>>([]() { return bind::capture(5); });
   return true;
 }
 
@@ -355,13 +353,13 @@ static_assert(check_owned_capture_int());
 constexpr bool check_parent_capture_ref() {
   int x = 5;
   check_one_no_shared_cleanup<capture<const int&>, safe_alias::unsafe>([&]() {
-    return capture_const_ref{x};
+    return bind::capture_const_ref{x};
   });
   check_one_no_shared_cleanup<capture<int&>, safe_alias::unsafe>([&]() {
-    return capture_mut_ref{x};
+    return bind::capture_mut_ref{x};
   });
   check_one_shared_cleanup<after_cleanup_capture<int&&>, safe_alias::unsafe>(
-      [&]() { return capture_mut_ref{std::move(x)}; });
+      [&]() { return bind::capture_mut_ref{std::move(x)}; });
 
   // Check multiple args together, including a stored argument eligible for
   // `after_cleanup` downgrade, and a ref eligible for an upgrade.  Ensures
@@ -375,7 +373,7 @@ constexpr bool check_parent_capture_ref() {
       .is_invoke_member = false};
   after_cleanup_capture<int> av{priv, forward_bind_wrapper(5)};
   using ActualTup = decltype(async_closure_safeties_and_bindings<Cfg>(
-      bound_args{as_capture{const_ref{5}, 5}, av}));
+      bind::args{bind::capture{bind::const_ref{5}, 5}, av}));
   using ExpectedTup = lite_tuple::tuple<
       vtag_t<
           safe_alias::unsafe,
@@ -400,7 +398,7 @@ constexpr bool check_owned_cleanup_capture() {
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
                        .is_invoke_member = false}>(
-              bound_args{capture_in_place<HasCleanup>()})),
+              bind::args{bind::capture_in_place<HasCleanup>()})),
           lite_tuple::tuple<
               // This is the safety from the point of view of the closure's
               // parent.  It does not matter that inside the closure, we have
@@ -408,10 +406,10 @@ constexpr bool check_owned_cleanup_capture() {
               vtag_t<safe_alias::maybe_value>,
               lite_tuple::tuple<async_closure_outer_stored_arg<
                   co_cleanup_capture<HasCleanup>,
-                  bind_wrapper_t<folly::bindings::detail::in_place_args_maker<
+                  bind_wrapper_t<folly::bind::detail::in_place_args_maker<
                       detail::HasCleanup>>,
                   /*ArgI = */ 0,
-                  /*Tag = */ folly::bindings::ext::no_tag_t{}>>>>);
+                  /*Tag = */ folly::bind::ext::no_tag_t{}>>>>);
   return true;
 }
 
@@ -426,7 +424,7 @@ constexpr bool check_force_shared_cleanup_blocks_ref_upgrade() {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{cr})),
+                       .is_invoke_member = false}>(bind::args{cr})),
           lite_tuple::tuple<
               // ref upgrades don't affect the parent's measurement...
               vtag_t<safe_alias::after_cleanup_ref>,
@@ -438,7 +436,7 @@ constexpr bool check_force_shared_cleanup_blocks_ref_upgrade() {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = true, // this changed...
-                       .is_invoke_member = false}>(bound_args{cr})),
+                       .is_invoke_member = false}>(bind::args{cr})),
           lite_tuple::tuple<
               vtag_t<safe_alias::after_cleanup_ref>,
               // ...and the result was -- no ref upgrade
@@ -455,7 +453,8 @@ constexpr bool check_force_outer_coro() {
                    async_closure_bindings_cfg{
                        .force_outer_coro = false,
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{as_capture(5)})),
+                       .is_invoke_member = false}>(
+              bind::args{bind::capture(5)})),
           lite_tuple::tuple<
               vtag_t<safe_alias::maybe_value>,
               // inner <=> no outer coro
@@ -468,7 +467,8 @@ constexpr bool check_force_outer_coro() {
                    async_closure_bindings_cfg{
                        .force_outer_coro = true, // this changed...
                        .force_shared_cleanup = false,
-                       .is_invoke_member = false}>(bound_args{as_capture(5)})),
+                       .is_invoke_member = false}>(
+              bind::args{bind::capture(5)})),
           lite_tuple::tuple<
               vtag_t<safe_alias::maybe_value>,
               // ... outer <=> no outer coro
@@ -476,7 +476,7 @@ constexpr bool check_force_outer_coro() {
                   capture<int>,
                   bind_wrapper_t<int&&>,
                   /*ArgI = */ 0,
-                  /*Tag = */ folly::bindings::ext::no_tag_t{}>>>>);
+                  /*Tag = */ folly::bind::ext::no_tag_t{}>>>>);
   return true;
 }
 
@@ -495,7 +495,7 @@ constexpr bool check_is_invoke_member_implicit_capture() {
                        .force_outer_coro = true,
                        .force_shared_cleanup = false,
                        .is_invoke_member = true}>(
-              bound_args{MoveMe{}, MoveMe{}})),
+              bind::args{MoveMe{}, MoveMe{}})),
           lite_tuple::tuple<
               vtag_t<safe_alias::maybe_value, safe_alias::maybe_value>,
               lite_tuple::tuple<
@@ -503,7 +503,7 @@ constexpr bool check_is_invoke_member_implicit_capture() {
                       capture<MoveMe>,
                       bind_wrapper_t<MoveMe&&>,
                       /*ArgI = */ 0,
-                      /*Tag = */ folly::bindings::ext::no_tag_t{}>,
+                      /*Tag = */ folly::bind::ext::no_tag_t{}>,
                   // The second arg is NOT implicitly captured
                   async_closure_regular_arg<
                       MoveMe,
@@ -516,7 +516,7 @@ constexpr bool check_is_invoke_member_implicit_capture() {
                        .force_outer_coro = true,
                        .force_shared_cleanup = false,
                        .is_invoke_member = false}>(
-              bound_args{MoveMe{}, MoveMe{}})),
+              bind::args{MoveMe{}, MoveMe{}})),
           lite_tuple::tuple<
               vtag_t<safe_alias::maybe_value, safe_alias::maybe_value>,
               lite_tuple::tuple<

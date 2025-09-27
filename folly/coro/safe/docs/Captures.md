@@ -1,18 +1,21 @@
-## Simple guide to `as_capture()`, `capture<T>` and friends
+## Simple guide to `bind::capture()`, `capture<T>` and friends
 
-If you are just reading some code with `as_capture()` arguments -- think of
-these as smart pointers, each owned by the `async_closure` taking the arg.
+If you are just reading some code with `bind::capture()` arguments -- think of
+these as zero-cost (compile-time) smart pointers, each owned by the
+`async_closure` taking the arg.
 
 For example, `n` below is a `capture<int>`.  It is an **owned capture**, a
 wrapper around `int` whose lifetime is tightly bound to the closure.
 
 ```cpp
+namespace bind = folly::bind; // Can add to `.cpp` files and project namespaces
+
 assert(15 == co_await async_closure(
-    // NB: Could omit this `bound_args`, since the 1 arg is `like_bound_args`
-    bound_args{as_capture(5)},
+    // NB: Can omit the outer `args` -- its sole arg is `bind::ext::like_args`
+    bind::args{bind::capture(5)},
     [](auto n) -> closure_task<int> {
       co_await async_closure(
-        bound_args{n},
+        bind::args{n},
         [](auto nRef) -> closure_task<void> {
           *nRef += 10;
           co_return;
@@ -26,10 +29,10 @@ that was implicitly made from `n`.  Per `LifetimeSafetyDesign.md`, there are
 various compile-time checks that make it harder to construct invalid capture
 references.
 
-### When & how to use `as_capture()`
+### When & how to use `bind::capture()`
 
  1. If type `T` requires async RAII (`co_cleanup`), you will need
-    `capture_in_place<T>()`.  For a working example, see `BackgroundTask.h` or
+    `bind::capture_in_place<T>()`.  For a working example, see `BackgroundTask.h` or
     `SafeAsyncScope.h`.
 
  1. Suppose you passed a `co_cleanup` type `T` into an async closure (example:
@@ -48,7 +51,7 @@ references.
     `capture`s are our mechanism for making lifetime-safe references.  In order
     to make `c.someMethod(v)` work, you will need to make `v` itself a capture,
     by having your closure take `auto v`, and make it either:
-      - `as_capture()` for an owned capture, **OR**
+      - `bind::capture()` for an owned capture, **OR**
       - `parentA` to make a capture reference from a parent's capture.
 
 ### Accessing `capture<T>`s
@@ -76,7 +79,7 @@ If your function takes a capture, here is all you need to know:
         V dst = *std::move(srcCap);
         ```
       * `capture<V&>` is copyable & movable.
-      * `capture<V&&> rcap` is move-only, but can **explicitly** convert to `capture<V&>`.
+      * `capture<V&&>` is move-only, can *explicitly* convert to `capture<V&>`
 
         *Caveat*: To reduce use-after-move errors, dereferencing requires rvalues.
         That is, `*rcap` won't work -- you must `*std::move(rcap)`.
@@ -100,7 +103,7 @@ To access `capture<shared_ptr<int>> capSharedN`, you need to dereference twice:
 **capSharedN += 10;
 ```
 
-Writing `as_capture_indirect()` gives you `capture_indirect<shared_ptr<int>>`,
+Writing `bind::capture_indirect()` gives you `capture_indirect<shared_ptr<int>>`,
 which needs just one dereference, and can still access the `shared_ptr` via
 `get_underlying_unsafe()` -- but see its docblock for **RISKS**.
 
@@ -109,9 +112,8 @@ This is important, since, the underlying type is typically nullable!
 
 ### Escape hatch: Capture-by-reference
 
-Use via `capture_const_ref{}`, `as_capture{const_ref{}}`, `capture_mut_ref{}`,
-etc in your closure's `bound_args{}` list.
-
+Use via `bind::capture_const_ref{}`, `bind::capture{bind::const_ref{}}`,
+`bind::capture_mut_ref{}`, etc in your closure's `bind::args{}` list.
 
 This mechanism solves problems similar to `AfterCleanup.h`, but after-cleanup
 is strictly safer, so you should prefer it when applicable.
@@ -121,7 +123,7 @@ Capture-by-ref is a way of turning a reference from a parent scope into a
 `now_task` restriction aids lifetime safety, the user must still be careful to
 avoid giving the child the ability to store short-lived child refs in the
 parent's scope.  To fix a concrete instance of this problem, the
-`AsyncClosureBindings.h` implementation blocks the capture-by-ref mechanism
+`BindAsyncClosure.h` implementation blocks the capture-by-ref mechanism
 from passing `co_cleanup` refs & `captures`.
 
 #### Design notes for capture-by-reference
@@ -162,7 +164,7 @@ std::optional<safe_task<safe_alias::lexical_scope_ref, void>> t;
 co_await std::move(*t);
 ```
 
-**Note 2:** The way that `async_closure(...  capture_const_ref(...) ...)`
+**Note 2:** The way that `async_closure(...  bind::capture_const_ref(...) ...)`
 behaves, it seems like we could just universally allow creating
 `lexical_scope_capture<T&>` from `T&` -- even outside `async_closure`
 invocations.  `Captures.h` would need to support auto-upgrade of
@@ -241,7 +243,7 @@ co_await async_closure(
     safeAsyncScope<CancelViaParent>(),
     [](auto scope) -> closure_task<void> {
       co_await async_closure(
-          bound_args{scope, as_capture(5)},
+          bind::args{scope, bind::capture(5)},
           [](auto outerScope, auto n1) -> closure_task<void> {
               outerScope->with(co_await co_current_executor).schedule(
                   [](capture<int&> n2) -> co_cleanup_safe_task<void> {
@@ -326,10 +328,10 @@ normal `capture`-passing rules in two ways:
     of type `after_cleanup_capture<int>`. Whereas, in the absence of `outerScope`,
     the type would be `capture<int>`.
   - **Parent `capture`s are not upgraded:** Suppose the example scheduled a
-    closure: `.schedule(async_closure(bound_args{n1}, ...))`.  Then, **inside
+    closure: `.schedule(async_closure(bind::args{n1}, ...))`.  Then, **inside
     that closure** `n1` would be visible as `capture<int&>` because it can't be
     exfiltrated to `outerScope`.  That's the upgrade behavior[†].  But, when
-    passing `bound_args{outerScope, n1}`, the `shared_cleanup` argument blocks
+    passing `bind::args{outerScope, n1}`, the `shared_cleanup` argument blocks
     the upgrade, and the closure would still see `after_cleanup_capture<int&>`.
 
     > [†] Note that when a closure upgrades its refs, e.g. from
@@ -394,20 +396,20 @@ a second coro frame, the one that awaits cleanup. But, when `async_closure` sees
 that it owns no `co_cleanup_capture`s, it will:
   - Omit the outer coro frame (which would now be no-op)
   - Move in its own captures into the inner coro.
-  - For owned captures that are `make_in_place`, automatically use the
+  - For owned captures that are `bind::in_place`, automatically use the
     `capture_heap` variation.
 
 From most perspectives, a no-cleanup closure quacks just like its
 outer-coro-awaits-inner-coro cousin. However, its own capture args' signatures
 will differ:
   - `capture<Value>` is passed instead of `capture<Value&>`.
-  - `make_in_place` captures use the `capture_heap` template.
+  - `bind::in_place` captures use the `capture_heap` template.
 
 By design, reference and value, plain and `_heap` captures have identical
 interfaces, letting `async_closure` freely pick the storage for those typical
 inner coros that take all captures by `auto`.
 
-In the unlikely event of a no-cleanup closure taking lots of `make_in_place`
+In the unlikely event of a no-cleanup closure taking lots of `bind::in_place`
 captures, you can try `async_closure::force_outer_coro` to coalesce allocations.
 
 ### Integrating your own `co_cleanup` type
@@ -468,7 +470,7 @@ Morally, they are either values or references, and the "pointer-like" UX hurts
 ergonomics.
 
 Let's consider the "no wrapper" alternative.  It would be possible for
-`as_capture()` args to `async_closure` to just pass a reference to the
+`bind::capture()` args to `async_closure` to just pass a reference to the
 underlying type into the inner coro.  This comes with many downsides:
   - Bug farm: The inner coro has to remember to write `auto&` / `ActualType&` --
     **except** when you have the no-cleanup closure optimization. Pass-by-value

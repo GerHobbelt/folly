@@ -1,10 +1,12 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
 load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
+load("@fbsource//xplat/folly:defs.bzl", "folly_xplat_cxx_library")
 load("@fbsource//xplat/pfh/triage_InfrastructureSupermoduleOptou:DEFS.bzl", "triage_InfrastructureSupermoduleOptou")
-load("../defs.bzl", "folly_xplat_cxx_library")
 
 oncall("fbcode_entropy_wardens_folly")
+
+# xplat build rules
 
 non_fbcode_target(
     _kind = folly_xplat_cxx_library,
@@ -55,17 +57,6 @@ non_fbcode_target(
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = [
         "Badge.h",
-    ],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_cxx_library,
-    name = "bindings",
-    feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = ["Bindings.h"],
-    exported_deps = [
-        "//xplat/folly:utility",
-        "//xplat/folly/detail:tuple",
     ],
 )
 
@@ -284,7 +275,18 @@ non_fbcode_target(
 
 non_fbcode_target(
     _kind = folly_xplat_cxx_library,
-    name = "safe_alias_fwd",
+    name = "safe_alias",  # Use this only when checking *_safe_alias_of_v
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = ["SafeAlias.h"],
+    exported_deps = [
+        ":safe_alias_fwd",
+        "//xplat/folly:traits",
+    ],
+)
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "safe_alias_fwd",  # Use this to label types with safe_alias
     feature = triage_InfrastructureSupermoduleOptou,
     raw_headers = ["SafeAlias-fwd.h"],
 )
@@ -385,7 +387,7 @@ non_fbcode_target(
     raw_headers = ["VectorTraits.h"],
 )
 
-# !!!! fbcode/folly/lang/TARGETS was merged into this file, see https://fburl.com/workplace/xl8l9yuo for more info !!!!
+# fbcode build rules
 
 fbcode_target(
     _kind = cpp_library,
@@ -432,16 +434,6 @@ fbcode_target(
     headers = ["Badge.h"],
     exported_deps = [
         "//folly:traits",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_library,
-    name = "bindings",
-    headers = ["Bindings.h"],
-    exported_deps = [
-        "//folly:utility",
-        "//folly/detail:tuple",
     ],
 )
 
@@ -639,7 +631,17 @@ fbcode_target(
 
 fbcode_target(
     _kind = cpp_library,
-    name = "safe_alias_fwd",
+    name = "safe_alias",  # Use this only when checking *_safe_alias_of_v
+    headers = ["SafeAlias.h"],
+    exported_deps = [
+        ":safe_alias_fwd",
+        "//folly:traits",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "safe_alias_fwd",  # Use this to label types with safe_alias
     headers = ["SafeAlias-fwd.h"],
 )
 
