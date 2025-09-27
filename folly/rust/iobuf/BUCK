@@ -48,6 +48,12 @@ rust_bindgen_library(
         "facebook::rust::.*",
     ],
     blocklist_types = [
+        # Work around incorrect detection of nested name specifier. T234253370
+        # Bindgen needs to be fixed to understand the new AST representation.
+        # https://github.com/llvm/llvm-project/pull/147835
+        "folly::IOBuf_Iterator",
+        "folly::IOBuf_iterator",
+        "folly::IOBuf_const_iterator",
         # These seems to come from type_traits / make_signed via fbvector
         "folly::fbvector.*",
         "__type",
@@ -88,9 +94,6 @@ fb_xplat_rust_library(
     crate = "iobuf",
     crate_root = "src/lib.rs",
     cxx_bridge = "src/lib.rs",
-    features = [
-        "minibytes",
-    ],
     platforms = (CXX, ANDROID, APPLE, WINDOWS),
     test_deps = [
         "fbsource//third-party/rust:quickcheck",
@@ -102,7 +105,6 @@ fb_xplat_rust_library(
     ],
     xplat_preexisting_target_flavors = [FBCODE],
     deps = [
-        "fbcode//eden/scm/lib/minibytes:minibytes",
         "fbsource//third-party/rust:bytes",
         "fbsource//third-party/rust:cxx",
         "fbsource//third-party/rust:memmap2",
