@@ -63,9 +63,9 @@ namespace coro {
 //    }
 //
 //    folly::coro::AsyncScope scope;
-//    scope.add(processEvent(ev1).scheduleOn(folly::getGlobalCPUExecutor()));
-//    scope.add(processEvent(ev2).scheduleOn(folly::getGlobalCPUExecutor()));
-//    scope.add(processEvent(ev3).scheduleOn(folly::getGlobalCPUExecutor()));
+//    scope.add(co_withExecutor(folly::getGlobalCPUExecutor(), process(ev1)));
+//    scope.add(co_withExecutor(folly::getGlobalCPUExecutor(), process(ev2)));
+//    scope.add(co_withExecutor(folly::getGlobalCPUExecutor(), process(ev3)));
 //    co_await scope.joinAsync();
 //
 class AsyncScope {
@@ -116,7 +116,7 @@ class AsyncScope {
    * Passing folly::coro::Task
    * -------------------------
    * NOTE: You cannot pass a folly::coro::Task to this method.
-   * You must first call .scheduleOn() to specify which executor the task
+   * You must first call co_withExecutor() to specify which executor the task
    * should run on.
    */
   // returnAddress customize entry point to async stack (useful if this is
@@ -224,9 +224,8 @@ inline std::size_t AsyncScope::remaining() const noexcept {
 template <typename Awaitable>
 FOLLY_NOINLINE inline void AsyncScope::add(
     Awaitable&& awaitable, void* returnAddress) {
-  assert(
-      !joined_ &&
-      "It is invalid to add() more work after work has been joined");
+  CHECK(!joined_)
+      << "It is invalid to add() more work after work has been joined";
   anyTasksStarted_.store(true, std::memory_order_relaxed);
   addImpl(
       static_cast<Awaitable&&>(awaitable),
@@ -244,9 +243,8 @@ FOLLY_NOINLINE inline void AsyncScope::addWithSourceLoc(
     Awaitable&& awaitable,
     void* returnAddress,
     source_location sourceLocation) {
-  assert(
-      !joined_ &&
-      "It is invalid to add() more work after work has been joined");
+  CHECK(!joined_)
+      << "It is invalid to add() more work after work has been joined";
   anyTasksStarted_.store(true, std::memory_order_relaxed);
   addImpl(
       static_cast<Awaitable&&>(awaitable),
@@ -373,8 +371,7 @@ class CancellableAsyncScope {
    */
   template <class T>
   folly::coro::Task<void> co_schedule(folly::coro::Task<T>&& task) {
-    add(std::move(task).scheduleOn(co_await co_current_executor));
-    co_return;
+    add(co_withExecutor(co_await co_current_executor, std::move(task)));
   }
 
   /**

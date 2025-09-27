@@ -56,8 +56,7 @@
 
 #if FOLLY_HAS_COROUTINES
 
-namespace folly {
-namespace coro {
+namespace folly::coro {
 
 template <typename T = void>
 class Task;
@@ -370,9 +369,6 @@ struct WithExecutorFunction {
 
 // Semi-awaitables like `Task` should use this CPO to attach executors:
 //   auto taskWithExec = co_withExecutor(std::move(exec), std::move(task));
-//
-// Prefer this over the legacy `scheduleOn()` method, because it's safe for
-// both immediately-awaitable (`NowTask`) and movable (`Task`) tasks.
 FOLLY_DEFINE_CPO(detail::adl::WithExecutorFunction, co_withExecutor)
 
 /// Represents an allocated but not yet started coroutine that has already
@@ -695,10 +691,9 @@ class FOLLY_NODISCARD TaskWithExecutor {
     auto [task, taskExecutor] = std::move(taskWithExecutor).unwrap();
     return ViaIfAsyncAwaitable<TaskWithExecutor>(
         std::move(executor),
-        [](Task<T> t) -> Task<T> {
+        co_withExecutor(std::move(taskExecutor), [](Task<T> t) -> Task<T> {
           co_yield co_result(co_await co_awaitTry(std::move(t)));
-        }(std::move(task))
-                             .scheduleOn(std::move(taskExecutor)));
+        }(std::move(task))));
   }
 
   friend TaskWithExecutor co_withCancellation(
@@ -718,6 +713,8 @@ class FOLLY_NODISCARD TaskWithExecutor {
   }
 
   using folly_private_task_without_executor_t = Task<T>;
+  // See comment in `Task`, or use `SafeTaskWithExecutor` instead.
+  using folly_private_safe_alias_t = safe_alias_constant<safe_alias::unsafe>;
 
  private:
   friend class Task<T>;
@@ -738,11 +735,11 @@ class FOLLY_NODISCARD TaskWithExecutor {
 /// You can only co_await a Task from within another Task, in which case it
 /// is implicitly bound to the same executor as the parent Task.
 ///
-/// Alternatively, you can explicitly provide an executor by calling the
-/// task.scheduleOn(executor) method, which will return a new not-yet-started
-/// TaskWithExecutor that can be co_awaited anywhere and that will automatically
-/// schedule the coroutine to start executing on the bound executor when it
-/// is co_awaited.
+/// Alternatively, you can explicitly provide an executor by calling
+/// `co_withExecutor(executor, task())`, which will return a not-yet-started
+/// `TaskWithExecutor` that can be `co_await`ed anywhere and that will
+/// automatically schedule the coroutine to start executing on the bound
+/// executor when it is `co_await`ed.
 ///
 /// Within the body of a Task's coroutine, executor binding to the parent
 /// executor is maintained by implicitly transforming all 'co_await expr'
@@ -775,6 +772,15 @@ class FOLLY_CORO_TASK_ATTRS Task {
     coro_.promise().executor_ = std::move(e);
   }
 
+  // `co_withExecutor` implementation detail -- this works around the fact that
+  // not all compilers consider the hidden friend `co_withExecutor` to be a
+  // friend of `TaskWithExecutor`, and I found no uniform way to add the
+  // friendship without making it non-hidden.  Try folding back into
+  // `co_withExecutor` in 2027 or so, to see if the old compiler issue is gone.
+  TaskWithExecutor<T> asTaskWithExecutor() && {
+    return TaskWithExecutor<T>{std::exchange(coro_, {})};
+  }
+
  public:
   Task(const Task& t) = delete;
 
@@ -804,14 +810,13 @@ class FOLLY_CORO_TASK_ATTRS Task {
   /// bound to an executor
   friend TaskWithExecutor<T> co_withExecutor(
       Executor::KeepAlive<> executor, Task task) noexcept {
-    return std::move(task).scheduleOn(std::move(executor));
+    task.setExecutor(std::move(executor));
+    DCHECK(task.coro_);
+    return std::move(task).asTaskWithExecutor();
   }
-  [[deprecated(
-      "Legacy form, prefer `co_withExecutor(exec, std::move(task))`.")]]
+  [[deprecated("Legacy form, prefer `co_withExecutor(exec, yourTask())`.")]]
   TaskWithExecutor<T> scheduleOn(Executor::KeepAlive<> executor) && noexcept {
-    setExecutor(std::move(executor));
-    DCHECK(coro_);
-    return TaskWithExecutor<T>{std::exchange(coro_, {})};
+    return co_withExecutor(std::move(executor), std::move(*this));
   }
 
   /// Converts a Task into a SemiFuture object.
@@ -830,12 +835,13 @@ class FOLLY_CORO_TASK_ATTRS Task {
 
           auto sf = p.getSemiFuture();
 
-          std::move(task).scheduleOn(executor).startInlineImpl(
-              [promise = std::move(p)](Try<StorageType>&& result) mutable {
-                promise.setTry(std::move(result));
-              },
-              folly::CancellationToken{},
-              returnAddress);
+          co_withExecutor(executor, std::move(task))
+              .startInlineImpl(
+                  [promise = std::move(p)](Try<StorageType>&& result) mutable {
+                    promise.setTry(std::move(result));
+                  },
+                  folly::CancellationToken{},
+                  returnAddress);
 
           return sf;
         });
@@ -868,6 +874,13 @@ class FOLLY_CORO_TASK_ATTRS Task {
   }
 
   using PrivateAwaiterTypeForTests = Awaiter;
+  // Use `SafeTask` instead of `Task` to move tasks into other safe coro APIs.
+  //
+  // User-facing stuff from `Task.h` can trivially include unsafe aliasing, the
+  // `folly::coro` docs include hundreds of words of pitfalls.  The intent here
+  // is to catch people accidentally passing `Task`s into safer primitives, and
+  // breaking their memory-safety guarantees.
+  using folly_private_safe_alias_t = safe_alias_constant<safe_alias::unsafe>;
 
  private:
   friend class detail::TaskPromiseBase;
@@ -994,21 +1007,6 @@ detail::TaskPromiseCrtpBase<Promise, T>::get_return_object() noexcept {
       coroutine_handle<Promise>::from_promise(*static_cast<Promise*>(this))};
 }
 
-} // namespace coro
-
-// Use `SafeTask` instead of `Task` to move tasks into other safe coro APIs.
-//
-// User-facing stuff from `Task.h` can trivially include unsafe aliasing,
-// the `folly::coro` docs include hundreds of words of pitfalls.  The intent
-// here is to catch people accidentally passing `Task`s into safer
-// primitives, and breaking their memory-safety guarantees.
-template <typename T>
-struct safe_alias_of<::folly::coro::TaskWithExecutor<T>>
-    : safe_alias_constant<safe_alias::unsafe> {};
-template <typename T>
-struct safe_alias_of<::folly::coro::Task<T>>
-    : safe_alias_constant<safe_alias::unsafe> {};
-
-} // namespace folly
+} // namespace folly::coro
 
 #endif // FOLLY_HAS_COROUTINES

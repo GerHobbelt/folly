@@ -14,13 +14,20 @@
  * limitations under the License.
  */
 
-#include <stdlib.h>
-#include <string.h>
+#include <folly/portability/GFlags.h>
 
-int main() {
-  char* spork = getenv("spork");
-  if (!spork) {
-    return 1;
-  }
-  return strcmp("foon", spork);
+namespace folly {
+
+#if !(FOLLY_HAVE_LIBGFLAGS && __has_include(<gflags/gflags.h>))
+
+namespace gflags {
+
+std::string SetCommandLineOption(const char* name, const char* value) {
+  return "";
 }
+
+} // namespace gflags
+
+#endif
+
+} // namespace folly
