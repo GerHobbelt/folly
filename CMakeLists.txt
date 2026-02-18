@@ -27,6 +27,11 @@ if(POLICY CMP0075)
   cmake_policy(SET CMP0075 NEW)
 endif()
 
+# CMP0167 The FindBoost module is removed
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
+
 # includes
 set(CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/CMake"
@@ -104,6 +109,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
       "at least Visual Studio 2017. "
       "MSVC version '${MSVC_VERSION}' is not supported."
     )
+  endif()
+endif()
+
+if(NOT DEFINED FOLLY_HAVE_INT128_T)
+  include(CheckTypeSize)
+  check_type_size("__int128_t" FOLLY_INT128_T_SIZE)
+  if(HAVE_FOLLY_INT128_T_SIZE)
+    set(FOLLY_HAVE_INT128_T TRUE)
   endif()
 endif()
 
@@ -1056,6 +1069,8 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST synchronization_baton_test SOURCES BatonTest.cpp
       TEST synchronization_call_once_test SOURCES CallOnceTest.cpp
       TEST synchronization_event_count_test SOURCES EventCountTest.cpp
+      BENCHMARK synchronization_hazptr_bench SOURCES HazptrBench.cpp
+      TEST synchronization_hazptr_test SOURCES HazptrTest.cpp
       TEST synchronization_lifo_sem_test WINDOWS_DISABLED
         SOURCES LifoSemTests.cpp
       TEST synchronization_relaxed_atomic_test WINDOWS_DISABLED
@@ -1147,10 +1162,12 @@ if (BUILD_TESTS OR BUILD_BENCHMARKS)
       TEST lazy_test SOURCES LazyTest.cpp
       TEST locks_test SOURCES SpinLockTest.cpp
       TEST math_test SOURCES MathTest.cpp
+      BENCHMARK memcpy_benchmark SOURCES MemcpyBenchmark.cpp
       TEST memcpy_test SOURCES MemcpyTest.cpp
       TEST memory_idler_test SOURCES MemoryIdlerTest.cpp
       TEST memory_test WINDOWS_DISABLED
         SOURCES MemoryTest.cpp
+      BENCHMARK memset_benchmark SOURCES MemsetBenchmark.cpp
       TEST move_wrapper_test SOURCES MoveWrapperTest.cpp
       TEST mpmc_pipeline_test SOURCES MPMCPipelineTest.cpp
       TEST mpmc_queue_test SLOW
