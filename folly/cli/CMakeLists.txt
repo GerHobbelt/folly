@@ -18,6 +18,19 @@
 if (LIBGFLAGS_FOUND OR gflags_FOUND)
 
 folly_add_library(
+  NAME args
+  SRCS
+    Args.cpp
+  HEADERS
+    Args.h
+  DEPS
+    folly_file_util
+  EXPORTED_DEPS
+    folly_container_span
+    folly_lang_cstring_view
+)
+
+folly_add_library(
   NAME program_options
   SRCS
     NestedCommandLineApp.cpp
@@ -38,7 +51,6 @@ folly_add_library(
     folly_string
   EXTERNAL_DEPS
     ${GFLAGS_LIBRARIES}
-    ${GLOG_LIBRARIES}
     Boost::headers
     Boost::program_options
 )

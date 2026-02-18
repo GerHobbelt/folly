@@ -16,16 +16,20 @@
 
 #include <folly/detail/Sse.h>
 
+#include <folly/CppAttributes.h>
+
 namespace folly {
 namespace detail {
 
 #if FOLLY_SSE_PREREQ(2, 0)
 
-FOLLY_DISABLE_SANITIZERS __m128i _mm_loadu_si128_nosan(__m128i const* const p) {
+[[FOLLY_ATTR_GNU_FLATTEN]] FOLLY_DISABLE_SANITIZERS __m128i
+_mm_loadu_si128_nosan(__m128i const* const p) {
   return _mm_loadu_si128(p);
 }
 
-FOLLY_DISABLE_SANITIZERS __m128i _mm_load_si128_nosan(__m128i const* const p) {
+[[FOLLY_ATTR_GNU_FLATTEN]] FOLLY_DISABLE_SANITIZERS __m128i
+_mm_load_si128_nosan(__m128i const* const p) {
   return _mm_load_si128(p);
 }
 

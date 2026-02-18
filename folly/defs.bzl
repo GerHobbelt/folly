@@ -8,6 +8,7 @@ load(
     "@fbsource//tools/build_defs:default_platform_defs.bzl",
     "ANDROID",
     "APPLE",
+    "APPLETVOS",
     "CXX",
     "FBCODE",
     "IOS",
@@ -107,7 +108,7 @@ WINDOWS_CLANG_CXX_FLAGS = [
     "-D_ENABLE_EXTENDED_ALIGNED_STORAGE",
 ]
 
-DEFAULT_APPLE_SDKS = (IOS, MACOSX)
+DEFAULT_APPLE_SDKS = (IOS, APPLETVOS, MACOSX)
 DEFAULT_PLATFORMS = (CXX, ANDROID, APPLE, FBCODE, WINDOWS)
 
 def _compute_include_directories():
@@ -169,8 +170,9 @@ def folly_xplat_library(
         compiler_flags = CXXFLAGS + kwargs.pop("compiler_flags", []) + select({
             "DEFAULT": [],
             "ovr_config//os:android": FBANDROID_CXXFLAGS,
+            # TODO: Why appletvos, iphoneos, and macos are not marked as clang compilers?
+            "ovr_config//os:appletvos": CLANG_CXX_FLAGS,
             "ovr_config//os:iphoneos": CLANG_CXX_FLAGS,
-            # TODO: Why iphoneos and macos are not marked as clang compilers?
             "ovr_config//os:macos": CLANG_CXX_FLAGS + ["-fvisibility=default"],
         }) + select({
             "DEFAULT": [],

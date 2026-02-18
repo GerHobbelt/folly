@@ -297,10 +297,12 @@ fbcode_target(
     name = "malloc",
     srcs = ["Malloc.cpp"],
     headers = ["Malloc.h"],
-    os_deps = [(
-        "linux",
-        ["third-party//jemalloc:headers"],
-    )],
+    deps = select({
+        "DEFAULT": [],
+        "ovr_config//os:linux": [
+            "third-party//jemalloc:headers",
+        ],
+    }),
     exported_deps = [
         "//folly:portability",
         "//folly/lang:exception",
@@ -406,6 +408,7 @@ fbcode_target(
     srcs = ["JemallocNodumpAllocator.cpp"],
     headers = ["JemallocNodumpAllocator.h"],
     deps = [
+        "fbsource//third-party/glog:glog",
         "//folly:conv",
         "//folly:string",
     ],
@@ -415,9 +418,6 @@ fbcode_target(
         "//folly/portability:malloc",
         "//folly/portability:sys_mman",
     ],
-    external_deps = [
-        "glog",
-    ],
 )
 
 fbcode_target(
@@ -426,15 +426,13 @@ fbcode_target(
     srcs = ["JemallocHugePageAllocator.cpp"],
     headers = ["JemallocHugePageAllocator.h"],
     deps = [
+        "fbsource//third-party/glog:glog",
         "//folly:c_portability",
         "//folly/memory:malloc",
         "//folly/portability:malloc",
         "//folly/portability:string",
         "//folly/portability:sys_mman",
         "//folly/portability:sys_types",
-    ],
-    external_deps = [
-        "glog",
     ],
 )
 
@@ -471,6 +469,7 @@ fbcode_target(
     srcs = ["IoUringArena.cpp"],
     headers = ["IoUringArena.h"],
     deps = [
+        "fbsource//third-party/glog:glog",
         "//folly:c_portability",
         "//folly:conv",
         "//folly/lang:align",
@@ -478,9 +477,6 @@ fbcode_target(
         "//folly/portability:string",
         "//folly/portability:sys_mman",
         "//folly/portability:unistd",
-    ],
-    external_deps = [
-        "glog",
     ],
 )
 

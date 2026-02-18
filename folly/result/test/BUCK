@@ -21,8 +21,10 @@ fb_dirsync_cpp_library(
     headers = ["common.h"],
     exported_deps = [
         "//folly:benchmark",
+        "//folly:unit",
         "//folly/portability:gmock",
         "//folly/portability:gtest",
+        "//folly/result:result",
         "//folly/result:rich_error_base",
     ],
 )
@@ -118,12 +120,26 @@ fb_dirsync_cpp_unittest(
 )
 
 fb_dirsync_cpp_unittest(
+    name = "result_bench",
+    srcs = ["result_bench.cpp"],
+    deps = [
+        ":common",
+        "//folly:benchmark",
+        "//folly:exception_wrapper",
+        "//folly:portability",
+        "//folly/result:result",
+        "//folly/result:try",
+    ],
+)
+
+fb_dirsync_cpp_unittest(
     name = "result_coro_bench",
     srcs = ["result_coro_bench.cpp"],
     deps = [
         ":common",
         "//folly:benchmark",
         "//folly:portability",
+        "//folly:scope_guard",
         "//folly/lang:keep",
         "//folly/result:coro",
     ],
@@ -134,7 +150,9 @@ fb_dirsync_cpp_unittest(
     srcs = ["result_test.cpp"],
     deps = [
         ":common",
+        "//folly/coro:gtest_helpers",
         "//folly/coro:traits",
+        "//folly/coro/safe:now_task",
         "//folly/result:gtest_helpers",
         "//folly/result:or_unwind_epitaph",
     ],

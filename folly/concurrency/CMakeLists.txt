@@ -50,8 +50,6 @@ folly_add_library(
     folly_likely
     folly_portability
     folly_synchronization_atomic_ref
-  EXTERNAL_DEPS
-    ${GLOG_LIBRARIES}
 )
 
 folly_add_library(
@@ -98,8 +96,6 @@ folly_add_library(
   EXPORTED_DEPS
     folly_concurrency_cache_locality
     folly_concurrency_unbounded_queue
-  EXTERNAL_DEPS
-    ${GLOG_LIBRARIES}
 )
 
 folly_add_library(
@@ -116,6 +112,8 @@ folly_add_library(
   NAME process_local_unique_id
   SRCS
     ProcessLocalUniqueId.cpp
+  HEADERS
+    ProcessLocalUniqueId.h
   DEPS
     folly_likely
     folly_synchronization_relaxed_atomic
@@ -163,8 +161,6 @@ folly_add_library(
     folly_synchronization_saturating_semaphore
     folly_synchronization_wait_options
     folly_traits
-  EXTERNAL_DEPS
-    ${GLOG_LIBRARIES}
 )
 
 add_subdirectory(container)
