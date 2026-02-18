@@ -601,6 +601,44 @@ using semi_await_result_t = await_result_t<semi_await_awaitable_t<T>>;
 
 namespace detail {
 
+/// Mixin for awaiters that forward to an inner awaiter with value-only
+/// semantics. Provides `await_ready()` and `await_suspend()` with static
+/// asserts that both are noexcept. Derived classes implement `await_resume()`.
+///
+/// GUIDANCE FOR NEW AWAITABLES: Design `await_ready` and `await_suspend` to
+/// be noexcept.  If they must check for invariant violations:
+///   - If feasible, push invariant failures into `await_resume()`.
+///   - Otherwise, debug-fatal on violations, and throw an error with a clearly
+///     "do not catch me" naming in opt.
+template <typename Awaitable>
+class ValueOnlyAwaiterBase {
+ public:
+  using Awaiter = awaiter_type_t<Awaitable>;
+
+ protected:
+  Awaiter awaiter_;
+
+  explicit ValueOnlyAwaiterBase(Awaitable&& awaitable)
+      : awaiter_(get_awaiter(static_cast<Awaitable&&>(awaitable))) {}
+
+ public:
+  auto await_ready() noexcept -> decltype(awaiter_.await_ready()) {
+    static_assert(
+        noexcept(FOLLY_DECLVAL(Awaiter&).await_ready()),
+        "value-only await requires noexcept await_ready(); see class doc");
+    return awaiter_.await_ready();
+  }
+
+  template <typename Promise>
+  auto await_suspend(coroutine_handle<Promise> coro) noexcept
+      -> decltype(awaiter_.await_suspend(coro)) {
+    static_assert(
+        noexcept(awaiter_.await_suspend(coro)),
+        "value-only await requires noexcept await_suspend(); see class doc");
+    return awaiter_.await_suspend(coro);
+  }
+};
+
 template <typename T>
 using noexcept_awaitable_of_ = typename T::folly_private_noexcept_awaitable_t;
 
@@ -644,35 +682,15 @@ template <typename Awaitable>
 constexpr bool is_awaitable_try = is_awaiter_try<awaiter_type_t<Awaitable>>;
 
 template <typename Awaitable>
-class TryAwaiter {
+class TryAwaiter : public ValueOnlyAwaiterBase<Awaitable> {
+ public:
   static_assert(is_awaitable_try<Awaitable&&>);
 
-  using Awaiter = awaiter_type_t<Awaitable>;
+  explicit TryAwaiter(Awaitable&& awaitable)
+      : ValueOnlyAwaiterBase<Awaitable>(static_cast<Awaitable&&>(awaitable)) {}
 
- public:
-  explicit TryAwaiter(Awaitable&& awaiter)
-      : awaiter_(get_awaiter(static_cast<Awaitable&&>(awaiter))) {}
-
-  auto await_ready() noexcept(noexcept(std::declval<Awaiter&>().await_ready()))
-      -> decltype(std::declval<Awaiter&>().await_ready()) {
-    return awaiter_.await_ready();
-  }
-
-  template <typename Promise>
-  auto await_suspend(coroutine_handle<Promise> coro) noexcept(
-      noexcept(std::declval<Awaiter&>().await_suspend(coro)))
-      -> decltype(std::declval<Awaiter&>().await_suspend(coro)) {
-    return awaiter_.await_suspend(coro);
-  }
-
-  auto await_resume() noexcept(
-      noexcept(std::declval<Awaiter&>().await_resume_try()))
-      -> decltype(std::declval<Awaiter&>().await_resume_try()) {
-    return awaiter_.await_resume_try();
-  }
-
- private:
-  Awaiter awaiter_;
+  auto await_resume()
+      FOLLY_DETAIL_FORWARD_BODY(this->awaiter_.await_resume_try())
 };
 
 /**
@@ -702,63 +720,39 @@ class CommutativeWrapperAwaitable {
   explicit CommutativeWrapperAwaitable(std::in_place_t, Factory&& factory)
       : inner_(factory()) {}
 
+  // Two overloads for the CancellationToken to avoid unnecessary copies
+  // (atomic refcount costs).
+  //
+  // NB: If we merged the overloads into a single template, overload resolution
+  // rules would consider it ambiguous wrt the default implementation in
+  // `WithCancellation.h`.
   template <
       typename T2 = T,
-      std::enable_if_t<!folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = decltype(folly::coro::co_withCancellation(
-          FOLLY_DECLVAL(const folly::CancellationToken&), FOLLY_DECLVAL(T2&&)))>
+      // "WART:" in `WithCancellation.h` explains the remove-reference
+      typename Result =
+          std::remove_reference_t<decltype(folly::coro::co_withCancellation(
+              FOLLY_DECLVAL(const folly::CancellationToken&),
+              FOLLY_DECLVAL(T2)))>>
   friend Derived<Result> co_withCancellation(
-      const folly::CancellationToken& cancelToken, Derived<T>&& awaitable) {
+      const folly::CancellationToken& cancelToken, Derived<T> awaitable) {
     return Derived<Result>{
-        std::in_place, [&]() -> decltype(auto) {
-          return folly::coro::co_withCancellation(
-              cancelToken, static_cast<T&&>(awaitable.inner_));
-        }};
-  }
-  template <
-      typename T2 = T,
-      std::enable_if_t<folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = decltype(folly::coro::co_withCancellation(
-          FOLLY_DECLVAL(const folly::CancellationToken&), FOLLY_DECLVAL(T2)))>
-  friend Derived<Result> co_withCancellation(
-      const folly::CancellationToken& cancelToken, Derived<T>&& awaitable) {
-    return Derived<Result>{
-        std::in_place, [&]() -> decltype(auto) {
+        std::in_place, [&]() {
           return folly::coro::co_withCancellation(
               cancelToken,
               folly::ext::must_use_immediately_unsafe_mover(
                   std::move(awaitable.inner_))());
         }};
   }
-  // These overloads exist to avoid unnecessarily copying `cancelToken`, which
-  // has atomic refcount costs.
-  //  - Taking it by-value would force unnecessary token copies for underlying
-  //    awaitables that ignore the token.
-  //  - If we merged the overloads into a single template, overload resolution
-  //    rules would consider it ambiguous wrt the default implementation in
-  //    `WithCancellation.h`.
   template <
       typename T2 = T,
-      std::enable_if_t<!folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = decltype(folly::coro::co_withCancellation(
-          FOLLY_DECLVAL(folly::CancellationToken&&), FOLLY_DECLVAL(T2&&)))>
+      // "WART:" in `WithCancellation.h` explains the remove-reference
+      typename Result =
+          std::remove_reference_t<decltype(folly::coro::co_withCancellation(
+              FOLLY_DECLVAL(folly::CancellationToken&&), FOLLY_DECLVAL(T2)))>>
   friend Derived<Result> co_withCancellation(
-      folly::CancellationToken&& cancelToken, Derived<T>&& awaitable) {
+      folly::CancellationToken&& cancelToken, Derived<T> awaitable) {
     return Derived<Result>{
-        std::in_place, [&]() -> decltype(auto) {
-          return folly::coro::co_withCancellation(
-              std::move(cancelToken), static_cast<T&&>(awaitable.inner_));
-        }};
-  }
-  template <
-      typename T2 = T,
-      std::enable_if_t<folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = decltype(folly::coro::co_withCancellation(
-          FOLLY_DECLVAL(folly::CancellationToken&&), FOLLY_DECLVAL(T2)))>
-  friend Derived<Result> co_withCancellation(
-      folly::CancellationToken&& cancelToken, Derived<T>&& awaitable) {
-    return Derived<Result>{
-        std::in_place, [&]() -> decltype(auto) {
+        std::in_place, [&]() {
           return folly::coro::co_withCancellation(
               std::move(cancelToken),
               folly::ext::must_use_immediately_unsafe_mover(
@@ -780,25 +774,7 @@ class CommutativeWrapperAwaitable {
         }};
   }
 
-  template <
-      typename T2 = T,
-      std::enable_if_t<!folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = semi_await_awaitable_t<T2>>
-  friend Derived<Result> co_viaIfAsync(
-      folly::Executor::KeepAlive<> executor,
-      Derived<T>&& awaitable) //
-      noexcept(noexcept(folly::coro::co_viaIfAsync(
-          FOLLY_DECLVAL(folly::Executor::KeepAlive<>), FOLLY_DECLVAL(T2)))) {
-    return Derived<Result>{
-        std::in_place, [&]() -> decltype(auto) {
-          return folly::coro::co_viaIfAsync(
-              std::move(executor), static_cast<T&&>(awaitable.inner_));
-        }};
-  }
-  template <
-      typename T2 = T,
-      std::enable_if_t<folly::ext::must_use_immediately_v<T2>, int> = 0,
-      typename Result = semi_await_awaitable_t<T2>>
+  template <typename T2 = T, typename Result = semi_await_awaitable_t<T2>>
   friend Derived<Result> co_viaIfAsync(
       folly::Executor::KeepAlive<> executor,
       Derived<T> awaitable) //

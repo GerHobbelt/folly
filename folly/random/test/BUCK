@@ -56,6 +56,7 @@ fbcode_target(
     deps = [
         "//folly:benchmark",
         "//folly/lang:keep",
+        "//folly/portability:config",
         "//folly/random:xoshiro256pp",
     ],
 )
@@ -68,6 +69,17 @@ fbcode_target(
         "//folly/container:span",
         "//folly/portability:gtest",
         "//folly/random:hash",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "seed_seq_test",
+    srcs = ["seed_seq_test.cpp"],
+    deps = [
+        "//folly/lang:keep",
+        "//folly/portability:gtest",
+        "//folly/random:seed_seq",
     ],
 )
 

@@ -808,12 +808,12 @@ void timerUserDataFreeFunction(void* v) {
 
 void IoUringBackend::addTimerEvent(
     Event& event, const struct timeval* timeout) {
-  auto getTimerExpireTime = [](const auto& timeout) {
+  auto getTimerExpireTime = [](const auto& timeout2) {
     using namespace std::chrono;
     auto now = steady_clock::now();
 
-    auto us = duration_cast<microseconds>(seconds(timeout.tv_sec)) +
-        microseconds(timeout.tv_usec);
+    auto us = duration_cast<microseconds>(seconds(timeout2.tv_sec)) +
+        microseconds(timeout2.tv_usec);
     return now + us;
   };
 
@@ -1123,15 +1123,20 @@ void IoUringBackend::initSubmissionLinked() {
   }
 
   if (options_.zeroCopyRx) {
-    IoUringZeroCopyBufferPool::Params params = {
-        .ring = this->ioRingPtr(),
-        .numPages = static_cast<size_t>(options_.zcRxNumPages),
-        .pageSize = kZeroCopyPageSize,
-        .rqEntries = static_cast<uint32_t>(options_.zcRxRefillEntries),
-        .ifindex = static_cast<uint32_t>(options_.zcRxIfindex),
-        .queueId = static_cast<uint16_t>(options_.zcRxQueueId),
-    };
-    zcBufferPool_ = IoUringZeroCopyBufferPool::create(params);
+    if (options_.bufferPoolHandle.has_value()) {
+      zcBufferPool_ = IoUringZeroCopyBufferPool::importHandle(
+          std::move(options_.bufferPoolHandle.value()), this->ioRingPtr());
+    } else {
+      IoUringZeroCopyBufferPool::Params params = {
+          .ring = this->ioRingPtr(),
+          .numPages = static_cast<size_t>(options_.zcRxNumPages),
+          .pageSize = kZeroCopyPageSize,
+          .rqEntries = static_cast<uint32_t>(options_.zcRxRefillEntries),
+          .ifindex = static_cast<uint32_t>(options_.zcRxIfindex),
+          .queueId = static_cast<uint16_t>(options_.zcRxQueueId),
+      };
+      zcBufferPool_ = IoUringZeroCopyBufferPool::create(params);
+    }
   }
 }
 

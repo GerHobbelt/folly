@@ -14,9 +14,11 @@
  * limitations under the License.
  */
 
+#include <folly/Try.h>
 #include <folly/coro/GtestHelpers.h>
 #include <folly/coro/Result.h>
 #include <folly/coro/ValueOrError.h>
+#include <folly/coro/ViaIfAsync.h>
 #include <folly/coro/safe/NowTask.h>
 
 /// Besides `value_or_error_or_stopped`, this test also covers the
@@ -58,6 +60,12 @@ CO_TEST(ValueOrErrorTest, value_or_error_or_stopped_of_value) {
           co_yield co_result(co_await value_or_error_or_stopped(valueTask()));
         }());
     EXPECT_EQ(1337, *res.value_or_throw());
+  }
+  { // Also test `co_result` with `value_only_result`
+    auto res = co_await value_or_error_or_stopped([&]() -> now_task<int> {
+      co_yield co_result(value_only_result<int>{42});
+    }());
+    EXPECT_EQ(42, res.value_or_throw());
   }
 }
 
@@ -136,6 +144,33 @@ static_assert(noexcept(FOLLY_DECLVAL(TestAwaiter<int>).await_resume()));
 static_assert(noexcept(FOLLY_DECLVAL(TestAwaiter<NothrowMove>).await_resume()));
 static_assert(
     !noexcept(FOLLY_DECLVAL(TestAwaiter<ThrowingMove>).await_resume()));
+
+// Awaiter lacking noexcept on `await_suspend`, for manual test below.
+struct ThrowingAwaitSuspendAwaitable {
+  bool await_ready() noexcept { return false; }
+  void await_suspend(coro::coroutine_handle<>) {} // not noexcept
+  int await_resume() noexcept { return 0; }
+  Try<int> await_resume_try() noexcept { return Try<int>{0}; }
+  friend ThrowingAwaitSuspendAwaitable&& co_viaIfAsync(
+      const folly::Executor::KeepAlive<>&,
+      ThrowingAwaitSuspendAwaitable&& a) noexcept {
+    return std::move(a);
+  }
+};
+
+CO_TEST(ValueOrErrorTest, RequiresNoexceptAwait) {
+#if 0 // Manual test: "value-only await requires noexcept await_suspend()"
+  (void)co_await value_or_error(ThrowingAwaitSuspendAwaitable{});
+#endif
+  co_return;
+}
+
+CO_TEST(ValueOrErrorTest, CoAwaitTryRequiresNoexceptAwait) {
+#if 0 // Manual test: "value-only await requires noexcept await_suspend()"
+  (void)co_await co_awaitTry(ThrowingAwaitSuspendAwaitable{});
+#endif
+  co_return;
+}
 
 } // namespace folly::coro
 
