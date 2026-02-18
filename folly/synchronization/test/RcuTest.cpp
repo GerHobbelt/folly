@@ -51,7 +51,9 @@ class des {
 TEST(RcuTest, Guard) {
   bool del = false;
   auto foo = new des(&del);
-  { std::scoped_lock<rcu_domain> g(rcu_default_domain()); }
+  {
+    std::scoped_lock<rcu_domain> g(rcu_default_domain());
+  }
   rcu_retire(foo);
   rcu_synchronize();
   EXPECT_TRUE(del);
@@ -173,7 +175,9 @@ TEST(RcuTest, NewDomainGuardTest) {
   rcu_domain newdomain(nullptr);
   bool del = false;
   auto foo = new des(&del);
-  { std::scoped_lock<rcu_domain> g(newdomain); }
+  {
+    std::scoped_lock<rcu_domain> g(newdomain);
+  }
   rcu_retire(foo, {}, newdomain);
   rcu_synchronize(newdomain);
   EXPECT_TRUE(del);
@@ -334,8 +338,8 @@ TEST(RcuTest, DeeplyNestedReaders) {
 
 TEST(RcuTest, DeadLock) {
   // The test tries to reproduce the potential deadlock caused by 2 threads.
-  // T1 does rcu_read_lock(), T2 starts synchronization_rcu(), T1 tries to
-  // call_rcu(). Which made deadlock happens.
+  // T1 does rcu_domain::lock(), T2 starts rcu_domain::synchronize(), T1 tries
+  // to call rcu_domain::call(). Which made deadlock happens.
 
   static folly::Indestructible<folly::rcu_domain> domain;
 

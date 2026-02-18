@@ -49,8 +49,25 @@ struct FooResetter {
   void operator()(Foo* f) const { f->reset(); }
 };
 
-using FooStackPool = folly::compression::
-    CompressionContextPool<Foo, FooCreator, FooDeleter, FooResetter>;
+struct FooSizeof {
+  size_t operator()(const Foo* f) const { return sizeof(*f); }
+};
+
+struct FooCallback {
+  static size_t count;
+
+  void operator()() const { count++; }
+};
+
+size_t FooCallback::count = 0;
+
+using FooStackPool = folly::compression::CompressionContextPool<
+    Foo,
+    FooCreator,
+    FooDeleter,
+    FooResetter,
+    FooSizeof,
+    FooCallback>;
 
 template <int NumStripes>
 using FooCoreLocalPool = folly::compression::CompressionCoreLocalContextPool<
@@ -58,7 +75,9 @@ using FooCoreLocalPool = folly::compression::CompressionCoreLocalContextPool<
     FooCreator,
     FooDeleter,
     FooResetter,
-    NumStripes>;
+    FooSizeof,
+    NumStripes,
+    FooCallback>;
 
 template <typename Pool>
 size_t multithreadedBench(size_t iters, size_t numThreads) {

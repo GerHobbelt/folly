@@ -23,6 +23,15 @@ namespace folly {
 namespace compression {
 
 /**
+ * Non-templated base class which allows for generic interaction with context
+ * pool instances.
+ */
+class CompressionCoreLocalContextPoolBase {
+ public:
+  virtual ~CompressionCoreLocalContextPoolBase() = default;
+};
+
+/**
  * This class is intended to reduce contention on reserving a compression
  * context and improve cache locality (but maybe not hotness) of the contexts
  * it manages.
@@ -41,8 +50,11 @@ template <
     typename Creator,
     typename Deleter,
     typename Resetter,
-    size_t NumStripes = 8>
-class CompressionCoreLocalContextPool {
+    typename Sizeof,
+    size_t NumStripes = 8,
+    typename Callback = CompressionContextPoolDefaultCallback>
+class CompressionCoreLocalContextPool
+    : public CompressionCoreLocalContextPoolBase {
  private:
   /**
    * Force each pointer to be on a different cache line.
@@ -59,7 +71,9 @@ class CompressionCoreLocalContextPool {
         Creator,
         Deleter,
         Resetter,
-        NumStripes>;
+        Sizeof,
+        NumStripes,
+        Callback>;
 
     explicit ReturnToPoolDeleter(Pool* pool) : pool_(pool) { DCHECK(pool_); }
 
@@ -69,7 +83,8 @@ class CompressionCoreLocalContextPool {
     Pool* pool_;
   };
 
-  using BackingPool = CompressionContextPool<T, Creator, Deleter, Resetter>;
+  using BackingPool =
+      CompressionContextPool<T, Creator, Deleter, Resetter, Sizeof, Callback>;
   using BackingPoolRef = typename BackingPool::Ref;
 
  public:
@@ -79,8 +94,15 @@ class CompressionCoreLocalContextPool {
   constexpr explicit CompressionCoreLocalContextPool(
       Creator creator = Creator(),
       Deleter deleter = Deleter(),
-      Resetter resetter = Resetter())
-      : pool_(std::move(creator), std::move(deleter), std::move(resetter)),
+      Resetter resetter = Resetter(),
+      Sizeof size_of = Sizeof(),
+      Callback callback = Callback())
+      : pool_(
+            std::move(creator),
+            std::move(deleter),
+            std::move(resetter),
+            std::move(size_of),
+            std::move(callback)),
         caches_() {}
 
   ~CompressionCoreLocalContextPool() { flush_shallow(); }

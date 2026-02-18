@@ -31,6 +31,7 @@
 #include <folly/Range.h>
 #include <folly/container/span.h>
 #include <folly/lang/SafeAssert.h>
+#include <folly/lang/cstring_view.h>
 #include <folly/portability/Config.h>
 
 #if FOLLY_HAVE_ELF
@@ -422,13 +423,13 @@ class ElfFile {
       return header()->n_type;
     }
 
-    std::string_view getName() const {
+    cstring_view getName() const {
       if (!header()) {
         return {};
       }
 
       // Subtract 1 to remove the trailing null character.
-      return std::string_view(
+      return cstring_view(
           reinterpret_cast<const char*>(body().data()), header()->n_namesz - 1);
     }
 
@@ -507,6 +508,36 @@ class ElfFile {
    */
   folly::Expected<span<const uint8_t>, FindNoteError> getNoteGnuBuildId()
       const noexcept;
+
+  /**
+   * Find a note by name in either a section or segment. If multiple
+   * notes share the same name, the first match will be returned. An error will
+   * be returned if the note is not found, or if there is underlying file
+   * corruption.
+   *
+   * Empty is a valid input, and will return when notes with an empty name are
+   * found. This can happen in ELF Cores, or other notes when the namespace
+   * unknown. Read more at https://man7.org/linux/man-pages/man5/elf.5.html
+   *
+   * Note that notes are not unique, and notes in sections may also be in
+   * segments. For this reason this method does not differentiate between
+   * segments and sections.
+   */
+  folly::Expected<Note, FindNoteError> findNoteByName(
+      std::string_view name) const noexcept;
+
+  /**
+   * Find a note by type in either a section or segment. If multiple
+   * notes share the same type, the first match will be returned. An error will
+   * be returned if the note is not found, or if there is underlying file
+   * corruption.
+   *
+   * Note that notes are not unique, and notes in sections may also be in
+   * segments. For this reason this method does not differentiate between
+   * segments and sections.
+   */
+  folly::Expected<Note, FindNoteError> findNoteByType(
+      size_t type) const noexcept;
 
  private:
   OpenResult init() noexcept;

@@ -165,10 +165,8 @@ bool try_async_reraise(int signum, siginfo_t* info) {
     if (-1 == fd) {
       return false;
     }
-    SCOPE_EXIT {
-      close(fd); // probably not necessary
-    };
     // pidfd_send_signal introduced in linux-5.1 (released 2019-05-05)
+    // no need to close(fd) after this - the process is about to terminate
     return 0 == linux_syscall(nr_pidfd_send_signal, fd, signum, info, 0);
   }
   return false;
@@ -206,6 +204,12 @@ void signalHandler(int signum, siginfo_t* info, void* uctx);
       if (try_async_reraise(signum, info)) {
         return;
       }
+      // Unblock the signal before raising it. Since our handler doesn't use
+      // SA_NODEFER, the signal is currently blocked.
+      sigset_t mask;
+      sigemptyset(&mask);
+      sigaddset(&mask, signum);
+      pthread_sigmask(SIG_UNBLOCK, &mask, nullptr);
       raise(signum);
     }
   }

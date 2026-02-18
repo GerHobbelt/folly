@@ -2124,17 +2124,19 @@ class F14Table : public Policy {
     }
     rehashImpl(0, 1, 0, ccas.first, ccas.second);
 
-    try {
-      if (chunkShift() == src.chunkShift()) {
-        directBuildFrom(std::forward<T>(src));
-      } else {
-        rehashBuildFrom(std::forward<T>(src));
-      }
-    } catch (...) {
-      reset();
-      F14LinkCheck<getF14IntrinsicsMode()>::check();
-      throw;
-    }
+    catch_exception(
+        [&]() {
+          if (chunkShift() == src.chunkShift()) {
+            directBuildFrom(std::forward<T>(src));
+          } else {
+            rehashBuildFrom(std::forward<T>(src));
+          }
+        },
+        [this]() {
+          reset();
+          F14LinkCheck<getF14IntrinsicsMode()>::check();
+          rethrow_current_exception();
+        });
   }
 
   void maybeRehash(std::size_t desiredCapacity, bool attemptExact) {
@@ -2229,7 +2231,9 @@ class F14Table : public Policy {
     std::size_t newChunkCount;
     std::size_t newCapacityScale;
     std::tie(newChunkCount, newCapacityScale) = computeChunkCountAndScale(
-        desiredCapacity, /*attemptExact=*/true, kContinuousCapacity);
+        desiredCapacity,
+        /*continuousSingleChunkCapacity=*/true,
+        kContinuousCapacity);
     auto newCapacity = computeCapacity(newChunkCount, newCapacityScale);
     auto newAllocSize = chunkAllocSize(newChunkCount, newCapacityScale);
 
@@ -2627,11 +2631,11 @@ class F14Table : public Policy {
       // force recycling of heap memory
       auto bc = bucket_count();
       reset();
-      try {
-        reserveImpl(bc);
-      } catch (std::bad_alloc const&) {
-        // ASAN mode only, keep going
-      }
+      catch_exception<std::bad_alloc const&>(
+          [this, bc]() { reserveImpl(bc); },
+          [](auto&&) {
+            // ASAN mode only, keep going
+          });
     } else {
       clearImpl<false>();
     }
@@ -2825,8 +2829,9 @@ namespace f14 {
 namespace test {
 inline void disableInsertOrderRandomization() {
   if constexpr (kIsLibrarySanitizeAddress || kIsDebug) {
-    detail::tlsPendingSafeInserts(static_cast<std::ptrdiff_t>(
-        (std::numeric_limits<std::size_t>::max)() / 2));
+    detail::tlsPendingSafeInserts(
+        static_cast<std::ptrdiff_t>(
+            (std::numeric_limits<std::size_t>::max)() / 2));
   }
 }
 } // namespace test

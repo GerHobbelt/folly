@@ -369,7 +369,7 @@ std::weak_ptr<T> to_weak_ptr(const std::shared_ptr<T>& ptr) {
 namespace detail {
 void weak_ptr_set_stored_ptr(std::weak_ptr<void>& w, void* ptr);
 
-template <typename Tag, void* std::__weak_ptr<void>::*WeakPtr_Ptr_Field>
+template <typename Tag, void* std::__weak_ptr<void>::* WeakPtr_Ptr_Field>
 struct GenerateWeakPtrInternalsAccessor {
   friend void weak_ptr_set_stored_ptr(std::weak_ptr<void>& w, void* ptr) {
     w.*WeakPtr_Ptr_Field = ptr;
@@ -415,6 +415,50 @@ std::weak_ptr<U> to_weak_ptr_aliasing(const std::shared_ptr<T>& r, U* ptr) {
   return std::shared_ptr<U>(r, ptr);
 #endif
 }
+
+/**
+ * fmap_shared_ptr_aliasing
+ *
+ * This is a helper method that allows one to get aliased shared_ptr to an inner
+ * object inside another shared_ptr. For example, if you have an object of type
+ * T that contains field of type U, you can use this method to get a shared
+ * pointer to the field U by calling `fmap_shared_ptr_aliasing(ptrToT, getU)`
+ * where `getU` is a function that returns a pointer to that field.
+ * @param getU a function that returns a const pointer to the field of type U by
+ * taking a `const T*` as an argument.
+ * @return a shared_ptr to the field U or nullptr if the owner is
+ * nullptr or getU returns nullptr.
+ */
+template <
+    typename T,
+    typename GetU,
+    typename U = std::remove_pointer_t<std::invoke_result_t<GetU&, const T*>>>
+std::shared_ptr<U> fmap_shared_ptr_aliasing(
+    const std::shared_ptr<T>& owner, GetU getU) {
+  if (auto* tPtr = owner.get()) {
+    if (auto* uPtr = getU(tPtr)) {
+      return to_shared_ptr_aliasing(owner, uPtr);
+    }
+  }
+  return nullptr;
+}
+
+template <
+    typename T,
+    typename GetU,
+    typename U = std::remove_pointer_t<std::invoke_result_t<GetU&, const T*>>>
+std::shared_ptr<U> fmap_shared_ptr_aliasing(
+    std::shared_ptr<T>&& owner, GetU getU) {
+  if (auto* tPtr = owner.get()) {
+    if (auto* uPtr = getU(tPtr)) {
+      return to_shared_ptr_aliasing(owner, uPtr);
+    }
+  }
+  return nullptr;
+}
+
+template <typename GetU>
+auto fmap_shared_ptr_aliasing(std::nullptr_t owner, GetU&& getU) = delete;
 
 /**
  *  copy_to_unique_ptr
