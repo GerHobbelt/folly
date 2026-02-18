@@ -21,7 +21,7 @@ Rich error codes integrate with `folly::result` & rich errors.  Compared to
 ## Why use `rich_error_code.h`?
 
 If you already use rich errors -- for the automatic source locations, for the
-ergonomic error-provenance enrichment, for the speedy mostly-no-RTTI
+ergonomic error-provenance epitaphs, for the speedy mostly-no-RTTI
 performance, or for any of its other benefits -- then the reason to adopt
 `rich_error_code` is that it is built-in!  Key integrations:
 
@@ -89,7 +89,7 @@ result<double> fruitToCalories(Fruit f) {
 ```
 
 The beauty of immortal errors is that they quack just like their dynamic
-counterparts. You can still `enrich_non_value` to add context, convert them to a
+counterparts. You can still `epitaph` to add context, convert them to a
 dynamic `std::exception_ptr`, throw them, etc.
 
 But, if you need a dynamic error, you can change the above code like so,

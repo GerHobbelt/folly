@@ -17,9 +17,9 @@ addresses **all** the common error-handling needs of services:
     store structured data & literals, only paying for formatting when needed.
   - **Compatibility:** Works transparently with standard exception-based code --
     when needed, you can use inheritance, throwing, and RTTI.
-  - **Provenance:** Captures enrichment data -- a propagation message & source
+  - **Provenance:** Captures epitaphs -- a propagation message & source
     location. Think of it as customizable stack traces for the return-`result`
-    paradigm. See `enriching_errors.md`.
+    paradigm. See `epitaphs.md`.
 
 ## Tutorial
 
@@ -59,11 +59,11 @@ struct Fruit {
 auto res = Fruit{"rotten orange"}.peel();
 ```
 
-Query for `FruitError`, which **is not** an `std::exception`. Do not query for
+Query for `FruitError`, which **is not** an `std::exception`.  Do not query for
 `rich_error<FruitError>` to avoid unintentional calls to `->what()` -- that
-legacy `std` API cannot efficiently log enriched error data (like propagation
-notes & source location). Instead, `get_exception` on `folly/result/` containers
-returns a pointer-like class supporting `fmt` and `<<`:
+legacy `std` API cannot efficiently log error data with epitaphs (like
+propagation notes & source location).  Instead, `get_exception` on
+`folly/result/` containers returns a pointer-like supporting `fmt` and `<<`:
 
 ```cpp
 if (auto err = get_exception<FruitError>(res)) { // NOT `FruitError*`
@@ -104,7 +104,9 @@ All of the above applies to thrown exceptions, too. Prefer to catch
         avoid RTTI.
   - **Catch-alls:** Query `rich_error_base` via `get_rich_error()` before
     checking `std::exception` -- better speed & logging.
-  - **Logging:** Prefer `operator<<` or `fmt::format` over `what()`.
+  - **Logging:** Prefer `operator<<` or `fmt::format` over `what()`. Both
+    can show provenance vua *epitaph* stacks, and can format `error_or_stopped`
+    or `get_exception<Ex>(container)`.
   - **Inheritance:** Derive from `Err`, not `rich_error<Err>`. Hints are
     mandatory; list the current type and likely derived types:
 
@@ -146,7 +148,7 @@ result<double> Fruit::toCalories() {
 ```
 
 Immortal errors work just like their dynamic counterparts: you can still
-`enrich_non_value` to add context, convert them to a dynamic
+`epitaph` to add context, convert them to a dynamic
 `std::exception_ptr`, throw them, etc.
 
 Switching to a dynamic error is straightforward and breaks no contracts:
@@ -160,33 +162,33 @@ if (f.isMoldy()) {
 
 The dominant cost is ~60ns to allocate and free a heap `std::exception_ptr`.
 
-## Provenance / enrichment
+## Provenance / epitaphs
 
 Errors can carry contextual information as they propagate through your code.
 Stack traces help debug exceptions; error codes need an equivalent facility.
 For example, `ENOENT` (file not found) can range from "normal user error" to
-"serious bug" -- provenance is essential. See `enriching_errors.md` for
+"serious bug" -- provenance is essential. See `epitaphs.md` for
 details; here's the gist:
 
 ```cpp
-co_await or_unwind(enrich_non_value(
+co_await or_unwind(epitaph(
     resultFn(), "in {} due to {}", place, reason));
 ```
 
 If the inner result contains an error, the wrapper adds a source location and
-message. Formatting includes the full enrichment chain:
+message. Formatting includes the full epitaph stack:
 
 ```
 MauledErr [via] in CRYPT due to ZOMBIES @ src.cpp:50 [after] apocalypse @ src.cpp:40
 ```
 
 Key properties:
-  - Enrichment is **transparent**: APIs like `get_exception<Ex>()` access the
+  - Epitaphs are **transparent**: APIs like `get_exception<Ex>()` access the
     **underlying** error, not the wrapper storing the context.
-  - Enrichment **cannot** add error codes (codes direct control flow; enrichments
+  - Epitaphs **cannot** add error codes (codes direct control flow; epitaphs
     are discardable). Use `nestable_coded_rich_error` to change codes.
-  - Hot code can opt out. Adding an enrichment currently costs ~60ns; see
-    `docs/future_enrich_in_place.md` for a design that amortizes to 5-10ns.
+  - Hot code can opt out. Adding epitaphs currently costs ~60ns; see
+    `docs/future_epitaph_in_place.md` for a design that amortizes to 5-10ns.
 
 ## Performance
 
@@ -259,7 +261,7 @@ immortal, but the recommended style is better:
     `rich_error<T>` inherits from `std::exception`, exposing `what()`. That stub
     only logs `partial_message()`, far less useful than `fmt` or `<<`. Since
     `what()` returns `const char*`, it cannot be improved efficiently -- we'd
-    have to preallocate the full formatted string, including enrichments, which
+    have to preallocate the full formatted string, including epitaphs, which
     is quadratic in call depth.
 
   - **More robust immortal queries:** For `immortal_rich_error<T>`, querying

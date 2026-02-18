@@ -23,7 +23,7 @@
 
 #if FOLLY_HAS_RESULT
 
-namespace folly {
+namespace folly::test {
 
 using namespace folly::string_literals;
 
@@ -39,8 +39,7 @@ void checkConstructionAndAccess(
   EXPECT_STREQ(err.partial_message(), "outer");
   EXPECT_STREQ(
       next_what,
-      get_exception<decltype(next)>(*err.next_error_for_enriched_message())
-          ->what());
+      get_exception<decltype(next)>(*err.next_error_for_epitaph())->what());
 
   checkFormatOfErrAndRep<
       nestable_coded_rich_error<A1>,
@@ -62,7 +61,7 @@ TEST(NestableCodedRichErrorTest, constructAndAccessWithRichNext) {
   checkConstructionAndAccess(
       std::move(err),
       pretty_name<decltype(err)>(), // `what()` for the empty-message case
-      fmt::format("folly::C1=102 @ {}:{}", test_file_name, err_line));
+      fmt::format("folly::test::C1=102 @ {}:{}", test_file_name, err_line));
 }
 
 TEST(NestableCodedRichErrorTest, nestThreeLevels) {
@@ -134,6 +133,6 @@ TEST(NestableCodedRichErrorTest, inheritedCodes) {
           test_file_name));
 }
 
-} // namespace folly
+} // namespace folly::test
 
 #endif // FOLLY_HAS_RESULT

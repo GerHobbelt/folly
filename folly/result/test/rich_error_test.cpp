@@ -16,7 +16,7 @@
 
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
-#include <folly/result/enrich_non_value.h>
+#include <folly/result/epitaph.h>
 #include <folly/result/rich_error.h>
 #include <folly/result/rich_error_code.h>
 #include <folly/result/rich_exception_ptr.h>
@@ -27,7 +27,9 @@
 
 #if FOLLY_HAS_RESULT
 
-namespace folly {
+namespace folly::test {
+
+using namespace folly::detail;
 
 const auto test_file_name = source_location::current().file_name();
 
@@ -76,8 +78,8 @@ constexpr bool test_has_offset0_base() {
     double y;
   };
 
-  static_assert(detail::has_offset0_base<DerivedNoOffset, Base>);
-  static_assert(!detail::has_offset0_base<DerivedWithOffset, Base>);
+  static_assert(has_offset0_base<DerivedNoOffset, Base>);
+  static_assert(!has_offset0_base<DerivedWithOffset, Base>);
 
   return true;
 }
@@ -87,7 +89,7 @@ static_assert(test_has_offset0_base());
 TEST(RichErrorTest, basics) {
   // These APIs are more meaningfully covered in later tests.
   auto checkNoOpAPIs = [](auto& err) {
-    EXPECT_TRUE(nullptr == err.next_error_for_enriched_message());
+    EXPECT_TRUE(nullptr == err.next_error_for_epitaph());
     EXPECT_TRUE(nullptr == err.underlying_error());
     EXPECT_TRUE(std::nullopt == get_rich_error_code<A1>(err));
   };
@@ -154,14 +156,14 @@ TEST(RichErrorTest, fmtAndOstreamWithCode) {
   EXPECT_TRUE(std::nullopt == get_rich_error_code<A1>(err));
   EXPECT_TRUE(C1::ONE_C1 == get_rich_error_code<C1>(err));
   checkFormatOfErrAndRep<ErrWithCode, rich_error_base, std::exception>(
-      err, "ErrWithCode - folly::C1=101");
+      err, "ErrWithCode - folly::test::C1=101");
 }
 
 // This is a mini-test of `rich_ptr_to_underlying_error` rich formatting.
-// It stacks 2 enrichment wrappers to distinguish "next" from "underlying".
-// `enrich_non_value_test.cpp` covers this in much more detail.
-TEST(RichErrorTest, fmtAndOstreamEnrichNonRichError) {
-  using WrapErr = rich_error<detail::enriched_non_value>;
+// It stacks 2 epitaph wrappers to distinguish "next" from "underlying".
+// `epitaph_test.cpp` covers this in much more detail.
+TEST(RichErrorTest, fmtAndOstreamEpitaphNonRichError) {
+  using WrapErr = rich_error<epitaph_non_value>;
 
   rich_exception_ptr inner{std::logic_error{"inner"}};
   auto err_line1 = source_location::current().line() + 1;
@@ -173,12 +175,11 @@ TEST(RichErrorTest, fmtAndOstreamEnrichNonRichError) {
   // `get_outer_exception` once the wrapper is in `rich_exception_ptr`.
   EXPECT_STREQ("outer", outer.partial_message());
   EXPECT_EQ(err_line2, outer.source_location().line());
-  EXPECT_TRUE(nullptr != outer.next_error_for_enriched_message());
-  EXPECT_NE((void*)&outer, outer.next_error_for_enriched_message());
+  EXPECT_TRUE(nullptr != outer.next_error_for_epitaph());
+  EXPECT_NE((void*)&outer, outer.next_error_for_epitaph());
   EXPECT_TRUE(nullptr != outer.underlying_error());
   EXPECT_NE((void*)&outer, outer.underlying_error());
-  EXPECT_NE(
-      (void*)outer.underlying_error(), outer.next_error_for_enriched_message());
+  EXPECT_NE((void*)outer.underlying_error(), outer.next_error_for_epitaph());
   EXPECT_TRUE(std::nullopt == get_rich_error_code<A1>(outer));
 
   // The error is usefully formattable.  Packing it into `rich_exception_ptr`
@@ -208,8 +209,8 @@ TEST(RichErrorTest, fmtAndOstreamEnrichNonRichError) {
 }
 
 // What makes this test special is that:
-//   - the outer rich error is underlying (no `enrich_non_value` wrapping), and
-//   - it has a `next_error_for_enriched_message()`.
+//   - the outer rich error is underlying (no `epitaph` wrapping), and
+//   - it has a `next_error_for_epitaph()`.
 // (1) We end up with a `rich_ptr` whose `raw_ptr_` and `top_rich_error_` are
 //     both the same rich error.  To avoid duplicate output, the formatter
 //     needs to handle this specially.
@@ -225,8 +226,7 @@ TEST(RichErrorBaseFormatTest, unwrappedUnderlyingErrorHasNext) {
         : msg_{msg}, next_{std::move(next)} {}
 
     const char* partial_message() const noexcept override { return msg_; }
-    const rich_exception_ptr* next_error_for_enriched_message()
-        const noexcept override {
+    const rich_exception_ptr* next_error_for_epitaph() const noexcept override {
       return next_ != rich_exception_ptr{} ? &next_ : nullptr;
     }
 
@@ -235,16 +235,16 @@ TEST(RichErrorBaseFormatTest, unwrappedUnderlyingErrorHasNext) {
 
   rich_error<ErrWithNext> err{
       "Err2", // new underlying
-      rich_exception_ptr{rich_error<detail::enriched_non_value>{
+      rich_exception_ptr{rich_error<epitaph_non_value>{
           rich_exception_ptr{rich_error<ErrWithNext>{"Err1"}}, // old underlying
-          rich_msg{"msg"}}}}; // enrichment around old
+          rich_msg{"msg"}}}}; // epitaph wrapper around old
   checkFormatOfErrAndRep<ErrWithNext, rich_error_base, std::exception>(
       err,
       fmt::format(
           "Err2 \\[after\\] Err1 \\[via\\] msg @ {}:[0-9]+", test_file_name));
 }
 
-} // namespace folly
+} // namespace folly::test
 
 // rich_ptr even knows to format underlying errors that are not rich
 struct FormattableNonRich : std::exception {
@@ -260,12 +260,12 @@ struct fmt::formatter<FormattableNonRich> {
   }
 };
 
-namespace folly {
+namespace folly::test {
 
 // When an error is formattable and not `rich_error_base`, we first format that
-// error AND then append the rich error context (like enrichment wrappers).
+// error AND then append the rich error context (like epitaph wrappers).
 TEST(RichErrorTest, formattableExFormatter) {
-  rich_error<detail::enriched_non_value> err{
+  rich_error<epitaph_non_value> err{
       rich_exception_ptr{FormattableNonRich{}}, rich_msg{"msg"}};
   // No custom format "(my ...)", since the underlying error is type-erased
   checkFormatOfErrAndRep<std::exception>(
@@ -321,6 +321,6 @@ TEST(RichErrorTest, whatFallbackToPrettyName) {
   EXPECT_STREQ(pretty_name<rich_error<EmptyMsgErr>>(), err.what());
 }
 
-} // namespace folly
+} // namespace folly::test
 
 #endif // FOLLY_HAS_RESULT

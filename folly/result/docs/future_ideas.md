@@ -15,7 +15,7 @@ when building new features:
          construction to build-time is good for performance.  For this reason,
          immortal `rich_exception_ptr` is already working in `constexpr` code.
   - Rich errors have a huge test matrix: (packed/separate storage) x
-    (owned/immortal/misc errors) x (enriched/underlying errors) x
+    (owned/immortal/misc errors) x (with-epitaphs/underlying errors) x
     (move/copy/assign/compare/format fundamentals).  To deal with this, current
     rich error unit tests prioritize "testing in depth" -- this means that we
     carefully build up helper functions to exercise a large test matrix.
@@ -28,14 +28,12 @@ when building new features:
 
 These are sorted from "near future" to "far future".
 
-  - Automatic `fmt` + `<<` for `error_or_stopped` by making
-    `rich_exception_ptr` formattable (via bits and `rich_error_base` if
-    available).  This would strengthen `checkEptrRoundtrip` non-aliasing
-    checks.  Update other tests, like `enrich_non_value_test.cpp`.  `result<T>`
-    should also do this, iff `T` is formattable.  Update `rich_error.md` /
-    `result.md` / `README.md` accordingly.
+  - I am unsure whether `result<T>` should become `fmt`- and
+    `<<(ostream&)`-formattable whenever `T` is.  It's convenient, but it's not
+    obvious what convention should disinguish value from non-value output,
+    which may just mean it's bad to sugar this.
 
-  - Automatic enrichment for `result` coroutines as in `enriching_errors.md`.
+  - Automatic epitaphs for `result` coroutines as in `epitaphs.md`.
     I'm thinking of symbolizing the stack and attaching it to the exception in
     `unhandled_exception`.  Perf-wise this should be "fine" since `throw` is
     already stupid-expensive.  Update docs, since this is Very Useful.
@@ -43,13 +41,13 @@ These are sorted from "near future" to "far future".
         user `catch` clauses can also do this.  We probably don't want to
         integrate `folly/experimental/exception_tracer`, but the implementation
         is instructive.  Also see https://fburl.com/cpp_debug_only_stack_trace.
-      * A further extension would be to also enrich the error with the coroutine
-        stack (see `AsyncStack` code in `folly/coro`).
+      * A further extension would be to also add epitaphs to the error with
+        the coroutine stack (see `AsyncStack` code in `folly/coro`).
 
-  - Make it easy to mark certain enrichments debug-only.  Ideally it would also
-    be easy to toggle some enrichments at runtime for debugging production
+  - Make it easy to mark certain epitaphs debug-only.  Ideally it would also
+    be easy to toggle some epitaphs at runtime for debugging production
     issues, in the spirit of `VLOG`. Some words here may be useful
-    https://fburl.com/enrichment_scopes_fast_or_slow
+    https://fburl.com/epitaph_scopes_fast_or_slow
 
   - Are we happy with the moved-out behavior of `error_or_stopped`?  Today it's
     "dfatal crash" / empty eptr.
@@ -58,7 +56,7 @@ These are sorted from "near future" to "far future".
     functions that mimic throwing `std` patterns, but return `result`.
 
   - Support a flavor of `get_rich_error_code` returning a `rich_code<Code>`
-    that is formattable with enrichments (provenance).  One API idea is to add
+    that is formattable with epitaphs (provenance).  One API idea is to add
     a `get_rich_error_code<rich_code<Code>>()` overload, another is to just add
     a new verb.
 
@@ -69,7 +67,7 @@ These are sorted from "near future" to "far future".
 
   - Rich error / result formatters may want to parse out some options to
     customize the output style (separator / indentation).  Another important
-    one would be to omit enrichments (e.g. `checkEptrRoundtrip` wants this).
+    one would be to omit epitaphs (e.g. `checkEptrRoundtrip` wants this).
     Before doing this, make sure the default output style is broadly readable &
     useful -- with time, automation will rely on parsing that, so it will be
     hard to change.
@@ -77,10 +75,10 @@ These are sorted from "near future" to "far future".
   - `rich_exception_ptr` should also be formattable, but since it's not (very)
     user-visible, this is lower-priority than `result` / `error_or_stopped`..
 
-  - We already have `enrich_non_value.h` and `nestable_coded_rich_error.h`,
+  - We already have `epitaph.h` and `nestable_coded_rich_error.h`,
     but neither is a direct counterpart to `std::nested_exception`. We
     don't really need anything to support that "intrusive" behavior, current
-    users can just implement `next_error_for_enriched_message()`.
+    users can just implement `next_error_for_epitaph()`.
 
     But, a ready-made verb like this would not be hard to add -- for example:
       nest_error(underlying_rep, next_rep)
@@ -90,12 +88,12 @@ These are sorted from "near future" to "far future".
     `detail::nesting_error` ought to be mostly transparent, delegating to the
     underlying, but **should**, at least, automatically capture the source
     location where the nesting took place (and maybe a message).  This
-    implementation would follow or extend `detail::enriched_non_value`.
+    implementation would follow or extend `detail::epitaph_non_value`.
 
   - (*C++23 required*) The internals of `result` should migrate to
     `std::expected` to avoid needing to handle the "empty by exception" state.
 
-  - Implement the enrichment optimization from `future_enrich_in_place.md`.
+  - Implement the epitaphs optimization from `future_epitaph_in_place.md`.
 
   - A specialized `rich_exception_ptr::operator bool` might be faster than
     comparing to the default-constructed object.  The idiom isn't currently

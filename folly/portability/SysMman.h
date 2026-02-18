@@ -33,14 +33,15 @@
 #ifndef MADV_COLLAPSE
 #define MADV_COLLAPSE 25
 #endif // MADV_COLLAPSE
+#ifndef MAP_POPULATE
+#define MAP_POPULATE 0
+#endif
 
 #else //_WIN32
 
 #include <cstdint>
 
-#include <sys/types.h>
-
-using off64_t = int64_t;
+#include <folly/portability/SysTypes.h>
 
 #define MAP_ANONYMOUS 1
 #define MAP_ANON MAP_ANONYMOUS

@@ -62,7 +62,7 @@ class BasePromise {
   variant_awaitable<Awaiter, ready_awaitable<>> do_safe_point(
       Promise& promise) noexcept {
     if (cancelToken_.isCancellationRequested()) {
-      return promise.yield_value(co_cancelled);
+      return promise.yield_value(co_stopped_may_throw);
     }
     return ready_awaitable<>{};
   }
@@ -117,7 +117,7 @@ class BasePromise {
 
   template <typename Awaitable>
   auto await_transform(ValueOrError<Awaitable> awaitable) {
-    bypassThrowing_.requestDueToValueOrError();
+    bypassThrowing_.template requestDueToValueOrError<Awaitable>();
     return await_transform(std::move(awaitable).toValueOrErrorImpl());
   }
 

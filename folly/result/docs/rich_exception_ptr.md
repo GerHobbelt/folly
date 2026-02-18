@@ -29,7 +29,7 @@ handful of features any production project is likely to want:
     logging.  Note that, in contrast, the `std::exception` API of `const char*
     what()` makes it hard to avoid allocations when logging dynamic messages.
 
-  - `enrich_non_value()` to stack or chain contextual information as an exception
+  - `epitaph()` to stack or chain contextual information as an exception
     propagates.  This is inexpensive (60ns, reducible to < 5ns), and does
     not change the type identity of the underlying exception.
 
@@ -65,7 +65,7 @@ Today, `folly/OperationCancelled.h` propagates as an exception through
 propagation semantics are always throwing-by-default:
 
 ```
-co_yield co_cancelled;
+co_yield co_stopped_may_throw;
 throw OperationCancelled{}; // discouraged
 co_yield co_error{OperationCancelled{}}; // discouraged
 ```
@@ -88,13 +88,13 @@ auto res = co_await co_awaitTry(task());
 The consequence is lots of explicit, error-prone handling of cancellation in
 user code.  And lots of bugs.
 
-I soon intend to propose `co_yield co_cancelled_nothrow`, plus a migration
+I soon intend to propose `co_yield co_stopped_nothrow`, plus a migration
 strategy that keeps the current code working, while encouraging new and
 refactored code to adopt the new primitive.
 
 For the purposes of this document, you just need to know that:
   - We will have 2 different `...OperationCancelled` types.
-  - The type emitted by `co_cancelled_nothrow` always propagates through
+  - The type emitted by `co_stopped_nothrow` always propagates through
     `folly::coro` code as if wrapped with `co_nothrow()`.  When going outside
     of coroutines (e.g. `blocking_wait`), it will still be thrown due to a
     lack of better alternatives.
@@ -122,10 +122,10 @@ Note: Although 64-bit pointers leave the top byte (or more) unused, using those
 bits can interfere with memory tagging schemes.  In contrast, it is cheap and
 safe to use the 3 low bits that are always zero due to 8-byte alignment.
 
-In all, we could therefore represent up to 14 = (2**4 - 2) error-or-stopped states,
-and store 7 types of error-or-stopped pointers.  However, besides "small value", we
-only need 8 more states & 6 pointers below, and can therefore make some choices
-that make the packing and unpacking more CPU-efficient.
+In all, we could therefore represent up to 14 = (2**4 - 2) error-or-stopped
+states, and store 7 types of error-or-stopped pointers.  However, besides
+"small value", we only need 8 more states & 6 pointers below, and can therefore
+make some choices that make the packing and unpacking more CPU-efficient.
 
 This section aims to explain WHY we ended up with the current states & bit
 representation.  If you just want to see the bit-packing scheme, the table is
@@ -153,7 +153,7 @@ under "Idea 1".
 
     * `exception_ptr` to two variants of `OperationCancelled`
       - Legacy / thrown exception; currently stores a dynamic `exception_ptr`
-      - New `co_cancelled_nothrow`; currently stores a leaky singleton ptr.
+      - New `co_stopped_nothrow`; currently stores a leaky singleton ptr.
 
     * Known-type non-fast-path `exception_ptr`.
 
@@ -214,7 +214,7 @@ For now, our implementation ("Idea 1" below) resolves the puzzle in the most
 conservative way:
   - Preserve dynamic object identity for the legacy, thrown
     `OperationCancelled`.
-  - Use a leaky singleton for the new `co_cancelled_nothrow`, but still
+  - Use a leaky singleton for the new `co_stopped_nothrow`, but still
     store its pointer so that, on the off-chance that two DSOs end up with
     different instances of the singleton, object identity is preserved.
 If a compelling performance argument comes up, we can revisit this choice.
@@ -231,7 +231,7 @@ current implementation.
       this with "Idea 1" below without hurting "is eptr?" performance.
     * Furthermore, all it would enable is RTTI-free code to log `what()`.  As
       discussed above, `what()` is a poor API, and logging `rich_error` -- with
-      detailed context & enrichment chains -- should be strongly preferred.
+      detailed context & epitaph stacks -- should be strongly preferred.
 
   - It would be technically straightforward to support immortal exceptions
     of non-`rich_error` type, but:
@@ -244,7 +244,7 @@ current implementation.
 
   - As noted in the `rich_error_base` docblock, if we had another free bit in
     `rich_exception_ptr`, we could use it to cache the absence of an underlying
-    error in the enrichment chain.  However, the current solution is pretty
+    error in the epitaph stack.  However, the current solution is pretty
     good, and it's not trivial to eke out another cross-platform bit.
 
 ## Design space
@@ -257,7 +257,7 @@ desire to preserve OC object identity.
 
 Use two 3-bit positions on OCs, preserving dynamic eptrs for both.
   - **Not doing this** -- "has dynamic eptr?" would no longer be a 1-bit test.
-  - Also, we don't even WANT normal `co_cancelled_nothrow` usage to allocate a
+  - Also, we don't even WANT normal `co_stopped_nothrow` usage to allocate a
     dynamic eptr.
 
 ### Idea 1: Only store dynamic eptr for the legacy thrown OC
