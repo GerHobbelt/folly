@@ -46,9 +46,7 @@ CPUThreadPoolExecutor::CPUTask::CPUTask(
     std::chrono::milliseconds expiration,
     Func&& expireCallback,
     int8_t pri)
-    : Task(std::move(f), expiration, std::move(expireCallback), pri) {
-  DCHECK(func_); // Empty func reserved as poison.
-}
+    : Task(std::move(f), expiration, std::move(expireCallback), pri) {}
 
 CPUThreadPoolExecutor::CPUTask::CPUTask()
     : Task(nullptr, std::chrono::milliseconds(0), nullptr) {}
@@ -221,7 +219,10 @@ void CPUThreadPoolExecutor::add(Func func) {
 
 void CPUThreadPoolExecutor::add(
     Func func, std::chrono::milliseconds expiration, Func expireCallback) {
-  addImpl<false>(std::move(func), 0, expiration, std::move(expireCallback));
+  CPUTask task(std::move(func), expiration, std::move(expireCallback), 0);
+  addImpl(
+      [this](auto&& task) { return taskQueue_->add(std::move(task)); },
+      std::move(task));
 }
 
 void CPUThreadPoolExecutor::addWithPriority(Func func, int8_t priority) {
@@ -233,52 +234,15 @@ void CPUThreadPoolExecutor::add(
     int8_t priority,
     std::chrono::milliseconds expiration,
     Func expireCallback) {
-  addImpl<true>(
-      std::move(func), priority, expiration, std::move(expireCallback));
-}
-
-template <bool withPriority>
-void CPUThreadPoolExecutor::addImpl(
-    Func func,
-    int8_t priority,
-    std::chrono::milliseconds expiration,
-    Func expireCallback) {
-  if (!func) {
-    // Reserve empty funcs as poison by logging the error inline.
-    invokeCatchingExns("ThreadPoolExecutor: func", std::move(func));
-    return;
-  }
-
-  if (withPriority) {
-    CHECK_GT(getNumPriorities(), 0);
-  }
-
+  CHECK_GT(getNumPriorities(), 0);
   CPUTask task(
       std::move(func), expiration, std::move(expireCallback), priority);
-  if (auto queueObserver = getQueueObserver(priority)) {
-    task.queueObserverPayload_ = queueObserver->onEnqueued(task.context_.get());
-  }
-  registerTaskEnqueue(task);
-
-  // It's not safe to expect that the executor is alive after a task is added to
-  // the queue (this task could be holding the last KeepAlive and when finished
-  // - it may unblock the executor shutdown).
-  // If we need executor to be alive after adding into the queue, we have to
-  // acquire a KeepAlive.
-  bool mayNeedToAddThreads = minThreads_.load(std::memory_order_relaxed) == 0 ||
-      activeThreads_.load(std::memory_order_relaxed) <
-          maxThreads_.load(std::memory_order_relaxed);
-  folly::Executor::KeepAlive<> ka = mayNeedToAddThreads
-      ? getKeepAliveToken(this)
-      : folly::Executor::KeepAlive<>{};
-
-  auto result = withPriority
-      ? taskQueue_->addWithPriority(std::move(task), priority)
-      : taskQueue_->add(std::move(task));
-
-  if (mayNeedToAddThreads && !result.reusedThread) {
-    ensureActiveThreads();
-  }
+  addImpl(
+      [this](auto&& task) {
+        auto pri = task.priority();
+        return taskQueue_->addWithPriority(std::move(task), pri);
+      },
+      std::move(task));
 }
 
 uint8_t CPUThreadPoolExecutor::getNumPriorities() const {
@@ -321,7 +285,7 @@ void CPUThreadPoolExecutor::stopThread(const ThreadPtr& thread) {
   stoppedThreadProcessedTasks_ += thread->processedTasks;
   thread->processedTasks = 0;
   threadList_.remove(thread);
-  stoppedThreads_.add(thread);
+  stoppedThreads_.add(folly::copy(thread));
 }
 
 void CPUThreadPoolExecutor::threadRun(ThreadPtr thread) {
