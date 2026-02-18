@@ -28,10 +28,8 @@ bool IoUringEvent::hasWork() {
 }
 
 IoUringEvent::IoUringEvent(
-    folly::EventBase* eventBase,
-    IoUringBackend::Options const& o,
-    bool use_event_fd)
-    : EventHandler(eventBase), eventBase_(eventBase), backend_(o) {
+    folly::EventBase* eventBase, IoUringBackend::Options o, bool use_event_fd)
+    : EventHandler(eventBase), eventBase_(eventBase), backend_(std::move(o)) {
   if (use_event_fd) {
     eventFd_ = folly::File{eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC), true};
     int ret = io_uring_register_eventfd(backend_.ioRingPtr(), eventFd_->fd());
@@ -81,7 +79,7 @@ void IoUringEvent::handlerReady(uint16_t events) noexcept {
   } else if (eventFd_) {
     if (!edgeTriggered_) {
       uint64_t val;
-      fileops::read(eventFd_->fd(), &val, sizeof(val));
+      std::ignore = fileops::read(eventFd_->fd(), &val, sizeof(val));
     }
     backend_.loopPoll();
 

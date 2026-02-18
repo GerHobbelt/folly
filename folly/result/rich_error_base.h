@@ -19,13 +19,21 @@
 #include <folly/CppAttributes.h>
 #include <folly/Portability.h> // FOLLY_HAS_RESULT
 #include <folly/Traits.h>
+#include <folly/Unit.h>
 #include <folly/Utility.h> // FOLLY_DECLVAL
+#include <folly/lang/Pretty.h>
 #include <folly/portability/SourceLocation.h>
 #include <folly/result/rich_error_fwd.h>
+
+#include <iosfwd>
+#include <iterator>
+#include <fmt/core.h>
 
 #if FOLLY_HAS_RESULT
 
 namespace folly {
+
+class rich_error_code_query;
 
 namespace detail {
 class enriched_non_value;
@@ -169,6 +177,48 @@ class rich_error_base {
   // Storing only structured data & literal strings, they are cheap to make.
   virtual const char* partial_message() const noexcept = 0;
 
+  // Override this to support RTTI-free `get_rich_error_code()`. See the
+  // `rich_error_bases_and_own_codes` doc for how to implement this.
+  //
+  // Briefly: The query contains an ABI-stable UUID for a rich error code type
+  // `C`.  If the error has a code of that type, this call undoes the type
+  // erasure.  The returned query is then updated so the user can efficiently
+  // get the value type `C`.  There's also a special `kFormatterUuid`, which
+  // instead returns a callback that formats ALL the codes of this error.
+  constexpr virtual void retrieve_code(rich_error_code_query&) const {}
+
+  // Returns a `fmt`-formattable object that renders all the available codes in
+  // this error's inheritance hierarchy, like so: "Specific=1, General=2".
+  //
+  //   const rich_error_base& err = ...;
+  //   auto s = fmt::format("code={}", err.all_codes_for_fmt());
+  class fmt_all_codes_t {
+   private:
+    friend class rich_error_base;
+    friend struct fmt::formatter<folly::rich_error_base::fmt_all_codes_t>;
+    const rich_error_base& error_ref_;
+    const char* pre_separator_;
+    bool saw_code_{false}; // formatted at least one code?
+    constexpr fmt_all_codes_t(
+        const rich_error_base& e [[clang::lifetimebound]],
+        const char* pre_separator)
+        : error_ref_(e), pre_separator_(pre_separator) {}
+  };
+  fmt_all_codes_t all_codes_for_fmt(const char* pre_separator = "") const
+      [[clang::lifetimebound]] {
+    return fmt_all_codes_t{*this, pre_separator};
+  }
+
+  // Rendering for rich errors via `fmt` and `ostream<<`.
+  virtual void format_to(fmt::appender& out) const;
+
+  // Format this enrichment chain, starting with its underlying error.
+  void format_enriched(fmt::appender& out) const;
+
+  // Format only the enrichment chain, omitting the first underlying error.
+  // Precondition: `this` is a wrapper, not an underlying error.
+  void format_enriched_without_first_underlying(fmt::appender& out) const;
+
   // Formatting of rich errors follows the `next_error_for_enriched_message()`
   // linked list, printing each one in turn.  There are two use-cases:
   //
@@ -251,7 +301,282 @@ class rich_error_base {
   }
 };
 
+/// `rich_error_base` is `fmt` formattable (below), but also has this sugar for
+/// writing rich errors to glog & `std` streams.  This ought to be more robust
+/// under OOM than `stream << fmt::format("{}", err)`, since `fmt` may allocate.
+std::ostream& operator<<(std::ostream&, const rich_error_base&);
+
+template <typename Ex>
+class rich_ptr_to_underlying_error;
+
+namespace detail {
+template <auto, typename Ex>
+void expectGetExceptionResult(const rich_ptr_to_underlying_error<Ex>&);
+} // namespace detail
+
+// Quacks like `Ex*`, but show a chain of enrichment info when formatted.
+// Returned by `get_exception<Ex>(rep)` and `get_mutable_exception<Ex>(rep)`,
+// for `rich_exception_ptr<...> rep`.  The respective `get_exception()`
+// implementations have more detailed docs.
+template <typename Ex>
+class rich_ptr_to_underlying_error {
+ private:
+  Ex* raw_ptr_{nullptr};
+  const rich_error_base* top_rich_error_{nullptr};
+
+  friend struct fmt::formatter<rich_ptr_to_underlying_error>;
+  template <auto, typename T>
+  friend void detail::expectGetExceptionResult(
+      const rich_ptr_to_underlying_error<T>&);
+
+ protected:
+  template <typename, typename>
+  friend class detail::rich_exception_ptr_impl;
+  constexpr rich_ptr_to_underlying_error(Ex* p, const rich_error_base* top)
+      : raw_ptr_(p), top_rich_error_(top) {}
+
+ public:
+  // `get_exception<Ex>(result)` needs this.
+  explicit constexpr rich_ptr_to_underlying_error(std::nullptr_t) {}
+
+  // Immovable for now, since the primary use-case is just:
+  //   if (auto ex = get_exception<Ex>(rich_eptr)) { /*...*/ }
+  // Escape hatch ideas:
+  //   - `Ex* get()` below
+  //   - to delegate formatting to helper func, pass by `auto&`
+  //
+  // Future: Relax this if you have a compelling reason.  Some redundant
+  // safety comes from the `lifetimebound` annotation on `get_exception`.
+  // But, in clang-17 that doesn't catch some obvious use-after-frees.
+  rich_ptr_to_underlying_error(const rich_ptr_to_underlying_error&) = delete;
+  rich_ptr_to_underlying_error operator=(const rich_ptr_to_underlying_error&) =
+      delete;
+  rich_ptr_to_underlying_error(rich_ptr_to_underlying_error&&) = delete;
+  rich_ptr_to_underlying_error operator=(rich_ptr_to_underlying_error&&) =
+      delete;
+  ~rich_ptr_to_underlying_error() = default;
+
+  constexpr Ex& operator*() const { return *raw_ptr_; }
+  constexpr Ex* operator->() const { return raw_ptr_; }
+  constexpr Ex* get() const { return raw_ptr_; }
+
+  // Conversion to raw pointer lossy.  Make it explicit to avoid accidentally
+  // shedding rich error formatting context -- propagation notes, source
+  // locations, codes, etc.
+  explicit constexpr operator Ex*() const { return raw_ptr_; }
+
+  // Make `if (auto ex = get_exception<...>(...))` work.  Or, use `bool{ex}`
+  // for explicit conversion.  Truly quacking like a raw pointer would make
+  // this implicit, but that has undesirable consequences.  For example, any
+  // common protocol that takes `bool` like `fmt` or `<<(ostream&, bool)` would
+  // treat these as `bool`, unless a more specific match is provided.  In the
+  // future, we could reconsider this trade-off.
+  explicit constexpr operator bool() const { return raw_ptr_; }
+
+  friend constexpr bool operator==(
+      std::nullptr_t, const rich_ptr_to_underlying_error& p) {
+    return p.raw_ptr_ == nullptr;
+  }
+  friend constexpr bool operator==(
+      const Ex* raw_p, const rich_ptr_to_underlying_error& p) {
+    return raw_p == p.raw_ptr_;
+  }
+  friend constexpr bool operator==(
+      const rich_ptr_to_underlying_error& lhs,
+      const rich_ptr_to_underlying_error& rhs) {
+    return lhs.raw_ptr_ == rhs.raw_ptr_;
+  }
+};
+
+// See docs in `rich_error_code.h`
+//
+// DO NOT add your own `rich_error_code<std::errc>` -- use `errc_rich_error.h`.
+template <typename Code>
+struct rich_error_code;
+
+// User-opaque part of the `get_rich_error_code()` machinery. End-users only
+// pass it from their `retrieve_code()` override into the `retrieve_code` impl.
+//
+// Implementation note -- this has 3 roles:
+//  - Forwarding the UUID of the desired `Code` into `retrieve_code()`.
+//  - Stores a nullable, type-erased `Code` for `get_rich_error_code()`.
+//  - Passkey privacy -- ensures the only public entry point to the rich error
+//    code machinery is `get_rich_error_code()`.
+class rich_error_code_query {
+ private:
+  uint64_t uuid_;
+
+ protected:
+  // Stores either a mangled code or a formatter function pointer.
+  // The active member depends on the `uuid_` value:
+  //   Non-reserved: mangled_code_ is active (normal code retrieval)
+  //   kFormatterUuid: formatter_fn_ is active (formatting all codes)
+  union {
+    uintptr_t mangled_code_;
+    bool (*formatter_fn_)( // Returns `true` if > 0 codes were formatted
+        const rich_error_base&, fmt::appender&, const char* pre_separator);
+  };
+
+  // Future: This should use `std::optional`, but we still need this to build
+  // with libstdc++ from GCC 11.2, which lacks a constexpr `emplace`.
+  // https://godbolt.org/z/Y77WfKG94
+  bool has_value_{false};
+
+  // Reserved UUIDs: [0, 100000]
+  static constexpr uint64_t kFormatterUuid = 0; // `fmt` formatting
+  static constexpr uint64_t kMaxReservedUuid = 100000;
+
+  // We don't want to initialize the union data guarded by `has_value_`.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init)
+  explicit constexpr rich_error_code_query(uint64_t uuid) : uuid_{uuid} {}
+
+  constexpr bool uuid_matches(uint64_t uuid) const { return uuid_ == uuid; }
+
+  template <typename, typename, auto...>
+  friend class rich_error_bases_and_own_codes;
+
+  friend struct fmt::formatter<rich_error_base::fmt_all_codes_t>;
+
+  template <typename Code>
+  friend class get_rich_error_code_fn;
+
+ public:
+  // Required for usage where an outer class delegates code retrieval to an
+  // inner one, and provides one in case of miss.
+  bool has_value() const { return has_value_; }
+};
+
 } // namespace folly
+
+// `rich_error_base` AND derived classes are formattable.
+template <>
+struct fmt::formatter<folly::rich_error_base> {
+  constexpr format_parse_context::iterator parse(format_parse_context& ctx) {
+    // FIXME: We don't currently support align/fill/padding, not because it's
+    // impossible, but because `fmt` didn't make it easy -- all the code
+    // related to spec handling, and padded/filled/aligned output of strings is
+    // in `fmt::detail`.  When we do, don't use `fmt::nested_formatter` (this
+    // allocates, which adds unnecessary fragility on an error handling path).
+    // Instead, add a `rich_error_base::formatted_size()` and use that.
+    return ctx.begin();
+  }
+  format_context::iterator format(
+      const folly::rich_error_base& e, format_context& ctx) const {
+    auto it = ctx.out();
+    e.format_enriched(it);
+    return it;
+  }
+};
+template <typename T>
+  requires std::is_convertible_v<T*, folly::rich_error_base*>
+struct fmt::formatter<T> : fmt::formatter<folly::rich_error_base> {};
+
+// Format pointer-like returned by `get_exception<Ex>(rich_exception_ptr)`.
+// Crucially, this displays `enrich_non_value()` chains when available.
+//
+template <typename Ex>
+struct fmt::formatter<folly::rich_ptr_to_underlying_error<Ex>> {
+ private:
+  // `Ex` is formattable AND not a `rich_error_base`: format `Ex` first, then
+  // append the rich error formatting.
+  //
+  // Rather than branch a single class on this, it would be cleaner to use
+  // multiple partial specializations with mutually-exclusive `requires`
+  // clauses, but GCC treats those as redefinitions.
+  static constexpr bool kUseExFormatter = fmt::is_formattable<Ex>::value &&
+      !std::is_convertible_v<Ex*, const folly::rich_error_base*>;
+
+  [[FOLLY_ATTR_NO_UNIQUE_ADDRESS]] folly::conditional_t<
+      kUseExFormatter,
+      fmt::formatter<std::remove_cv_t<Ex>>,
+      folly::Unit> ex_formatter_;
+
+ public:
+  constexpr format_parse_context::iterator parse(format_parse_context& ctx) {
+    if constexpr (kUseExFormatter) {
+      return ex_formatter_.parse(ctx);
+    } else {
+      return ctx.begin();
+    }
+  }
+
+  format_context::iterator format(
+      const folly::rich_ptr_to_underlying_error<Ex>& p,
+      format_context& ctx) const {
+    using UncvEx = std::remove_cv_t<Ex>;
+    auto it = ctx.out();
+    if (p.raw_ptr_ == nullptr) {
+      fmt::format_to(it, "[nullptr folly::rich_ptr_to_underlying_error]");
+      return it;
+    }
+    if constexpr (kUseExFormatter) {
+      it = ex_formatter_.format(*p.raw_ptr_, ctx);
+      if (p.top_rich_error_) {
+        // Underlying error already formatted above, just format the wrappers
+        p.top_rich_error_->format_enriched_without_first_underlying(it);
+      }
+      return it;
+    } else {
+      // Use detailed rich-error formatting if available: either we have an
+      // enrichment wrapper, or the underlying error is rich, or both.
+      if (std::is_convertible_v<Ex*, const folly::rich_error_base*> ||
+          p.top_rich_error_) {
+        p.top_rich_error_->format_enriched(it);
+      } else {
+        // For non-formattable non-rich errors without a wrapper, match the
+        // `rich_error_base::format_to` formatting.
+        if constexpr (std::is_convertible_v<Ex*, const std::exception*>) {
+          fmt::format_to(
+              it, "{}: {}", folly::pretty_name<UncvEx>(), p.raw_ptr_->what());
+        } else {
+          fmt::format_to(it, "{}", folly::pretty_name<UncvEx>());
+        }
+      }
+      return it;
+    }
+  }
+};
+
+namespace folly {
+namespace detail {
+std::ostream& ostream_write_via_fmt(std::ostream& os, const auto& v) {
+  try {
+    os << fmt::format("{}", v);
+  } catch (const std::bad_alloc&) {
+    // Per `ostream_append_simple_rich_error`, ~4.5x slower than `os <<
+    // fmt::format("{}", e);` for small strings, but doesn't use heap.
+    fmt::format_to(std::ostream_iterator<char>(os), "{}", v);
+  }
+  return os;
+}
+} // namespace detail
+
+template <typename Ex>
+std::ostream& operator<<(
+    std::ostream& os, const rich_ptr_to_underlying_error<Ex>& ep) {
+  return detail::ostream_write_via_fmt(os, ep);
+}
+} // namespace folly
+
+// See `rich_error_code::all_codes_for_fmt()` for usage
+template <>
+struct fmt::formatter<folly::rich_error_base::fmt_all_codes_t> {
+  constexpr format_parse_context::iterator parse(format_parse_context& ctx) {
+    return ctx.begin();
+  }
+  format_context::iterator format(
+      folly::rich_error_base::fmt_all_codes_t& err, // this mutates `.saw_code_`
+      format_context& ctx) const {
+    folly::rich_error_code_query q{
+        folly::rich_error_code_query::kFormatterUuid};
+    err.error_ref_.retrieve_code(q);
+    auto out = ctx.out();
+    if (q.has_value_) {
+      err.saw_code_ = q.formatter_fn_(err.error_ref_, out, err.pre_separator_);
+    }
+    return out;
+  }
+};
 
 namespace folly::detail {
 

@@ -22,28 +22,22 @@ fbcode_target(
     headers = ["common.h"],
     exported_deps = [
         "//folly:benchmark",
+        "//folly/portability:gmock",
         "//folly/portability:gtest",
+        "//folly/result:rich_error_base",
     ],
 )
 
 fbcode_target(
     _kind = cpp_unittest,
-    name = "result_test",
-    srcs = ["result_test.cpp"],
+    name = "immortal_rich_error_test",
+    srcs = ["immortal_rich_error_test.cpp"],
     deps = [
-        "fbsource//third-party/googletest:gtest",
-        "//folly/coro:traits",
-        "//folly/result:gtest_helpers",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "try_test",
-    srcs = ["try_test.cpp"],
-    deps = [
+        ":common",
         "//folly/portability:gtest",
-        "//folly/result:try",
+        "//folly/result:immortal_rich_error",
+        "//folly/result:rich_error",
+        "//folly/result:rich_msg",
     ],
 )
 
@@ -63,11 +57,177 @@ fbcode_target(
 
 fbcode_target(
     _kind = cpp_unittest,
+    name = "result_test",
+    srcs = ["result_test.cpp"],
+    deps = [
+        "fbsource//third-party/googletest:gtest",
+        "//folly/coro:traits",
+        "//folly/result:gtest_helpers",
+    ],
+)
+
+# Runs as a test by default, pass --benchmark=1 to run as benchmark.
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_error_code_bench",
+    srcs = ["rich_error_code_bench.cpp"],
+    deps = [
+        ":common",
+        ":rich_error_codes",
+        "//folly:benchmark",
+        "//folly/result:immortal_rich_error",
+        "//folly/result:rich_error",
+        "//folly/result:rich_error_code",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_error_code_test",
+    srcs = ["rich_error_code_test.cpp"],
+    deps = [
+        "fbsource//third-party/fmt:fmt",
+        ":common",
+        "//folly:traits",
+        "//folly:utility",
+        "//folly/portability:gtest",
+        "//folly/result:immortal_rich_error",
+        "//folly/result:rich_error",
+        "//folly/result:rich_error_code",
+        "//folly/result/test:rich_error_codes",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "rich_error_codes",
+    headers = ["rich_error_codes.h"],
+    exported_deps = [
+        "fbsource//third-party/fmt:fmt",
+        "//folly:traits",
+        "//folly/result:rich_error",
+        "//folly/result:rich_error_code",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_error_test",
+    srcs = ["rich_error_test.cpp"],
+    deps = [
+        ":common",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
+        "//folly/result:rich_error",
+        "//folly/result:rich_error_base",
+    ],
+)
+
+# Runs as a test by default, pass --benchmark=1 to run as benchmark.
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_bench",
+    srcs = ["rich_exception_ptr_bench.cpp"],
+    deps = [
+        ":common",
+        "//folly:benchmark",
+        "//folly:exception_wrapper",
+        "//folly/result:immortal_rich_error",
+        "//folly/result:rich_error",
+        "//folly/result:rich_error_base",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "rich_exception_ptr_check_get",
+    headers = ["rich_exception_ptr_check_get.h"],
+    exported_deps = [
+        ":rich_exception_ptr_common",
+        "//folly/result:rich_error",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "rich_exception_ptr_common",
+    headers = ["rich_exception_ptr_common.h"],
+    exported_deps = [
+        "//folly/portability:gtest",
+        "//folly/result:rich_error_base",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_constexpr_test",
+    srcs = ["rich_exception_ptr_constexpr.cpp"],
+    deps = [
+        ":rich_exception_ptr_common",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_fundamentals_test",
+    srcs = ["rich_exception_ptr_fundamentals_test.cpp"],
+    deps = [
+        ":rich_exception_ptr_common",
+        "//folly/portability:gtest",
+        "//folly/result:immortal_rich_error",
+        "//folly/result:rich_error",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_immortal_test",
+    srcs = ["rich_exception_ptr_immortal_test.cpp"],
+    deps = [
+        ":rich_exception_ptr_check_get",
+        "//folly/portability:gtest",
+        "//folly/result:immortal_rich_error",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_misc_test",
+    srcs = ["rich_exception_ptr_misc_test.cpp"],
+    deps = [
+        ":rich_exception_ptr_check_get",
+        "//folly:operation_cancelled",
+        "//folly/portability:gtest",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "rich_exception_ptr_owned_test",
+    srcs = ["rich_exception_ptr_owned_test.cpp"],
+    deps = [
+        ":rich_exception_ptr_check_get",
+        "//folly/portability:gtest",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
     name = "rich_msg_test",
     srcs = ["rich_msg_test.cpp"],
     deps = [
         "//folly/portability:gtest",
         "//folly/result:rich_msg",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
+    name = "try_test",
+    srcs = ["try_test.cpp"],
+    deps = [
+        "//folly/portability:gtest",
+        "//folly/result:try",
     ],
 )
 
