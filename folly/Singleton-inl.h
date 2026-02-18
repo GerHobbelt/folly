@@ -263,33 +263,29 @@ void SingletonHolder<T>::createInstance() {
   }
 
   std::lock_guard entry_lock(mutex_);
-  if (state_.load(std::memory_order_acquire) == SingletonHolderState::Living) {
-    return;
-  }
-  if (state_.load(std::memory_order_relaxed) ==
-      SingletonHolderState::LivingInChildAfterFork) {
-    if (vault_.failOnUseAfterFork_) {
-      LOG(DFATAL) << "Attempting to use singleton " << type().name()
-                  << " in child process after fork";
-    } else {
-      LOG(ERROR) << "Attempting to use singleton " << type().name()
-                 << " in child process after fork";
-    }
-    auto expected = SingletonHolderState::LivingInChildAfterFork;
-    state_.compare_exchange_strong(
-        expected,
-        SingletonHolderState::Living,
-        std::memory_order_relaxed,
-        std::memory_order_relaxed);
-    return;
-  }
-  if (state_.load(std::memory_order_acquire) ==
-      SingletonHolderState::NotRegistered) {
-    detail::singletonWarnCreateUnregisteredAndAbort(type());
-  }
-
-  if (state_.load(std::memory_order_acquire) == SingletonHolderState::Living) {
-    return;
+  switch (auto state = state_.load(std::memory_order_acquire)) {
+    case SingletonHolderState::Living:
+      return; // nothing to do
+    case SingletonHolderState::LivingInChildAfterFork:
+      if (vault_.failOnUseAfterFork_) {
+        LOG(DFATAL) << "Attempting to use singleton " << type().name()
+                    << " in child process after fork";
+      } else {
+        LOG(ERROR) << "Attempting to use singleton " << type().name()
+                   << " in child process after fork";
+      }
+      state_.compare_exchange_strong(
+          state,
+          SingletonHolderState::Living,
+          std::memory_order_relaxed,
+          std::memory_order_relaxed);
+      return; // just need to do the state transition
+    case SingletonHolderState::NotRegistered:
+      detail::singletonWarnCreateUnregisteredAndAbort(type()); // noreturn
+    case SingletonHolderState::Dead:
+      break; // recreate it below
+    default:
+      assume_unreachable(); // impossible state
   }
 
   SCOPE_EXIT {

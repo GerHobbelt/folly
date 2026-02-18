@@ -27,6 +27,7 @@
 #include <folly/portability/Atomic.h>
 #include <folly/portability/GTest.h>
 #include <folly/portability/SysTime.h>
+#include <folly/system/HardwareConcurrency.h>
 
 using folly::AtomicHashArray;
 using folly::AtomicHashMap;
@@ -313,7 +314,7 @@ TEST(Ahm, counter) {
   vector<std::thread> threads;
   for (auto key : keys) {
     FOR_EACH_RANGE (i, 0, key * mult) {
-      threads.push_back(std::thread([&, key] { c.increment(key); }));
+      threads.emplace_back([&, key] { c.increment(key); });
     }
   }
   for (auto& t : threads) {
@@ -1061,7 +1062,7 @@ void benchmarkSetup() {
   config.maxLoadFactor = FLAGS_maxLoadFactor;
   qpConfig.maxLoadFactor = FLAGS_maxLoadFactor;
   configRace.maxLoadFactor = 0.5;
-  size_t numCores = sysconf(_SC_NPROCESSORS_ONLN);
+  size_t numCores = folly::available_concurrency();
   loadGlobalAha();
   loadGlobalAhm();
   loadGlobalQPAhm();

@@ -1049,7 +1049,10 @@ fb_dirsync_cpp_library(
     name = "cpu_id",
     headers = ["CpuId.h"],
     xplat_impl = folly_xplat_library,
-    exported_deps = [":portability"],
+    exported_deps = [
+        ":portability",
+        "//folly/system/arch:x86",
+    ],
 )
 
 fb_dirsync_cpp_library(
@@ -3934,15 +3937,6 @@ non_fbcode_target(
     _kind = folly_xplat_library,
     name = "gen_istream",
     exported_deps = ["//xplat/folly/gen:istream"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "synchronization_detail_hardware",
-    exported_deps = [
-        "//xplat/folly/synchronization/detail:hardware",
-    ],
 )
 
 non_fbcode_target(
