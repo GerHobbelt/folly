@@ -19,13 +19,13 @@
 #include <folly/ScopeGuard.h>
 #include <folly/Traits.h>
 #include <folly/coro/AsyncGenerator.h>
-#include <folly/coro/AwaitResult.h>
 #include <folly/coro/Baton.h>
 #include <folly/coro/BlockingWait.h>
 #include <folly/coro/Collect.h>
 #include <folly/coro/Invoke.h>
 #include <folly/coro/Sleep.h>
 #include <folly/coro/Task.h>
+#include <folly/coro/ValueOrError.h>
 #include <folly/coro/WithCancellation.h>
 #include <folly/futures/Future.h>
 
@@ -38,6 +38,30 @@
 #include <tuple>
 
 #if FOLLY_HAS_COROUTINES
+
+constexpr bool check_for_size_regressions() {
+  using namespace folly::coro;
+  namespace detail = folly::coro::detail;
+
+  static_assert(sizeof(AsyncGenerator<int&>) == sizeof(void*));
+
+  // Prevent size regressions due to member or base ordering
+  constexpr size_t promiseSize =
+      // From AsyncGeneratorPromise:
+      sizeof(ExtendedCoroutineHandle) + sizeof(folly::AsyncStackFrame) +
+      sizeof(folly::Executor::KeepAlive<>) + sizeof(folly::CancellationToken) +
+      // The value/error union
+      sizeof(folly::exception_wrapper) +
+      // state_, hasCancelTokenOverride_ and bypassExceptionThrowing_ together:
+      sizeof(void*) +
+      // From ExtendedCoroutinePromiseCrtp:
+      sizeof(ExtendedCoroutineHandle::PromiseBase);
+  static_assert(
+      sizeof(detail::AsyncGeneratorPromise<int&, int>) == promiseSize);
+
+  return true;
+}
+static_assert(check_for_size_regressions());
 
 class AsyncGeneratorTest : public testing::Test {};
 
@@ -662,7 +686,7 @@ TEST(AsyncGeneraor, CoAwaitTry) {
   }());
 }
 
-TEST(AsyncGeneraor, CoAwaitResult) {
+TEST(AsyncGeneraor, CoAwaitValueOrError) {
   folly::coro::blockingWait([]() -> folly::coro::Task<void> {
     auto gen = []() -> folly::coro::AsyncGenerator<std::string> {
       co_yield "foo";
@@ -671,13 +695,13 @@ TEST(AsyncGeneraor, CoAwaitResult) {
       CHECK(false);
     }();
 
-    auto item1 = co_await folly::coro::co_await_result(gen.next());
+    auto item1 = co_await folly::coro::value_or_error_or_stopped(gen.next());
     CHECK(item1.has_value());
     CHECK(*item1.value_or_throw() == "foo");
-    auto item2 = co_await folly::coro::co_await_result(gen.next());
+    auto item2 = co_await folly::coro::value_or_error_or_stopped(gen.next());
     CHECK(item2.has_value());
     CHECK(*item2.value_or_throw() == "bar");
-    auto item3 = co_await folly::coro::co_await_result(gen.next());
+    auto item3 = co_await folly::coro::value_or_error_or_stopped(gen.next());
     CHECK(!item3.has_value() && !item3.has_stopped());
     CHECK(folly::get_exception<SomeError>(item3));
   }());

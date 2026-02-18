@@ -216,6 +216,8 @@ fbcode_target(
     deps = [
         "//folly:benchmark",
         "//folly/concurrency:atomic_shared_ptr",
+        "//folly/container:enumerate",
+        "//folly/container:f14_hash",
         "//folly/portability:gflags",
         "//folly/synchronization:hazptr",
     ],
@@ -321,6 +323,7 @@ fbcode_target(
     name = "rcu_test",
     srcs = ["RcuTest.cpp"],
     deps = [
+        ":barrier",
         "//folly:benchmark",
         "//folly:random",
         "//folly/portability:gflags",

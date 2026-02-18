@@ -49,6 +49,7 @@ fbcode_target(
         "//folly:traits",
         "//folly:try",
         "//folly/coro:auto_cleanup_fwd",
+        "//folly/coro:base_promise",
         "//folly/coro:coroutine",
         "//folly/coro:current_executor",
         "//folly/coro:detail_malloc",
@@ -79,6 +80,7 @@ non_fbcode_target(
         "//xplat/folly:exception_wrapper",
         "//xplat/folly:traits",
         "//xplat/folly:try",
+        "//xplat/folly/coro:base_promise",
         "//xplat/folly/experimental/coro:auto_cleanup_fwd",
         "//xplat/folly/experimental/coro:coroutine",
         "//xplat/folly/experimental/coro:current_executor",
@@ -259,24 +261,30 @@ non_fbcode_target(
 
 ### this line is a hint for source control merge
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_library,
-    name = "await_result",
-    feature = triage_InfrastructureSupermoduleOptou,
-    raw_headers = ["AwaitResult.h"],
+fbcode_target(
+    _kind = cpp_library,
+    name = "base_promise",
+    headers = ["BasePromise.h"],
     exported_deps = [
-        ":via_if_async",
-        "//xplat/folly/result:try",
+        ":current_executor",
+        ":error",
+        ":nothrow",
+        ":value_or_error",
+        "//folly:portability",
     ],
 )
 
-fbcode_target(
-    _kind = cpp_library,
-    name = "await_result",
-    headers = ["AwaitResult.h"],
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "base_promise",
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = ["BasePromise.h"],
     exported_deps = [
-        ":via_if_async",
-        "//folly/result:try",
+        ":current_executor",
+        ":error",
+        ":nothrow",
+        ":value_or_error",
+        "//xplat/folly:portability",
     ],
 )
 
@@ -1074,6 +1082,31 @@ non_fbcode_target(
 
 fbcode_target(
     _kind = cpp_library,
+    name = "nothrow",
+    headers = ["Nothrow.h"],
+    exported_deps = [
+        ":via_if_async",
+        "//folly:exception_wrapper",
+    ],
+    exported_external_deps = ["glog"],
+)
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "nothrow",
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = ["Nothrow.h"],
+    exported_deps = [
+        ":via_if_async",
+        "//third-party/glog:glog",
+        "//xplat/folly:exception_wrapper",
+    ],
+)
+
+### this line is a hint for source control merge
+
+fbcode_target(
+    _kind = cpp_library,
     name = "promise",
     headers = ["Promise.h"],
     exported_deps = [
@@ -1453,6 +1486,7 @@ fbcode_target(
         "//folly:scope_guard",
         "//folly:traits",
         "//folly:try",
+        "//folly/coro:base_promise",
         "//folly/coro:coroutine",
         "//folly/coro:current_executor",
         "//folly/coro:detail_malloc",
@@ -1495,6 +1529,7 @@ non_fbcode_target(
         "//xplat/folly:scope_guard",
         "//xplat/folly:traits",
         "//xplat/folly:try",
+        "//xplat/folly/coro:base_promise",
         "//xplat/folly/experimental/coro:coroutine",
         "//xplat/folly/experimental/coro:current_executor",
         "//xplat/folly/experimental/coro:detail_malloc",
@@ -1729,6 +1764,29 @@ non_fbcode_target(
         "//xplat/folly/experimental/coro:coroutine",
         "//xplat/folly/experimental/coro:task",
         "//xplat/folly/fibers:semaphore",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "value_or_error",
+    feature = triage_InfrastructureSupermoduleOptou,
+    raw_headers = ["ValueOrError.h"],
+    exported_deps = [
+        ":via_if_async",
+        "//xplat/folly/result:try",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "value_or_error",
+    headers = ["ValueOrError.h"],
+    exported_deps = [
+        ":via_if_async",
+        "//folly/result:try",
     ],
 )
 

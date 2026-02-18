@@ -43,13 +43,15 @@
 ///
 ///   auto v = co_await co_nothrow(asyncMayError()); // best practice
 ///   // equivalent, but too long
-///   auto v = co_await or_unwind(co_await co_await_result(asyncMayError()));
+///   auto v = co_await or_unwind(
+///       co_await value_or_error_or_stopped(asyncMayError()));
 ///
 /// However, when you are calling synchronous `result` functions, or need to
 /// efficiently handle **some** async errors, `or_unwind` is your friend:
 ///
-///   auto res = syncResultFn(); // or `co_await co_await_result(asyncFn())`
-///   if (auto* ex = get_exception<MyError>(res)) {
+///   // Or: `res = co_await value_or_error_or_stopped(asyncFn());`
+///   auto res = syncResultFn();
+///    if (auto* ex = get_exception<MyError>(res)) {
 ///     /* handle ex */
 ///   } else {
 ///     auto v = co_await or_unwind(std::move(res)); // propagate unhandled
@@ -264,10 +266,10 @@ class or_unwind_crtp
     // have to check `resultRef_` for `OperationCancelled` which can cost
     // 50-100ns+.
     auto awaiter = awaitingCoro.promise().yield_value(coro::co_error(
-        // This `copy` is here because `get_legacy_error_or_cancellation` lacks
-        // a `const`-qualified overload.
+        // This `copy` is here because `get_legacy_error_or_cancellation_slow`
+        // lacks a `const`-qualified overload.
         ::folly::copy(static_cast<ResultRef&&>(resultRef_).non_value())
-            .get_legacy_error_or_cancellation()));
+            .get_legacy_error_or_cancellation_slow(result_private_t{})));
     return awaiter.await_suspend(awaitingCoro);
   }
 

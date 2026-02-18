@@ -17,13 +17,13 @@
 #include <folly/Conv.h>
 #include <folly/Portability.h>
 
-#include <folly/coro/AwaitResult.h>
 #include <folly/coro/Baton.h>
 #include <folly/coro/BlockingWait.h>
 #include <folly/coro/Invoke.h>
 #include <folly/coro/Mutex.h>
 #include <folly/coro/SharedMutex.h>
 #include <folly/coro/Task.h>
+#include <folly/coro/ValueOrError.h>
 #include <folly/coro/detail/InlineTask.h>
 #include <folly/executors/InlineExecutor.h>
 #include <folly/executors/ManualExecutor.h>
@@ -38,6 +38,31 @@
 #if FOLLY_HAS_COROUTINES
 
 using namespace folly;
+
+constexpr bool check_for_size_regressions() {
+  namespace detail = folly::coro::detail;
+
+  static_assert(sizeof(coro::Task<>) == sizeof(void*));
+  static_assert(sizeof(coro::Task<int>) == sizeof(void*));
+
+  // Prevent size regressions due to member or base ordering
+  constexpr size_t promiseSize =
+      // From TaskPromiseBase:
+      sizeof(coro::ExtendedCoroutineHandle) + sizeof(folly::AsyncStackFrame) +
+      sizeof(folly::Executor::KeepAlive<>) + sizeof(folly::CancellationToken) +
+      sizeof(coro::coroutine_handle<detail::ScopeExitTaskPromiseBase>) +
+      // hasCancelTokenOverride_ and bypassExceptionThrowing_ should pack into
+      sizeof(void*) +
+      // From TaskPromiseCrtpBase:
+      sizeof(Try<int>) +
+      // From ExtendedCoroutinePromiseCrtp:
+      sizeof(coro::ExtendedCoroutineHandle::PromiseBase);
+  static_assert(sizeof(detail::TaskPromise<void>) == promiseSize);
+  static_assert(sizeof(detail::TaskPromise<int>) == promiseSize);
+
+  return true;
+}
+static_assert(check_for_size_regressions());
 
 static_assert( //
     std::is_same<
@@ -412,7 +437,7 @@ TEST_F(TaskTest, TaskOfLvalueReferenceAsResult) {
     };
 
     int value = 123;
-    auto&& res = co_await co_await_result(returnIntRef(value));
+    auto&& res = co_await value_or_error_or_stopped(returnIntRef(value));
     CHECK(res.has_value());
     CHECK_EQ(&value, &res.value_or_throw());
     CHECK_EQ(&value, &(co_await folly::or_unwind(std::move(res))));

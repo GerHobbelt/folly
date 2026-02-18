@@ -761,6 +761,33 @@ invoke_member_wrapper_fn(F) -> invoke_member_wrapper_fn<F>;
   template <typename T>                                            \
   [[maybe_unused]] inline constexpr membername##_fn<T> membername {}
 
+/***
+ *  FOLLY_CREATE_MEMBER_ACCESSOR
+ *
+ *  Used to create an accessor type bound to a specific data-member name,
+ *  providing access to that data-member.
+ */
+#define FOLLY_CREATE_MEMBER_ACCESSOR(classname, membername)            \
+  struct classname {                                                   \
+    template <typename T>                                              \
+    [[maybe_unused]] FOLLY_ERASE_HACK_GCC constexpr auto&& operator()( \
+        T&& val) const noexcept {                                      \
+      return static_cast<T&&>(val).membername;                         \
+    }                                                                  \
+  }
+
+/***
+ *  FOLLY_CREATE_MEMBER_ACCESSOR_SUITE
+ *
+ *  Used to create an accessor type and associated variable bound to a specific
+ *  data-member name, providing access to that data-member. The accessor
+ *  variable is named like the member name and the accessor type is named with a
+ *  suffix of _fn.
+ */
+#define FOLLY_CREATE_MEMBER_ACCESSOR_SUITE(membername)       \
+  FOLLY_CREATE_MEMBER_ACCESSOR(membername##_fn, membername); \
+  [[maybe_unused]] inline constexpr membername##_fn membername {}
+
 namespace folly {
 
 namespace detail_tag_invoke_fn {
@@ -893,5 +920,68 @@ struct tag_invoke_result
           is_tag_invocable_v<Tag, Args...>,
           detail_tag_invoke_fn::defer<tag_invoke_result_t, Tag, Args...>,
           detail_tag_invoke_fn::empty> {};
+
+#if defined(__cpp_concepts)
+
+/// passable_to
+///
+/// Useful for enabling n^k overloads all at once. Example below shows cases of
+/// n=5 with k=1 and k=2.
+///
+/// Useful for transparent hash and key-equal functions for a set which needs
+/// heterogeneous lookup.
+///
+/// Law:
+///   passable_to<Arg, Fun> = invocable<Fun, Arg>
+///
+/// Discussion:
+/// Q:  Why require a one-param function type and not support a multi-param
+///     function type?
+/// A:  Too much arbitrary choice. Interface would be confusing.
+///     To provide an interface like:
+///         passable_to<Slog, Fun, Arg...>
+///     Then `Arg...` would need exactly one "hole", which would be represented
+///     by perhaps `void` or perhaps `std::placeholder::_1` or another sentinel.
+///     Alternatively:
+///         passable_to<Slog, Fun, tag_t<ArgFront...>, tag_t<ArgBack...>>
+///     Now the usage gets convoluted.
+///     But, in the end, this can be worked around by passing a function type
+///     that is the result of std::bind_front (C++20) or std::bind_back (C++23).
+///
+/// Example:
+///
+///     struct to_key_fn {
+///       string_view operator()(string_view val) const noexcept { return val; }
+///       string_view operator()(object const&) const noexcept;
+///       string_view operator()(object const*) const noexcept;
+///       string_view operator()(unique_ptr<object> const&) const noexcept;
+///       string_view operator()(shared_ptr<object> const&) const noexcept;
+///     };
+///     static constexpr to_key_fn to_key{};
+///
+///     struct obj_hash : hash<string_view> {
+///       using is_transparent = void;
+///       size_t operator()(passable_to<to_key_fn> auto const& val) noexcept {
+///         return hash<string_view>::operator()(to_key(val));
+///       }
+///     };
+///     struct obj_key_equal : equal_to<string_view> {
+///       using is_transparent = void;
+///       bool operator()(
+///           passable_to<to_key_fn> auto const& lhs,
+///           passable_to<to_key_fn> auto const& rhs) noexcept {
+///         return equal_to<string_view>::operator()(to_key(lhs), to_key(rhs));
+///       }
+///     };
+///
+///     using object_set = std::unordered_set<
+///         std::shared_ptr<object>,
+///         obj_hash,
+///         obj_key_equal>;
+///     object_set objs;
+template <typename Arg, typename Fun>
+concept passable_to = is_invocable_v<Fun, Arg>;
+
+#endif
 
 } // namespace folly
