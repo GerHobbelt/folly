@@ -157,6 +157,7 @@ fb_dirsync_cpp_library(
     xplat_impl = folly_xplat_cxx_library,
     deps = [
         "fbsource//third-party/fmt:fmt",
+        ":io_uring_backend",
         "//folly:exception",
         "//folly:portability",
         "//folly:string",
@@ -172,6 +173,9 @@ fb_dirsync_cpp_library(
         ":async_socket_transport",
         ":async_transport",
         ":delayed_destruction",
+        ":io_uring_connect",
+        ":io_uring_recv",
+        ":io_uring_send",
         "//folly:constructor_callback_list",
         "//folly:network_address",
         "//folly:optional",
@@ -199,6 +203,57 @@ fb_dirsync_cpp_library(
     exported_deps = [
         ":async_base",
         "//folly:network_address",
+    ],
+)
+
+fb_dirsync_cpp_library(
+    name = "io_uring_connect",
+    srcs = ["IoUringConnect.cpp"],
+    headers = ["IoUringConnect.h"],
+    use_raw_headers = True,
+    xplat_impl = folly_xplat_cxx_library,
+    exported_deps = [
+        ":async_base",
+        ":io_uring_backend",
+        "//folly/net:network_socket",
+    ],
+)
+
+fb_dirsync_cpp_library(
+    name = "io_uring_recv",
+    srcs = ["IoUringRecv.cpp"],
+    headers = ["IoUringRecv.h"],
+    use_raw_headers = True,
+    xplat_impl = folly_xplat_cxx_library,
+    deps = [
+        ":async_base",
+        ":async_socket_exception",
+    ],
+    exported_deps = [
+        ":async_transport",
+        ":delayed_destruction",
+        ":io_uring_backend",
+        "//folly:network_address",
+        "//folly/futures:core",
+        "//folly/net:network_socket",
+    ],
+)
+
+fb_dirsync_cpp_library(
+    name = "io_uring_send",
+    srcs = ["IoUringSend.cpp"],
+    headers = ["IoUringSend.h"],
+    use_raw_headers = True,
+    xplat_impl = folly_xplat_cxx_library,
+    deps = [
+        ":async_base",
+    ],
+    exported_deps = [
+        ":async_transport",
+        ":delayed_destruction",
+        ":io_uring_backend",
+        "//folly/futures:core",
+        "//folly/net:network_socket",
     ],
 )
 

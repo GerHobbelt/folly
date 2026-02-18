@@ -308,7 +308,19 @@ class rich_error_bases_and_own_codes {
             }
           }();
 
-          if constexpr (fmt::is_formattable<Code>::value) {
+          // Use `format_as_t` wrapper if provided, otherwise format directly.
+          // This lets `rich_error_code<Code>` provide custom formatting without
+          // specializing `fmt::formatter<Code>` (useful for standard types
+          // where such a specialization could cause ODR issues).
+          if constexpr (requires {
+                          typename rich_error_code<Code>::format_as_t;
+                        }) {
+            using FormatAs = typename rich_error_code<Code>::format_as_t;
+            static_assert(
+                fmt::is_formattable<FormatAs>::value,
+                "rich_error_code<Code>::format_as_t must be formattable");
+            fmt::format_to(out, "{}={}", name, FormatAs{code});
+          } else if constexpr (fmt::is_formattable<Code>::value) {
             fmt::format_to(out, "{}={}", name, code);
           } else {
             // While most error codes should be formattable, and display a real
@@ -377,7 +389,7 @@ template <typename Code>
 class get_rich_error_code_fn {
  public:
   template <typename T>
-  constexpr std::optional<Code> operator()(const T& t) const {
+  [[nodiscard]] constexpr std::optional<Code> operator()(const T& t) const {
     // Per `retrieve_code`, `mangled_code_` is uninitialized for reserved UUIDs!
     //
     // This was a `requires` clause, but some GCC versions have a bug where

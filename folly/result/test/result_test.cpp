@@ -21,7 +21,44 @@
 
 #if FOLLY_HAS_RESULT
 
+// IMPORTANT: Changes here should PROBABLY be mirrored to
+// `value_only_result_test.cpp`.
+
+// This tests `result.h` -- `coro.h` is tested incidentally.  A full test
+// matrix for `or_unwind` combinations is covered by `or_unwind_test.cpp`
+
 namespace folly {
+
+// If you came here, you probably want `result` to have `->` or `*` operators,
+// or `.value()`, just like `folly::Try` or `std::expected`.  This comment will
+// try to dissuade you.
+//
+// Instead, prefer to use `co_await or_unwind()`.  You could even add a macro
+// to your `.cpp` files for brevity -- for debuggability, use `or_unwind_rich`.
+//
+//   #define OR_UNWIND(...) (co_await or_unwind(__VA_ARGS__))
+//
+// So, why NOT have throwing operators?  Many teams that use `result` use it
+// because they systematically want to avoid throwing, either for reasons of
+// `throw` performance, or for explicitness, or because of the safety problems
+// with throwing in async code (un-awaited work may lead to use-after-free).
+//
+// In all of those applications, adding a throwing dereference operator is very
+// counterproductive, since it hides the throw site.
+template <typename T>
+constexpr bool gettingValueDoesNotImplicitlyThrow() {
+  return !requires(T t) { *t; } && //
+      !requires(T t) { t.operator->(); } && //
+      !requires(T t) { t.value(); };
+}
+static_assert(gettingValueDoesNotImplicitlyThrow<result<int>>());
+static_assert(gettingValueDoesNotImplicitlyThrow<result<void>>());
+static_assert(gettingValueDoesNotImplicitlyThrow<result<void*>>());
+
+// Smoke test to ensure we use packed `rich_exception_ptr` on 64-bit Linux.
+static_assert(
+    sizeof(non_value_result) == sizeof(void*) || !kIsLinux ||
+    sizeof(void*) != 8);
 
 class MyError : public std::runtime_error {
   using std::runtime_error::runtime_error;
@@ -63,7 +100,7 @@ TEST(Result, resultOfVoid) {
       if (!fail) {
         co_return;
       }
-      co_await non_value_result{MyError{"failed"}};
+      co_await or_unwind(non_value_result{MyError{"failed"}});
     };
     EXPECT_TRUE(voidResFn(false).has_value());
     auto r = voidResFn(true);
@@ -114,7 +151,7 @@ TEST(Result, storeAndGetStoppedResult) {
     // Using `exception_ptr`-like accessors when `has_stopped()` is debug-fatal
     if (kIsDebug) {
       EXPECT_DEATH(
-          { std::move(r).non_value().to_exception_ptr_slow(); }, deathRe);
+          { (void)std::move(r).non_value().to_exception_ptr_slow(); }, deathRe);
     } else {
       auto ew = std::move(r).non_value().to_exception_ptr_slow();
       EXPECT_TRUE(get_exception<OperationCancelled>(ew));
@@ -145,7 +182,7 @@ TEST(Result, storeAndGetStoppedResult) {
 
 TEST(Result, awaitStoppedResult) {
   auto innerFn = []() -> result<> {
-    co_await stopped_result;
+    co_await or_unwind(stopped_result);
     LOG(FATAL) << "not reached";
   };
   auto outerFn = [&]() -> result<> {
@@ -216,7 +253,7 @@ TEST(Result, fromNonValue) {
   nvr = non_value_result{MyError{"nein"}};
   {
     auto r = [&nvr]() -> result<> {
-      co_await std::move(nvr); // await
+      co_await or_unwind(std::move(nvr)); // await
       LOG(FATAL) << "not reached";
     }();
     EXPECT_EQ(std::string("nein"), get_exception<MyError>(r)->what());
@@ -586,10 +623,10 @@ void test_bad_empty_result(auto bad) {
         (void)bad.non_value(), "`folly::result` had an empty underlying");
   }
   if constexpr (!kIsDebug) {
-    EXPECT_THROW(bad.value_or_throw(), detail::empty_result_error);
+    EXPECT_THROW((void)bad.value_or_throw(), detail::empty_result_error);
   } else {
     EXPECT_DEATH(
-        bad.value_or_throw(), "`folly::result` had an empty underlying");
+        (void)bad.value_or_throw(), "`folly::result` had an empty underlying");
   }
   // not default-constructible:
   decltype(bad) valRes{typename decltype(bad)::value_type{}};
@@ -602,7 +639,7 @@ void test_bad_empty_result(auto bad) {
   EXPECT_TRUE(errRes != bad);
   EXPECT_TRUE(bad == bad);
   auto awaitsBad = [&]() -> result<> {
-    co_await or_unwind(std::as_const(bad));
+    (void)co_await or_unwind(std::as_const(bad));
   };
   if constexpr (!kIsDebug) {
     auto res = awaitsBad();
@@ -627,11 +664,11 @@ TEST(Result, BadEmptyStateString) {
 FOLLY_PUSH_WARNING
 FOLLY_CLANG_DISABLE_WARNING("-Wunneeded-internal-declaration")
 bool is_bad_result_access(const non_value_result& nvr) {
-  return get_exception<detail::bad_result_access_error>(nvr);
+  return bool{get_exception<detail::bad_result_access_error>(nvr)};
 }
 FOLLY_POP_WARNING
 
-const char* bad_access_re =
+[[maybe_unused]] const char* const bad_access_re =
     "Used `non_value\\(\\)` accessor for `folly::result` in value";
 
 TEST(Result, accessValue) {
@@ -771,9 +808,9 @@ TEST(Result, accessError) {
   std::string msg2{"buh-bye"};
   EXPECT_EQ(msg2, get_exception<MyError>(r)->what());
 
-  EXPECT_THROW(r.value_or_throw(), MyError);
-  EXPECT_THROW(std::as_const(r).value_or_throw(), MyError);
-  EXPECT_THROW(std::move(r).value_or_throw(), MyError);
+  EXPECT_THROW((void)r.value_or_throw(), MyError);
+  EXPECT_THROW((void)std::as_const(r).value_or_throw(), MyError);
+  EXPECT_THROW((void)std::move(r).value_or_throw(), MyError);
 
   // `r` is moved out, so let's store a new error.
   r = non_value_result{MyError{"farewell"}};
@@ -856,9 +893,12 @@ RESULT_CO_TEST(Result, awaitRef) {
 
 TEST(Result, awaitError) {
   for (auto& r :
-       {[]() -> result<> { co_await non_value_result{MyError{"eep"}}; }(),
+       {[]() -> result<> {
+          co_await or_unwind(non_value_result{MyError{"eep"}});
+        }(),
         []() -> result<> {
-          co_await or_unwind(result<int>{non_value_result{MyError{"eep"}}});
+          (void)co_await or_unwind(
+              result<int>{non_value_result{MyError{"eep"}}});
         }()}) {
     EXPECT_EQ(std::string("eep"), get_exception<MyError>(r)->what());
   }
@@ -867,7 +907,7 @@ TEST(Result, awaitError) {
 TEST(Result, awaitRefError) {
   auto resultErrFn = []() -> result<> {
     result<std::unique_ptr<int>> resultErr{non_value_result{MyError{"e"}}};
-    co_await or_unwind(std::as_const(resultErr));
+    (void)co_await or_unwind(std::as_const(resultErr));
   };
   auto res = resultErrFn();
   EXPECT_TRUE(get_exception<MyError>(res));
@@ -942,6 +982,29 @@ TEST(Result, catch_all_returns_value) {
     return result_catch_all([]() -> uint8_t { return 129; });
   };
   ASSERT_EQ(129, fn().value_or_throw());
+}
+
+// Even though `non_value_result` is a `rich_exception_ptr`, the latter can
+// still be used as a value type.
+TEST(Result, of_rich_exception_ptr) {
+  result<rich_exception_ptr> rVal{rich_exception_ptr{MyError{"rep"}}};
+  EXPECT_TRUE(rVal.has_value());
+  EXPECT_STREQ("rep", get_exception<MyError>(rVal.value_or_throw())->what());
+
+  result<rich_exception_ptr> rErr{non_value_result{MyError{"err"}}};
+  EXPECT_FALSE(rErr.has_value());
+  EXPECT_STREQ("err", get_exception<MyError>(rErr)->what());
+}
+
+// This was more interesting when `non_value_result` wrapped `exception_wrapper`
+TEST(Result, of_exception_wrapper) {
+  result<exception_wrapper> rVal{make_exception_wrapper<MyError>("ew")};
+  EXPECT_TRUE(rVal.has_value());
+  EXPECT_EQ("folly::MyError: ew", rVal.value_or_throw().what());
+
+  result<exception_wrapper> rErr{non_value_result{MyError{"err"}}};
+  EXPECT_FALSE(rErr.has_value());
+  EXPECT_STREQ("err", get_exception<MyError>(rErr)->what());
 }
 
 } // namespace folly

@@ -64,6 +64,109 @@ fbcode_target(
 
 non_fbcode_target(
     _kind = folly_xplat_cxx_library,
+    name = "coded_rich_error",
+    raw_headers = ["coded_rich_error.h"],
+    exported_deps = [
+        ":rich_error",
+        ":rich_error_base",
+        ":rich_error_code",
+        "//xplat/folly/result:rich_msg",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "coded_rich_error",
+    headers = ["coded_rich_error.h"],
+    exported_deps = [
+        ":rich_error",
+        ":rich_error_base",
+        ":rich_error_code",
+        "//folly/result:rich_msg",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "enrich_non_value",
+    srcs = ["enrich_non_value.cpp"],
+    raw_headers = ["enrich_non_value.h"],
+    exported_deps = [
+        ":result",
+        ":rich_error",
+        "//xplat/folly/lang:safe_assert",
+        "//xplat/folly/result:rich_msg",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "enrich_non_value",
+    srcs = ["enrich_non_value.cpp"],
+    headers = ["enrich_non_value.h"],
+    exported_deps = [
+        ":result",
+        ":rich_error",
+        "//folly:portability",
+        "//folly/lang:safe_assert",
+        "//folly/result:rich_msg",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "errc_rich_error",
+    srcs = ["errc_rich_error.cpp"],
+    raw_headers = ["errc_rich_error.h"],
+    exported_deps = [
+        ":coded_rich_error",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "errc_rich_error",
+    srcs = ["errc_rich_error.cpp"],
+    headers = ["errc_rich_error.h"],
+    exported_deps = [
+        ":coded_rich_error",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
+    name = "nestable_coded_rich_error",
+    raw_headers = ["nestable_coded_rich_error.h"],
+    exported_deps = [
+        ":coded_rich_error",
+        ":rich_error",
+        ":rich_error_base",
+        "//xplat/folly/result:rich_msg",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "nestable_coded_rich_error",
+    headers = ["nestable_coded_rich_error.h"],
+    exported_deps = [
+        ":coded_rich_error",
+        ":rich_error",
+        ":rich_error_base",
+        "//folly/result:rich_msg",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
     name = "gtest_helpers",
     raw_headers = ["gtest_helpers.h"],
     exported_deps = [
@@ -93,6 +196,8 @@ non_fbcode_target(
         "//xplat/folly/coro:coroutine",
         "//xplat/folly/coro:error",
         "//xplat/folly/lang:must_use_immediately",
+        "//xplat/folly/result/detail:result_or_unwind",
+        "//xplat/folly/result/detail:result_promise",
     ],
 )
 
@@ -105,6 +210,8 @@ fbcode_target(
         "//folly/coro:coroutine",
         "//folly/coro:error",
         "//folly/lang:must_use_immediately",
+        "//folly/result/detail:result_or_unwind",
+        "//folly/result/detail:result_promise",
     ],
 )
 
@@ -136,6 +243,28 @@ fbcode_target(
 
 non_fbcode_target(
     _kind = folly_xplat_cxx_library,
+    name = "or_unwind_rich",
+    raw_headers = ["or_unwind_rich.h"],
+    exported_deps = [
+        ":coro",
+        ":enrich_non_value",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_library,
+    name = "or_unwind_rich",
+    headers = ["or_unwind_rich.h"],
+    exported_deps = [
+        ":coro",
+        ":enrich_non_value",
+    ],
+)
+
+### this line is a hint for source control merge
+
+non_fbcode_target(
+    _kind = folly_xplat_cxx_library,
     name = "result",
     srcs = ["result.cpp"],
     raw_headers = ["result.h"],
@@ -145,6 +274,7 @@ non_fbcode_target(
     ],
     exported_deps = [
         "fbsource//xplat/folly/portability:gtest_prod",
+        ":rich_error_base",
         "//xplat/folly:exception_wrapper",
         "//xplat/folly:expected",
         "//xplat/folly:operation_cancelled",
@@ -163,6 +293,7 @@ fbcode_target(
         "//folly:indestructible",
     ],
     exported_deps = [
+        ":rich_error_base",
         "//folly:exception_wrapper",
         "//folly:expected",
         "//folly:operation_cancelled",

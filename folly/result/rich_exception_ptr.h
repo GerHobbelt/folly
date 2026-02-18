@@ -32,10 +32,9 @@ class immortal_rich_error_t;
 
 namespace detail {
 
-// The "STUB_" prefix goes away when we integrate with `result.h`.
 // These are in `detail` since they're opt-build fallbacks for a debug-fatal.
-struct STUB_bad_result_access_error : public std::exception {};
-struct STUB_empty_result_error : public std::exception {};
+struct bad_result_access_error : public std::exception {};
+struct empty_result_error : public std::exception {};
 
 // Stub types that will be replaced by integrations with other folly/ types.
 //
@@ -316,14 +315,14 @@ class rich_exception_ptr_impl : private B {
         throw StubUsingUninitializedTry{};
       } else { // Match `result::value_or_throw()` behavior
         B::debug_assert("Cannot `throw_exception` on empty `Try`", false);
-        throw STUB_empty_result_error{};
+        throw empty_result_error{};
       }
     } else if (B::SMALL_VALUE_eq == bits) {
       if constexpr (PartOfTryImpl) {
         throw StubTryException{}; // Match `Try::exception()` behavior
       } else { // Match `result::non_value()` behavior
         B::debug_assert("Cannot `throw_exception` in value state", false);
-        throw STUB_bad_result_access_error{};
+        throw bad_result_access_error{};
       }
     }
     // Else: the above bit tests are intended to exhaustively cover all allowed
@@ -551,8 +550,8 @@ class rich_exception_ptr_impl : private B {
   rich_exception_ptr_impl(force_slow_rtti_t, std::exception_ptr&& e) {
     assign_owned_eptr_and_bits(
         std::move(e),
-        bits_t{
-            B::OWNS_EXCEPTION_PTR_and | B::owned_eptr_UNKNOWN_TYPE_masked_eq});
+        static_cast<bits_t>(
+            B::OWNS_EXCEPTION_PTR_and | B::owned_eptr_UNKNOWN_TYPE_masked_eq));
   }
 
   template <typename, typename, auto...>
@@ -617,12 +616,13 @@ class rich_exception_ptr_impl : private B {
   template <std::derived_from<std::exception> Ex>
   explicit rich_exception_ptr_impl(Ex ex) {
     using bits_t = typename B::bits_t; // MSVC thinks `B::BIT_NAME` is private
-    constexpr bits_t bits{[]() {
+    constexpr bits_t bits{[]() -> bits_t {
       if constexpr (std::derived_from<Ex, rich_error_base>) {
         // Redundant with `rich_error.h` asserts, hence no manual test.
         static_assert(detail::has_offset0_base<Ex, rich_error_base>);
-        return bits_t::OWNS_EXCEPTION_PTR_and |
-            bits_t::IS_RICH_ERROR_BASE_masked_eq;
+        return static_cast<bits_t>(
+            bits_t::OWNS_EXCEPTION_PTR_and |
+            bits_t::IS_RICH_ERROR_BASE_masked_eq);
       } else if constexpr (std::derived_from<Ex, OperationCancelled>) {
         // We only want the throwing version here, since nothrow OC uses a
         // different ctor, and a non-owned copy of a leaky singleton.  This
@@ -633,11 +633,13 @@ class rich_exception_ptr_impl : private B {
             // FIXME: This one will go away:
             std::is_same_v<const Ex, const OperationCancelled> ||
             std::is_same_v<const Ex, const StubThrownOperationCancelled>);
-        return bits_t::OWNS_EXCEPTION_PTR_and |
-            bits_t::IS_OPERATION_CANCELLED_masked_eq;
+        return static_cast<bits_t>(
+            bits_t::OWNS_EXCEPTION_PTR_and |
+            bits_t::IS_OPERATION_CANCELLED_masked_eq);
       } else {
-        return bits_t::OWNS_EXCEPTION_PTR_and |
-            bits_t::owned_eptr_KNOWN_NON_FAST_PATH_TYPE_masked_eq;
+        return static_cast<bits_t>(
+            bits_t::OWNS_EXCEPTION_PTR_and |
+            bits_t::owned_eptr_KNOWN_NON_FAST_PATH_TYPE_masked_eq);
       }
     }()};
     assign_owned_eptr_and_bits(
@@ -730,18 +732,18 @@ class rich_exception_ptr_impl : private B {
   ///     leaves `this` in a moved-out, empty eptr state.
   ///
   /// Precondition: Contains an exception, or empty eptr (debug-fatal otherwise)
-  std::exception_ptr to_exception_ptr_slow() const& {
+  [[nodiscard]] std::exception_ptr to_exception_ptr_slow() const& {
     return to_exception_ptr_copy</*PartOfTryImpl=*/false>();
   }
-  std::exception_ptr to_exception_ptr_slow() && {
+  [[nodiscard]] std::exception_ptr to_exception_ptr_slow() && {
     return to_exception_ptr_move</*PartOfTryImpl=*/false>();
   }
   // PRIVATE TO `Try`: `to_exception_ptr_slow()` with edge case differences.
-  std::exception_ptr to_exception_ptr_slow(
+  [[nodiscard]] std::exception_ptr to_exception_ptr_slow(
       try_rich_exception_ptr_private_t) const& {
     return to_exception_ptr_copy</*PartOfTryImpl=*/true>();
   }
-  std::exception_ptr to_exception_ptr_slow(
+  [[nodiscard]] std::exception_ptr to_exception_ptr_slow(
       try_rich_exception_ptr_private_t) && {
     return to_exception_ptr_move</*PartOfTryImpl=*/true>();
   }
@@ -1080,7 +1082,8 @@ using rich_exception_ptr_base = rich_exception_ptr_impl<
 /// While generally aligned to `exception_wrapper`, this API is much smaller.
 /// Notably, the ONLY way to test `rich_exception_ptr` for the presence of the
 /// exception type `Ex` is via `folly::get_exception<Ex>(rich_eptr)`.
-class rich_exception_ptr final : public detail::rich_exception_ptr_base {
+class [[nodiscard]]
+rich_exception_ptr final : public detail::rich_exception_ptr_base {
   using detail::rich_exception_ptr_base::rich_exception_ptr_base;
 };
 

@@ -62,21 +62,22 @@ void checkEmptyTryToExceptionPtr(REP& rep) {
   // For `result`, avoid throwing: debug-fatal, returning an eptr in opt.
   if (kIsDebug) {
     auto re = "Cannot use `to_exception_ptr_slow` in value or empty `Try` ";
-    EXPECT_DEATH({ std::as_const(rep).to_exception_ptr_slow(); }, re);
-    EXPECT_DEATH({ REP{rep}.to_exception_ptr_slow(); }, re);
+    EXPECT_DEATH({ (void)std::as_const(rep).to_exception_ptr_slow(); }, re);
+    EXPECT_DEATH({ (void)REP{rep}.to_exception_ptr_slow(); }, re);
   } else {
     auto eptr1 = std::as_const(rep).to_exception_ptr_slow();
-    EXPECT_TRUE(get_exception<STUB_bad_result_access_error>(eptr1));
+    EXPECT_TRUE(get_exception<bad_result_access_error>(eptr1));
     auto eptr2 = REP{rep}.to_exception_ptr_slow();
-    EXPECT_TRUE(get_exception<STUB_bad_result_access_error>(eptr2));
+    EXPECT_TRUE(get_exception<bad_result_access_error>(eptr2));
   }
 
   // For `Try`, alway throw
   try_rich_exception_ptr_private_t priv;
   EXPECT_THROW(
-      std::as_const(rep).to_exception_ptr_slow(priv),
+      (void)std::as_const(rep).to_exception_ptr_slow(priv),
       StubUsingUninitializedTry);
-  EXPECT_THROW(REP{rep}.to_exception_ptr_slow(priv), StubUsingUninitializedTry);
+  EXPECT_THROW(
+      (void)REP{rep}.to_exception_ptr_slow(priv), StubUsingUninitializedTry);
 }
 
 template <typename REP>
@@ -88,7 +89,7 @@ void checkEmptyTry() {
     EXPECT_DEATH(
         { rep.throw_exception(); }, "Cannot `throw_exception` on empty `Try`");
   } else {
-    EXPECT_THROW(rep.throw_exception(), STUB_empty_result_error);
+    EXPECT_THROW(rep.throw_exception(), empty_result_error);
   }
   EXPECT_THROW( // For `Try`, always throws
       rep.throw_exception(try_rich_exception_ptr_private_t{}),
@@ -102,7 +103,7 @@ void checkEmptyTry() {
       std::exception,
       rich_error_base,
       StubUsingUninitializedTry,
-      STUB_empty_result_error>(rep);
+      empty_result_error>(rep);
 }
 
 TEST(RichExceptionPtr, emptyTry) {
