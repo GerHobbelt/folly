@@ -208,6 +208,7 @@ folly_add_library(
     folly_exception
     folly_io_async_io_uring_backend
     folly_lang_checked_math
+    folly_overload
     folly_portability
     folly_portability_fcntl
     folly_portability_sys_mman
@@ -512,6 +513,7 @@ folly_add_library(
   HEADERS
     IoUringBackend.h
     IoUringBase.h
+    IoUringOptions.h
   DEPS
     folly_container_f14_hash
     folly_demangle
