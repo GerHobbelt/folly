@@ -16,31 +16,21 @@
 
 #pragma once
 
-#include <queue>
+#include <memory>
 #include <folly/io/IOBuf.h>
 #include <folly/io/async/Liburing.h>
-#include <folly/synchronization/DistributedMutex.h>
 
 #if FOLLY_HAS_LIBURING
-
-FOLLY_PUSH_WARNING
-FOLLY_CLANG_DISABLE_WARNING("-Wnested-anon-types")
-FOLLY_CLANG_DISABLE_WARNING("-Wzero-length-array")
 #include <liburing.h> // @manual
-FOLLY_POP_WARNING
 
 namespace folly {
 
+class IoUringZeroCopyBufferPoolImpl;
+
 class IoUringZeroCopyBufferPool {
  public:
-  friend class IoUringZeroCopyBufferPoolTestHelper;
-
-  struct Deleter {
-    void operator()(IoUringZeroCopyBufferPool* base);
-  };
-
   struct Params {
-    io_uring* ring;
+    struct io_uring* ring;
     size_t numPages;
     size_t pageSize;
     uint32_t rqEntries;
@@ -48,16 +38,36 @@ class IoUringZeroCopyBufferPool {
     uint16_t queueId;
   };
 
-  // Only support heap construction with a custom Deleter. This is to avoid
-  // deleting the object until all buffers have been returned.
-  using UniquePtr = std::unique_ptr<IoUringZeroCopyBufferPool, Deleter>;
-  static IoUringZeroCopyBufferPool::UniquePtr create(Params params);
+  struct ExportHandle {
+    explicit ExportHandle(
+        int zcrxFd, std::shared_ptr<IoUringZeroCopyBufferPoolImpl> impl)
+        : zcrxFd_(zcrxFd), impl_(std::move(impl)) {}
 
-  ~IoUringZeroCopyBufferPool() = default;
+    ~ExportHandle() = default;
 
-  void destroy() noexcept;
+    ExportHandle(ExportHandle&&) = default;
+    ExportHandle& operator=(ExportHandle&&) = default;
+    ExportHandle(const ExportHandle&) = delete;
+    ExportHandle& operator=(const ExportHandle&) = delete;
+
+   private:
+    friend class IoUringZeroCopyBufferPool;
+
+    int zcrxFd_;
+    std::shared_ptr<IoUringZeroCopyBufferPoolImpl> impl_;
+  };
+
+  using UniquePtr = std::unique_ptr<IoUringZeroCopyBufferPool>;
+  static UniquePtr create(Params params);
+  static UniquePtr importHandle(ExportHandle handle, struct io_uring* ring);
+
+  ExportHandle exportHandle() const;
+
+  ~IoUringZeroCopyBufferPool();
+
   std::unique_ptr<IOBuf> getIoBuf(
-      const io_uring_cqe* cqe, const io_uring_zcrx_cqe* rcqe) noexcept;
+      const struct io_uring_cqe* cqe,
+      const struct io_uring_zcrx_cqe* rcqe) noexcept;
 
  private:
   explicit IoUringZeroCopyBufferPool(Params params);
@@ -65,49 +75,26 @@ class IoUringZeroCopyBufferPool {
   struct TestTag {};
   explicit IoUringZeroCopyBufferPool(Params params, TestTag);
 
+  explicit IoUringZeroCopyBufferPool(
+      ExportHandle handle, struct io_uring* ring);
+
   IoUringZeroCopyBufferPool(IoUringZeroCopyBufferPool&&) = delete;
   IoUringZeroCopyBufferPool(IoUringZeroCopyBufferPool const&) = delete;
   IoUringZeroCopyBufferPool& operator=(IoUringZeroCopyBufferPool&&) = delete;
   IoUringZeroCopyBufferPool& operator=(IoUringZeroCopyBufferPool const&) =
       delete;
 
-  struct Buffer {
-    uint64_t off;
-    uint32_t len;
-    IoUringZeroCopyBufferPool* pool;
-  };
+  // For testing
+  friend class IoUringZeroCopyBufferPoolTestHelper;
+  uint32_t* getHead() const noexcept;
+  uint32_t getRingUsedCount() const noexcept;
+  uint32_t getRingFreeCount() const noexcept;
+  size_t getPendingBuffersSize() const noexcept;
 
-  void mapMemory();
-  void initialRegister(uint32_t ifindex, uint16_t queueId);
-
-  void returnBuffer(Buffer* buf) noexcept;
-
-  void delayedDestroy(uint32_t refs) noexcept;
-  uint32_t getRingQueuedCount() const noexcept;
-  void writeBufferToRing(Buffer* buffer) noexcept;
-
-  io_uring* ring_{nullptr};
-  size_t pageSize_{0};
-  uint32_t rqEntries_{0};
-
-  void* bufArea_{nullptr};
-  size_t bufAreaSize_{0};
-  std::vector<Buffer> buffers_;
-  void* rqRingArea_{nullptr};
-  size_t rqRingAreaSize_{0};
-  // Ring buffer shared between kernel and userspace
-  // Constructed in initialRegister()
-  io_uring_zcrx_rq rqRing_{};
-  uint64_t rqAreaToken_{0};
-  uint32_t rqTail_{0};
-  unsigned rqMask_{0};
-  uint32_t id_{0};
-  uint32_t bufDispensed_{0};
-
-  folly::DistributedMutex mutex_;
-  std::atomic<bool> wantsShutdown_{false};
-  uint32_t shutdownReferences_{0};
-  std::queue<Buffer*> pendingBuffers_;
+  struct io_uring* ring_{nullptr};
+  std::shared_ptr<IoUringZeroCopyBufferPoolImpl> impl_;
+  int zcrxId_{-1};
+  int zcrxFd_{-1};
 };
 
 } // namespace folly

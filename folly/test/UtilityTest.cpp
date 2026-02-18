@@ -364,6 +364,11 @@ TEST_F(UtilityTest, invocable_to_basic) {
   EXPECT_EQ(17, f.value);
 }
 
+TEST_F(UtilityTest, invocable_to_make_unique) {
+  std::unique_ptr<int> x = folly::invocable_to(std::make_unique<int>);
+  EXPECT_EQ(*x, 0);
+}
+
 namespace folly::detail::invocable_to_test {
 
 template <typename T, bool C, bool R, bool X>
@@ -468,6 +473,13 @@ static_assert(is_nx_conv_v<of<int, 1, 1, 1>&&, int>);
 static_assert(is_nx_conv_v<of<int, 1, 1, 1> const&&, int>);
 
 } // namespace folly::detail::invocable_to_test
+
+TEST_F(UtilityTest, object_from_member_example) {
+  using type = std::pair<int, float>;
+  constexpr auto ptr = &type::second;
+  type foo{1, 3.0};
+  EXPECT_EQ(&foo, folly::object_from_member(ptr, &foo.second));
+}
 
 namespace folly::detail::method_overload_delegation_test {
 
