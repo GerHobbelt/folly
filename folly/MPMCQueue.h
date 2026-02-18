@@ -23,9 +23,11 @@
 #include <limits>
 #include <type_traits>
 
+#include <folly/Portability.h>
 #include <folly/Traits.h>
 #include <folly/concurrency/CacheLocality.h>
 #include <folly/detail/TurnSequencer.h>
+#include <folly/lang/Exception.h>
 #include <folly/portability/Unistd.h>
 
 namespace folly {
@@ -717,11 +719,14 @@ class MPMCQueueBase<Derived<T, Atom, Dynamic, Allocator>> {
         pushSpinCutoff_(0),
         popSpinCutoff_(0) {
     if (queueCapacity == 0) {
+#if FOLLY_HAS_EXCEPTIONS
       throw std::invalid_argument(
           "MPMCQueue with explicit capacity 0 is impossible"
           // Stride computation in derived classes would sigfpe if capacity is 0
       );
+#endif
     }
+    FOLLY_SAFE_CHECK(queueCapacity > 0);
 
     // ideally this would be a static assert, but g++ doesn't allow it
     assert(
@@ -1471,11 +1476,10 @@ struct SingleElementQueue {
   T* ptr() noexcept { return static_cast<T*>(static_cast<void*>(&contents_)); }
 
   void destroyContents() noexcept {
-    try {
-      ptr()->~T();
-    } catch (...) {
-      // g++ doesn't seem to have std::is_nothrow_destructible yet
-    }
+    catch_exception(
+        [this]() { ptr()->~T(); },
+        // g++ doesn't seem to have std::is_nothrow_destructible yet
+        variadic_noop);
     if (kIsDebug) {
       memset(&contents_, 'Q', sizeof(T));
     }
@@ -1522,11 +1526,10 @@ struct SingleElementQueue {
       const bool updateSpinCutoff,
       T& elem,
       ImplByRelocation) noexcept {
-    try {
-      elem.~T();
-    } catch (...) {
-      // unlikely, but if we don't complete our turn the queue will die
-    }
+    catch_exception(
+        [&elem]() { elem.~T(); },
+        // unlikely, but if we don't complete our turn the queue will die
+        variadic_noop);
     sequencer_.waitForTurn(turn * 2 + 1, spinCutoff, updateSpinCutoff);
     memcpy(
         static_cast<void*>(&elem),

@@ -43,6 +43,8 @@
 
 FOLLY_GFLAGS_DECLARE_bool(benchmark);
 FOLLY_GFLAGS_DECLARE_uint32(bm_result_width_chars);
+FOLLY_GFLAGS_DECLARE_int32(bm_min_iters);
+FOLLY_GFLAGS_DECLARE_int64(bm_max_iters);
 
 namespace folly {
 
@@ -380,6 +382,9 @@ void printResultComparison(
  * friends below.
  */
 
+FOLLY_PUSH_WARNING
+FOLLY_CLANG_DISABLE_WARNING("-Wglobal-constructors")
+
 #define BENCHMARK_IMPL(funName, stringName, rv, paramType, paramName) \
   static void funName(paramType);                                     \
   [[maybe_unused]] static const bool FB_ANONYMOUS_VARIABLE(           \
@@ -428,6 +433,8 @@ void printResultComparison(
            [](paramType paramName) { return funName(paramName); }),     \
        true);                                                           \
   static unsigned funName(paramType paramName)
+
+FOLLY_POP_WARNING
 
 /**
  * Introduces a benchmark function. Use with either one or two arguments.
