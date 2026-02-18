@@ -1181,7 +1181,7 @@ void AsyncSocket::setErrMessageCB(ErrMessageCallback* callback) {
 
   // In the latest stable kernel 4.14.3 as of 2017-12-04, unix domain
   // socket does not support MSG_ERRQUEUE. So recvmsg(MSG_ERRQUEUE)
-  // will read application data from unix doamin socket as error
+  // will read application data from unix domain socket as error
   // message, which breaks the message flow in application.  Feel free
   // to remove the next code block if MSG_ERRQUEUE is added for unix
   // domain socket in the future.
@@ -3108,8 +3108,10 @@ AsyncSocket::ReadCode AsyncSocket::processZeroCopyRead() {
     VLOG(5) << "AsyncSocket::processZeroCopyRead() this=" << this
             << ", reading pre-received data";
 
+    auto len = preReceivedData_->computeChainDataLength();
     readCallback_->readZeroCopyDataAvailable(
         std::move(preReceivedData_), 0 /*additionalBytes*/);
+    appBytesReceived_ += len;
 
     return ReadCode::READ_DONE;
   }
@@ -3180,6 +3182,7 @@ AsyncSocket::ReadCode AsyncSocket::processZeroCopyRead() {
 
     if (len) {
       readCallback_->readZeroCopyDataAvailable(std::move(buf), zc.copybuf_len);
+      appBytesReceived_ += len;
 
       // If we completely filled up the zerocopy buffer then we likely have
       // more data buffered in the kernel, so return READ_CONTINUE to try again.

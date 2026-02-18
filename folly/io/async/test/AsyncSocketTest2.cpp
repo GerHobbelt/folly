@@ -1067,6 +1067,7 @@ TEST_P(AsyncSocketConnectTest, ConnectAndZeroCopyRead) {
 
   ASSERT_EQ(ccb.state, STATE_SUCCEEDED);
   rcb.verifyData(data);
+  ASSERT_EQ(socket->getAppBytesReceived(), data.size());
 
   ASSERT_FALSE(socket->isClosedBySelf());
   ASSERT_FALSE(socket->isClosedByPeer());
@@ -2403,7 +2404,7 @@ TEST(AsyncSocket, ConnectReadUninstallRead) {
   evb.loop();
   ASSERT_EQ(wcb.state, STATE_SUCCEEDED);
 
-  /* we shoud've only read maxBufferSz data since readCallback_
+  /* we should've only read maxBufferSz data since readCallback_
    * was reset in dataAvailableCallback */
   ASSERT_EQ(rcb.dataRead(), maxBufferSz);
   ASSERT_EQ(socket.immediateReadCalled, false);

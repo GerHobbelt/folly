@@ -99,7 +99,7 @@ class AlignedBuf {
   void* data_{nullptr};
   size_t size_{0};
 };
-class EventFD : public folly::EventHandler, public folly::EventReadCallback {
+class EventFD : public folly::EventHandler {
  public:
   EventFD(
       bool valid,
@@ -114,14 +114,6 @@ class EventFD : public folly::EventHandler, public folly::EventReadCallback {
     if (fd_ >= 0) {
       folly::fileops::close(fd_);
       fd_ = -1;
-    }
-  }
-
-  void useAsyncReadCallback(bool val) {
-    if (val) {
-      setEventCallback(this);
-    } else {
-      resetEventCallback();
     }
   }
 
@@ -144,38 +136,9 @@ class EventFD : public folly::EventHandler, public folly::EventReadCallback {
     }
   }
 
-  uint64_t getAsyncNum() const { return asyncNum_; }
-
   uint64_t getNum() const { return num_; }
 
-  // from folly::EventReadCallback
-  folly::EventReadCallback::IoVec* allocateData() noexcept override {
-    auto* ret = ioVecPtr_.release();
-    return (ret ? ret : new IoVec(this));
-  }
-
  private:
-  struct IoVec : public folly::EventReadCallback::IoVec {
-    IoVec() = delete;
-    ~IoVec() override = default;
-    explicit IoVec(EventFD* eventFd) {
-      arg_ = eventFd;
-      freeFunc_ = IoVec::free;
-      cbFunc_ = IoVec::cb;
-      data_.iov_base = &eventData_;
-      data_.iov_len = sizeof(eventData_);
-    }
-
-    static void free(EventReadCallback::IoVec* ioVec) { delete ioVec; }
-
-    static void cb(EventReadCallback::IoVec* ioVec, int res) {
-      reinterpret_cast<EventFD*>(ioVec->arg_)
-          ->cb(reinterpret_cast<IoVec*>(ioVec), res);
-    }
-
-    uint64_t eventData_{0};
-  };
-
   static int createFd(uint64_t num) {
     // we want it a semaphore
     // and blocking for the async reads
@@ -197,36 +160,10 @@ class EventFD : public folly::EventHandler, public folly::EventReadCallback {
     }
   }
 
-  void cb(IoVec* ioVec, int res) {
-    CHECK_EQ(res, sizeof(IoVec::eventData_));
-    CHECK_EQ(ioVec->eventData_, 1);
-    // reset it
-    ioVec->eventData_ = 0;
-    // save it for future use
-    ioVecPtr_.reset(ioVec);
-
-    ++asyncNum_;
-    if (total_ > 0) {
-      --total_;
-    }
-
-    if (total_ > 0) {
-      if (!persist_) {
-        registerHandler(folly::EventHandler::READ);
-      }
-    } else {
-      if (persist_) {
-        unregisterHandler();
-      }
-    }
-  }
-
-  uint64_t asyncNum_{0};
   uint64_t num_{0};
   uint64_t& total_;
   int fd_{-1};
   bool persist_;
-  std::unique_ptr<IoVec> ioVecPtr_;
 };
 
 std::unique_ptr<folly::EventBase> getEventBase(
@@ -254,7 +191,7 @@ std::unique_ptr<folly::EventBase> getEventBase() {
   return getEventBase(options);
 }
 
-void testEventFD(bool overflow, bool persist, bool asyncRead) {
+void testEventFD(bool overflow, bool persist) {
   static constexpr size_t kBackendCapacity = 64;
   static constexpr size_t kBackendMaxSubmit = 8;
   // for overflow == true  we use a greater than kBackendCapacity number of
@@ -276,20 +213,15 @@ void testEventFD(bool overflow, bool persist, bool asyncRead) {
     auto ev = std::make_unique<EventFD>(
         true, 2 * kEventFdCount, total, persist, evbPtr.get());
 
-    ev->useAsyncReadCallback(asyncRead);
-
     eventsVec.emplace_back(std::move(ev));
   }
 
   evbPtr->loop();
 
   for (size_t i = 0; i < kNumEventFds; i++) {
-    EXPECT_GE(
-        (asyncRead ? eventsVec[i]->getAsyncNum() : eventsVec[i]->getNum()),
-        kEventFdCount)
+    EXPECT_GE(eventsVec[i]->getNum(), kEventFdCount)
         << " persist=" << persist << " overflow=" << overflow
-        << " asyncRead=" << asyncRead << " num= "
-        << (asyncRead ? eventsVec[i]->getAsyncNum() : eventsVec[i]->getNum())
+        << " num= " << eventsVec[i]->getNum()
         << " kEventFdCount=" << kEventFdCount << " i=" << i;
   }
 }
@@ -322,285 +254,6 @@ void testInvalidFd(size_t numTotal, size_t numValid, size_t numInvalid) {
   }
 }
 
-class EventRecvmsgCallback : public folly::EventRecvmsgCallback {
- private:
-  struct MsgHdr : public folly::EventRecvmsgCallback::MsgHdr {
-    static auto constexpr kBuffSize = 1024;
-
-    MsgHdr() = delete;
-    ~MsgHdr() override = default;
-    explicit MsgHdr(EventRecvmsgCallback* cb) {
-      arg_ = cb;
-      freeFunc_ = MsgHdr::free;
-      cbFunc_ = MsgHdr::cb;
-      ioBuf_ = folly::IOBuf::create(kBuffSize);
-    }
-
-    void reset() {
-      ::memset(&data_, 0, sizeof(data_));
-      iov_.iov_base = ioBuf_->writableData();
-      iov_.iov_len = kBuffSize;
-      data_.msg_iov = &iov_;
-      data_.msg_iovlen = 1;
-      ::memset(&addrStorage_, 0, sizeof(addrStorage_));
-      data_.msg_name = reinterpret_cast<sockaddr*>(&addrStorage_);
-      data_.msg_namelen = sizeof(addrStorage_);
-    }
-
-    static void free(folly::EventRecvmsgCallback::MsgHdr* msgHdr) {
-      delete msgHdr;
-    }
-
-    static void cb(folly::EventRecvmsgCallback::MsgHdr* msgHdr, int res) {
-      reinterpret_cast<EventRecvmsgCallback*>(msgHdr->arg_)
-          ->cb(reinterpret_cast<MsgHdr*>(msgHdr), res);
-    }
-
-    // data
-    std::unique_ptr<folly::IOBuf> ioBuf_;
-    struct iovec iov_;
-    // addr
-    struct sockaddr_storage addrStorage_;
-  };
-
-  void cb(MsgHdr* msgHdr, int res) {
-    // check the number of bytes
-    CHECK_EQ(res, static_cast<int>(numBytes_));
-
-    // check the contents
-    std::string data;
-    data.assign(
-        reinterpret_cast<const char*>(msgHdr->ioBuf_->data()),
-        static_cast<size_t>(res));
-    CHECK_EQ(data, data_);
-
-    // check the address
-    folly::SocketAddress addr;
-    addr.setFromSockaddr(
-        reinterpret_cast<sockaddr*>(msgHdr->data_.msg_name),
-        msgHdr->data_.msg_namelen);
-    CHECK_EQ(addr, addr_);
-
-    // reuse the msgHdr
-    msgHdr_.reset(msgHdr);
-
-    ++asyncNum_;
-    if (total_ > 0) {
-      --total_;
-      if (total_ == 0) {
-        evb_->terminateLoopSoon();
-      }
-    }
-  }
-
- public:
-  EventRecvmsgCallback(
-      const std::string& data,
-      const folly::SocketAddress& addr,
-      size_t numBytes,
-      uint64_t& total,
-      folly::EventBase* eventBase)
-      : data_(data),
-        addr_(addr),
-        numBytes_(numBytes),
-        total_(total),
-        evb_(eventBase) {}
-  ~EventRecvmsgCallback() override = default;
-
-  // from EventRecvmsgCallback
-  EventRecvmsgCallback::MsgHdr* allocateData() noexcept override {
-    auto* ret = msgHdr_.release();
-    if (!ret) {
-      ret = new MsgHdr(this);
-    }
-
-    ret->reset();
-
-    return ret;
-  }
-
-  uint64_t getAsyncNum() const { return asyncNum_; }
-
- private:
-  const std::string& data_;
-  folly::SocketAddress addr_;
-  size_t numBytes_{0};
-  uint64_t& total_;
-  folly::EventBase* evb_;
-  uint64_t asyncNum_{0};
-  std::unique_ptr<MsgHdr> msgHdr_;
-};
-
-class EventRecvmsgMultishotCallback
-    : public folly::EventRecvmsgMultishotCallback {
- private:
-  struct Hdr : public folly::EventRecvmsgMultishotCallback::Hdr {
-    Hdr() = delete;
-    ~Hdr() override {}
-    explicit Hdr(EventRecvmsgMultishotCallback* cb) {
-      arg_ = cb;
-      freeFunc_ = Hdr::free;
-      cbFunc_ = Hdr::cb;
-
-      ::memset(&data_, 0, sizeof(data_));
-      data_.msg_namelen = sizeof(struct sockaddr_storage);
-    }
-
-    static void free(folly::EventRecvmsgMultishotCallback::Hdr* h) { delete h; }
-
-    static void cb(
-        folly::EventRecvmsgMultishotCallback::Hdr* h,
-        int res,
-        std::unique_ptr<folly::IOBuf> io) {
-      reinterpret_cast<EventRecvmsgMultishotCallback*>(h->arg_)->cb(
-          reinterpret_cast<Hdr*>(h), res, std::move(io));
-    }
-  };
-
-  void cb(Hdr* msgHdr, int res, std::unique_ptr<folly::IOBuf> io) {
-    folly::EventRecvmsgMultishotCallback::ParsedRecvMsgMultishot p;
-    ASSERT_GE(res, 0);
-    EXPECT_EQ(res, io->coalesce().size());
-    ASSERT_TRUE(
-        folly::EventRecvmsgMultishotCallback::parseRecvmsgMultishot(
-            io->coalesce(), msgHdr->data_, p));
-
-    EXPECT_EQ(p.payload.size(), static_cast<int>(numBytes_));
-
-    // check the contents
-    std::string data;
-    data.assign(
-        reinterpret_cast<const char*>(p.payload.data()),
-        static_cast<size_t>(p.payload.size()));
-    EXPECT_EQ(data, data_);
-
-    // check the address
-    folly::SocketAddress addr;
-    addr.setFromSockaddr((sockaddr*)(p.name.data()), p.name.size());
-    EXPECT_EQ(addr, addr_);
-
-    ++asyncNum_;
-    if (total_ > 0) {
-      --total_;
-      if (total_ == 0) {
-        evb_->terminateLoopSoon();
-      }
-    }
-  }
-
- public:
-  EventRecvmsgMultishotCallback(
-      const std::string& data,
-      const folly::SocketAddress& addr,
-      size_t numBytes,
-      uint64_t& total,
-      folly::EventBase* eventBase)
-      : data_(data),
-        addr_(addr),
-        numBytes_(numBytes),
-        total_(total),
-        evb_(eventBase) {}
-  ~EventRecvmsgMultishotCallback() override = default;
-
-  // from EventRecvmsgCallback
-  folly::EventRecvmsgMultishotCallback::Hdr*
-  allocateRecvmsgMultishotData() noexcept override {
-    return new Hdr(this);
-  }
-
-  uint64_t getAsyncNum() const { return asyncNum_; }
-
- private:
-  const std::string& data_;
-  folly::SocketAddress addr_;
-  size_t numBytes_{0};
-  uint64_t& total_;
-  folly::EventBase* evb_;
-  uint64_t asyncNum_{0};
-};
-
-void testAsyncUDPRecvmsg(bool useRegisteredFds, bool multishot = false) {
-  static constexpr size_t kBackendCapacity = 16;
-  static constexpr size_t kBackendMaxSubmit = 8;
-  static constexpr size_t kBackendMaxGet = 8;
-  static constexpr size_t kNumSockets = 8;
-  static constexpr size_t kNumBytes = 16;
-  static constexpr size_t kNumPackets = 32;
-  auto total = kNumPackets * kNumSockets;
-
-  folly::PollIoBackend::Options options;
-  options.setCapacity(kBackendCapacity)
-      .setMaxSubmit(kBackendMaxSubmit)
-      .setMaxGet(kBackendMaxGet)
-      .setUseRegisteredFds(useRegisteredFds ? kBackendCapacity : 0);
-  if (multishot) {
-    options.setInitialProvidedBuffers(
-        kNumBytes * 2 + 4 + sizeof(struct sockaddr_storage), 1000);
-  }
-  auto evbPtr = getEventBase(options);
-  SKIP_IF(!evbPtr) << "Backend not available";
-  if (multishot && !folly::IoUringBackend::kernelSupportsRecvmsgMultishot()) {
-    LOG(INFO) << "multishot not available";
-    return;
-  }
-
-  // create the server sockets
-  std::vector<std::unique_ptr<folly::AsyncUDPServerSocket>> serverSocketVec;
-  serverSocketVec.reserve(kNumSockets);
-
-  std::vector<std::unique_ptr<folly::AsyncUDPSocket>> clientSocketVec;
-  clientSocketVec.reserve(kNumSockets);
-
-  std::vector<folly::Function<uint64_t() const>> cbVec;
-  cbVec.reserve(kNumSockets);
-
-  std::string data(kNumBytes, 'A');
-
-  for (size_t i = 0; i < kNumSockets; i++) {
-    auto clientSock = std::make_unique<folly::AsyncUDPSocket>(evbPtr.get());
-    clientSock->bind(folly::SocketAddress("::1", 0));
-
-    auto serverSock = std::make_unique<folly::AsyncUDPServerSocket>(
-        evbPtr.get(),
-        1500,
-        folly::AsyncUDPServerSocket::DispatchMechanism::RoundRobin);
-    // set the event callback
-    if (multishot) {
-      auto cb_m = std::make_unique<EventRecvmsgMultishotCallback>(
-          data, clientSock->address(), kNumBytes, total, evbPtr.get());
-      serverSock->setRecvmsgMultishotCallback(cb_m.get());
-      cbVec.emplace_back([c = std::move(cb_m)]() { return c->getAsyncNum(); });
-    } else {
-      auto cb = std::make_unique<EventRecvmsgCallback>(
-          data, clientSock->address(), kNumBytes, total, evbPtr.get());
-      serverSock->setEventCallback(cb.get());
-      cbVec.emplace_back([c = std::move(cb)]() { return c->getAsyncNum(); });
-    }
-    // bind
-    serverSock->bind(folly::SocketAddress("::1", 0));
-    // retrieve the real address
-    folly::SocketAddress addr = serverSock->address();
-
-    serverSock->listen();
-
-    serverSocketVec.emplace_back(std::move(serverSock));
-
-    // connect the client
-    clientSock->connect(addr);
-    for (size_t j = 0; j < kNumPackets; j++) {
-      auto buf = folly::IOBuf::copyBuffer(data.c_str(), data.size());
-      CHECK_EQ(clientSock->write(addr, std::move(buf)), data.size());
-    }
-
-    clientSocketVec.emplace_back(std::move(clientSock));
-  }
-
-  evbPtr->loopForever();
-
-  for (size_t i = 0; i < kNumSockets; i++) {
-    CHECK_GE(cbVec[i](), kNumPackets);
-  }
-}
 } // namespace
 
 TEST(IoUringBackend, FailCreateNoRetry) {
@@ -1103,36 +756,20 @@ TEST(IoUringBackend, Fallocate) {
   evbPtr->loopForever();
 }
 
-TEST(IoUringBackend, AsyncUDPRecvmsgNoRegisterFd) {
-  testAsyncUDPRecvmsg(false);
-}
-
-TEST(IoUringBackend, AsyncUDPRecvmsgRegisterFd) {
-  testAsyncUDPRecvmsg(true);
-}
-
-TEST(IoUringBackend, AsyncUDPRecvmsgMultishotRegisterFd) {
-  testAsyncUDPRecvmsg(true, true);
-}
-
 TEST(IoUringBackend, EventFDNooverflownopersist) {
-  testEventFD(false, false, false);
+  testEventFD(false, false);
 }
 
 TEST(IoUringBackend, EventFDOverflownopersist) {
-  testEventFD(true, false, false);
+  testEventFD(true, false);
 }
 
 TEST(IoUringBackend, EventFDNooverflowpersist) {
-  testEventFD(false, true, false);
+  testEventFD(false, true);
 }
 
 TEST(IoUringBackend, EventFDOverflowpersist) {
-  testEventFD(true, true, false);
-}
-
-TEST(IoUringBackend, EventFDPersistAsyncread) {
-  testEventFD(false, true, true);
+  testEventFD(true, true);
 }
 
 // 9 valid fds followed by an invalid one
