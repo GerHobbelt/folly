@@ -1119,7 +1119,7 @@ void IoUringBackend::initSubmissionLinked() {
           .count = options_.initialProvidedBuffersCount,
           .bufferShift = sizeShift,
           .ringSizeShift = ringShift,
-          .useHugePages = false,
+          .useHugePages = options_.useHugePages,
           .useIncrementalBuffers = options_.enableIncrementalBuffers,
       };
       for (size_t i = 0; i < options_.providedBufRings; i++) {
@@ -1874,6 +1874,18 @@ void IoUringBackend::queueRename(
   submitImmediateIoSqe(*ioSqe);
 }
 
+void IoUringBackend::queueUnlinkat(
+    int dirfd, const char* path, int flags, FileOpCallback&& cb) {
+  auto* ioSqe = new FUnlinkIoSqe(this, dirfd, path, flags, std::move(cb));
+  ioSqe->backendCb_ = processFileOpCB;
+
+  submitImmediateIoSqe(*ioSqe);
+}
+
+void IoUringBackend::queueUnlink(const char* path, FileOpCallback&& cb) {
+  queueUnlinkat(AT_FDCWD, path, 0, std::move(cb));
+}
+
 void IoUringBackend::queueFallocate(
     int fd, int mode, off_t offset, off_t len, FileOpCallback&& cb) {
   auto* ioSqe = new FAllocateIoSqe(this, fd, mode, offset, len, std::move(cb));
@@ -1944,18 +1956,6 @@ void IoUringBackend::processRecvZc(
       buf->data(),
       buf->length());
   ioSqe->offset_ += cqe->res;
-}
-
-bool IoUringBackend::kernelHasNonBlockWriteFixes() const {
-#if FOLLY_IO_URING_UP_TO_DATE
-  // this was fixed in 5.18, which introduced linked file
-  // fixed in "io_uring: only wake when the correct events are set"
-  return params_.features & IORING_FEAT_LINKED_FILE;
-#else
-  // this indicates that sockets have to manually remove O_NONBLOCK
-  // which is a bit slower but shouldnt cause any functional changes
-  return false;
-#endif
 }
 
 namespace {

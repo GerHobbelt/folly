@@ -1,62 +1,13 @@
 load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target")
-load("@fbcode_macros//build_defs:native_rules.bzl", "alias")
 load("@fbsource//tools/build_defs:rust_library.bzl", "rust_library")
 
 oncall("rust_libraries")
-
-fbcode_target(
-    _kind = alias,
-    name = "iobuf",
-    actual = "fbsource//xplat/folly/rust/iobuf:iobuf",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "network_address",
-    actual = "//folly/rust/network_address:network_address",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "singleton_vault",
-    actual = "//folly/rust/singleton_vault:singleton_vault",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "socket_address",
-    actual = "//folly/rust/socket_address:socket_address",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "string",
-    actual = "//folly/rust/string:string",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "request_context",
-    actual = "//folly/rust/request_context:request_context",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "request_context_future",
-    actual = "//folly/rust/request_context:request_context_future",
-)
-
-fbcode_target(
-    _kind = alias,
-    name = "folly_dynamic",
-    actual = "//folly/rust/dynamic:folly_dynamic",
-)
 
 fbcode_target(
     _kind = rust_library,
     name = "folly",
     srcs = ["lib.rs"],
     deps = [
-        ":string",
+        "//folly/rust/string:string",
     ],
 )

@@ -119,9 +119,10 @@ bool BucketedTimeSeries<VT, CT>::addValueAggregated(
     // Current time.
     bucketIdx = getBucketIdx(now);
   } else {
+    firstTime_ = std::min(firstTime_, now);
     // An earlier time in the past.  We need to check if this time still falls
     // within our window.
-    if (now < getEarliestTimeNonEmpty()) {
+    if (now < getEarliestTrackableTimeBy(latestTime_)) {
       return false;
     }
     bucketIdx = getBucketIdx(now);
@@ -137,6 +138,8 @@ size_t BucketedTimeSeries<VT, CT>::update(TimePoint now) {
   if (empty()) {
     // This is the first data point.
     firstTime_ = now;
+  } else {
+    firstTime_ = std::min(firstTime_, now);
   }
 
   // For all-time data, all we need to do is update latestTime_
@@ -228,7 +231,7 @@ typename CT::time_point BucketedTimeSeries<VT, CT>::getEarliestTime() const {
   }
 
   // Compute the earliest time we can track
-  TimePoint earliestTime = getEarliestTimeNonEmpty();
+  TimePoint earliestTime = getEarliestTrackableTimeBy(latestTime_);
 
   // We're never tracking data before firstTime_
   earliestTime = std::max(earliestTime, firstTime_);
@@ -237,13 +240,14 @@ typename CT::time_point BucketedTimeSeries<VT, CT>::getEarliestTime() const {
 }
 
 template <typename VT, typename CT>
-typename CT::time_point BucketedTimeSeries<VT, CT>::getEarliestTimeNonEmpty()
-    const {
+typename CT::time_point BucketedTimeSeries<VT, CT>::getEarliestTrackableTimeBy(
+    TimePoint latestTime) const {
+  DCHECK(!isAllTime());
   size_t currentBucket;
   TimePoint currentBucketStart;
   TimePoint nextBucketStart;
   getBucketInfo(
-      latestTime_, &currentBucket, &currentBucketStart, &nextBucketStart);
+      latestTime, &currentBucket, &currentBucketStart, &nextBucketStart);
 
   // Subtract 1 duration from the start of the next bucket to find the
   // earliest possible data point we could be tracking.
