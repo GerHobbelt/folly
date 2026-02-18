@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 cimport cython
 from contextlib import contextmanager
 from libcpp.memory cimport make_shared
@@ -21,11 +22,22 @@ from cpython.pycapsule cimport PyCapsule_CheckExact
 from cpython.pystate cimport PyThreadState
 from libcpp.utility cimport move
 
-_RequestContext = PyContextVar_New("_RequestContext", NULL)
+# Don't store in module dict, limits control surfaces for how it can be set to this module alone.
+cdef object _RequestContext = PyContextVar_New("_RequestContext", NULL)
 
 
 cdef object set_PyContext(shared_ptr[RequestContext] ptr) except *:
     return PyContextVar_Set(_RequestContext, RequestContextToPyCapsule(move(ptr)))
+
+cdef object get_PyContext(object context) except *:
+    """Return the PyCapsule from the ContextVar"""
+    if context is None:
+        return get_value(_RequestContext)
+
+    if not PyContext_CheckExact(context):
+        raise TypeError(f"{context!r} is not a PyContext object!")
+
+    return context.get(_RequestContext)
 
 
 @cython.auto_pickle(False)
@@ -82,10 +94,18 @@ cdef extern from "folly/python/request_context.h":
     )
 
 cdef int _watcher(PyContextEvent event, PyObject* pycontext):
-    if pycontext is NULL or not PyContext_CheckExact(<object>pycontext) or event != PyContextEvent.Py_CONTEXT_SWITCHED:
+    cdef shared_ptr[RequestContext] ctx
+
+    if pycontext is NULL or event != PyContextEvent.Py_CONTEXT_SWITCHED:
         return 0
 
-    cdef shared_ptr[RequestContext] ctx
+    # The context is None lets unset the fRC
+    if (<object>pycontext) is None:
+        RequestContext.setContext(ctx)
+
+    if not PyContext_CheckExact(<object>pycontext):
+        return 0
+
     py_ctx = get_value(_RequestContext)
     if py_ctx is not None and PyCapsule_CheckExact(py_ctx):
         ctx = PyCapsuleToRequestContext(py_ctx)
@@ -95,7 +115,8 @@ cdef int _watcher(PyContextEvent event, PyObject* pycontext):
     return 0
 
 
-FOLLY_PYTHON_PyContext_AddWatcher(_watcher)
+if sys.version_info >= (3, 14) or "+meta" in sys.version or "+fb" in sys.version or "+cinder" in sys.version:
+    FOLLY_PYTHON_PyContext_AddWatcher(_watcher)
 
 
 cdef extern from "folly/python/Weak.h":
