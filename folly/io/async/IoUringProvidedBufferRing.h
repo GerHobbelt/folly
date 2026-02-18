@@ -18,7 +18,6 @@
 
 #include <folly/io/async/IoUringBase.h>
 #include <folly/io/async/Liburing.h>
-#include <folly/portability/SysMman.h>
 #include <folly/synchronization/DistributedMutex.h>
 
 #if FOLLY_HAS_LIBURING
@@ -31,36 +30,50 @@ FOLLY_POP_WARNING
 
 namespace folly {
 
-class IoUringProvidedBufferRing : public IoUringBufferProviderBase {
+class IoUringProvidedBufferRing {
  public:
+  friend class IoUringProvidedBufferRingTestHelper;
+
   class LibUringCallError : public std::runtime_error {
    public:
     using std::runtime_error::runtime_error;
   };
 
+  struct Deleter {
+    void operator()(IoUringProvidedBufferRing* ring) {
+      if (ring) {
+        ring->destroy();
+      }
+    }
+  };
+
+  using UniquePtr = std::unique_ptr<IoUringProvidedBufferRing, Deleter>;
+
   struct Options {
     uint16_t gid{0};
-    size_t count{0};
-    int bufferShift{0};
-    int ringSizeShift{0};
+    uint32_t bufferCount{0};
+    uint32_t bufferSize{0};
     bool useHugePages{false};
     bool useIncrementalBuffers{false};
   };
 
-  static IoUringBufferProviderBase::UniquePtr create(
-      io_uring* ioRingPtr, Options options);
+  static UniquePtr create(io_uring* ioRingPtr, Options options);
 
-  void enobuf() noexcept override;
-  uint64_t getAndResetEnobufCount() noexcept;
-  void destroy() noexcept override;
+  ~IoUringProvidedBufferRing() = default;
+
+  void enobuf() noexcept;
+  uint32_t getAndResetEnobufCount() noexcept;
+  void destroy() noexcept;
 
   std::unique_ptr<IOBuf> getIoBuf(
-      uint16_t startBufId, size_t totalLength, bool hasMore) noexcept override;
+      uint16_t startBufId, size_t totalLength, bool hasMore) noexcept;
 
-  uint32_t count() const noexcept override { return buffer_.bufferCount(); }
-  bool available() const noexcept override {
+  uint32_t count() const noexcept { return bufferCount_; }
+  bool available() const noexcept {
     return !enobuf_.load(std::memory_order_relaxed);
   }
+  size_t sizePerBuffer() const noexcept { return sizePerBuffer_; }
+  uint16_t gid() const noexcept { return gid_; }
 
   // Returns the buffer utilization as an integer percentage (0-100).
   int getUtilPct() const noexcept;
@@ -68,17 +81,26 @@ class IoUringProvidedBufferRing : public IoUringBufferProviderBase {
  private:
   explicit IoUringProvidedBufferRing(io_uring* ioRingPtr, Options options);
 
+  IoUringProvidedBufferRing(IoUringProvidedBufferRing&&) = delete;
+  IoUringProvidedBufferRing(IoUringProvidedBufferRing const&) = delete;
+  IoUringProvidedBufferRing& operator=(IoUringProvidedBufferRing&&) = delete;
+  IoUringProvidedBufferRing& operator=(IoUringProvidedBufferRing const&) =
+      delete;
+
+  void mapMemory(bool useHugePages);
   void initialRegister();
+
   void returnBuffer(uint16_t i) noexcept;
-  void delayedDestroy(uint64_t refs) noexcept;
+
+  void delayedDestroy(uint32_t refs) noexcept;
   void incBufferState(
-      uint16_t bufId, bool hasMore, unsigned int bytesConsumed) noexcept;
+      uint16_t bufId, bool hasMore, size_t bytesConsumed) noexcept;
   void decBufferState(uint16_t bufId) noexcept;
   std::unique_ptr<IOBuf> getIoBufSingle(
       uint16_t i, size_t length, bool hasMore) noexcept;
 
   std::atomic<uint16_t>* sharedTail() {
-    return reinterpret_cast<std::atomic<uint16_t>*>(&buffer_.ring()->tail);
+    return reinterpret_cast<std::atomic<uint16_t>*>(&ringPtr_->tail);
   }
 
   bool tryPublish(uint16_t expected, uint16_t value) noexcept {
@@ -86,52 +108,14 @@ class IoUringProvidedBufferRing : public IoUringBufferProviderBase {
         expected, value, std::memory_order_release);
   }
 
-  char const* getData(uint16_t i) { return buffer_.buffer(i); }
+  char* getData(uint16_t i) {
+    auto offset = static_cast<size_t>(i) * sizePerBuffer_;
+    return bufferBuffer_ + offset;
+  }
 
-  class ProvidedBuffersBuffer {
-   public:
-    ProvidedBuffersBuffer(
-        size_t count, int bufferShift, int ringCountShift, bool huge_pages);
-    ~ProvidedBuffersBuffer() { ::munmap(buffer_, allSize_); }
-
-    static size_t calcBufferSize(int bufferShift) {
-      return 1LLU << std::max<int>(5, bufferShift);
-    }
-
-    struct io_uring_buf_ring* ring() const noexcept { return ringPtr_; }
-
-    struct io_uring_buf* ringBuf(int idx) const noexcept {
-      return &ringPtr_->bufs[idx & ringMask_];
-    }
-
-    uint32_t bufferCount() const noexcept { return bufferCount_; }
-    uint32_t ringCount() const noexcept { return 1 + ringMask_; }
-
-    char* buffer(uint16_t idx) {
-      size_t offset = (size_t)idx << bufferShift_;
-      return bufferBuffer_ + offset;
-    }
-
-    size_t sizePerBuffer() const { return sizePerBuffer_; }
-
-   private:
-    void* buffer_;
-    size_t allSize_;
-
-    size_t ringMemSize_;
-    struct io_uring_buf_ring* ringPtr_;
-    int ringMask_;
-
-    size_t bufferSize_;
-    size_t bufferShift_;
-    size_t sizePerBuffer_;
-    char* bufferBuffer_;
-    uint32_t bufferCount_;
-
-    static constexpr size_t kHugePageSizeBytes = 1024 * 1024 * 2;
-    static constexpr size_t kPageSizeBytes = 4096;
-    static constexpr size_t kBufferAlignBytes = 32;
-  };
+  struct io_uring_buf* ringBuf(int idx) const noexcept {
+    return &ringPtr_->bufs[idx & ringMask_];
+  }
 
   struct BufferState {
     uint16_t bufId{0};
@@ -141,23 +125,35 @@ class IoUringProvidedBufferRing : public IoUringBufferProviderBase {
     unsigned int offset{0};
     IoUringProvidedBufferRing* parent{nullptr};
   };
-  io_uring* ioRingPtr_;
-  ProvidedBuffersBuffer buffer_;
-  std::atomic<bool> enobuf_{false};
-  std::atomic<uint64_t> enobufCount_{0};
-  bool useIncremental_;
 
-  // For tracking how many IOBufs were created
-  uint64_t gottenBuffers_{0};
-  // For tracking how many IOBufs were destroyed.
-  uint64_t returnedBuffers_{0};
-  // For returning the buffer to the ring.
-  uint64_t ringReturnedBuffers_{0};
+  // Cacheline 1: Hot
   std::unique_ptr<BufferState[]> bufferStates_;
-
+  struct io_uring_buf_ring* ringPtr_{nullptr};
+  char* bufferBuffer_{nullptr};
   folly::DistributedMutex mutex_;
+  uint32_t sizePerBuffer_;
+  int ringMask_{0};
+  uint32_t gottenBuffers_{0};
+  uint32_t ringReturnedBuffers_{0};
+  uint32_t returnedBuffers_{0};
+  uint32_t bufferCount_;
+  bool useIncremental_;
+  std::atomic<bool> enobuf_{false};
   std::atomic<bool> wantsShutdown_{false};
-  uint64_t shutdownReferences_{0};
+  // 1 byte padding
+  std::atomic<uint32_t> enobufCount_{0};
+
+  // Cacheline 2: Warm
+  io_uring* ioRingPtr_;
+  uint32_t shutdownReferences_{0};
+  uint16_t const gid_;
+  // 2 bytes padding
+  // Cold
+  uint32_t ringCount_{0};
+  uint32_t allSize_{0};
+  void* buffer_{nullptr};
+  uint32_t ringMemSize_{0};
+  uint32_t bufferSize_{0};
 };
 
 } // namespace folly

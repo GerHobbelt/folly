@@ -373,6 +373,17 @@ class BucketedTimeSeries {
   }
 
   /*
+   * Return the total (sum and count) of the tracked buckets that overlap
+   * with [getEarliestTrackableTimeBy(now), now]. `now` must be greater than or
+   * equal to `latestTime_`. If isAllTime() is true, the overall total will be
+   * returned.
+   *
+   * The user does NOT need to call `update(now)` separately. This is for
+   * providing a way for reading the timeseries without mutating it.
+   */
+  Bucket totalBy(TimePoint now) const;
+
+  /*
    * Invoke a function for each bucket.
    *
    * The function will take as arguments the bucket index,
@@ -445,7 +456,6 @@ class BucketedTimeSeries {
    */
   TimePoint getEarliestTrackableTimeBy(TimePoint latestTime) const;
 
- private:
   template <typename ReturnType = double, typename Interval = Duration>
   ReturnType rateHelper(ReturnType numerator, Duration elapsedTime) const {
     DCHECK(isAllTime() || (Interval{1} <= duration_))
@@ -454,6 +464,7 @@ class BucketedTimeSeries {
         numerator, elapsedTime);
   }
 
+ private:
   size_t updateBuckets(TimePoint now);
 
   template <typename ReturnType>

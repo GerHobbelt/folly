@@ -333,7 +333,7 @@ IoUringProvidedBufferRing::UniquePtr makeProvidedBufferRing(Args&&... args) {
 #else
 
 template <class... Args>
-IoUringBufferProviderBase::UniquePtr makeProvidedBufferRing(Args&&...) {
+IoUringProvidedBufferRing::UniquePtr makeProvidedBufferRing(Args&&...) {
   throw IoUringBackend::NotAvailable(
       "Provided buffer rings not compiled into this binary");
 }
@@ -1100,25 +1100,13 @@ void IoUringBackend::initSubmissionLinked() {
   }
 
   if (options_.initialProvidedBuffersCount) {
-    auto get_shift = [](int x) -> int {
-      int shift = findLastSet(x) - 1;
-      if (x != (1 << shift)) {
-        shift++;
-      }
-      return shift;
-    };
-
-    int sizeShift =
-        std::max<int>(get_shift(options_.initialProvidedBuffersEachSize), 5);
-    int ringShift =
-        std::max<int>(get_shift(options_.initialProvidedBuffersCount), 1);
-
     try {
       IoUringProvidedBufferRing::Options options = {
           .gid = nextBufferProviderGid(),
-          .count = options_.initialProvidedBuffersCount,
-          .bufferShift = sizeShift,
-          .ringSizeShift = ringShift,
+          .bufferCount =
+              static_cast<uint32_t>(options_.initialProvidedBuffersCount),
+          .bufferSize =
+              static_cast<uint32_t>(options_.initialProvidedBuffersEachSize),
           .useHugePages = options_.useHugePages,
           .useIncrementalBuffers = options_.enableIncrementalBuffers,
       };
@@ -1963,7 +1951,7 @@ namespace {
 static bool doKernelSupportsRecvmsgMultishot() {
   try {
     struct S : IoSqeBase {
-      explicit S(IoUringBufferProviderBase* bp) : bp_(bp) {
+      explicit S(IoUringProvidedBufferRing* bp) : bp_(bp) {
         fd = fileops::open("/dev/null", O_RDONLY);
         memset(&msg, 0, sizeof(msg));
       }
@@ -1987,7 +1975,7 @@ static bool doKernelSupportsRecvmsgMultishot() {
         delete this;
       }
 
-      IoUringBufferProviderBase* bp_;
+      IoUringProvidedBufferRing* bp_;
       bool supported = false;
       struct msghdr msg;
       int fd = -1;

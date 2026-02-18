@@ -27,6 +27,10 @@
 namespace folly {
 
 namespace {
+struct io_uring {
+  uint32_t head;
+  uint32_t tail;
+};
 
 size_t getRefillRingSize(size_t rqEntries) {
   size_t size = rqEntries * sizeof(io_uring_zcrx_rqe);
@@ -63,27 +67,39 @@ IoUringZeroCopyBufferPool::IoUringZeroCopyBufferPool(Params params)
   for (auto& buf : buffers_) {
     buf.pool = this;
   }
-  if (ring_ != nullptr) {
-    initialRegister(params.ifindex, params.queueId);
-  } else {
-    // rqRing_ is set up using information that the kernel fills in via
-    // io_uring_register_ifq(). Unit tests do not do this, so fake the rqRing_,
-    // specifically ktail and rqes array
-    mapMemory();
-    rqRing_.khead = nullptr;
-    rqRing_.ktail = reinterpret_cast<uint32_t*>(
-        static_cast<char*>(rqRingArea_) +
-        (rqEntries_ * sizeof(io_uring_zcrx_rqe)));
-    rqRing_.rqes = static_cast<io_uring_zcrx_rqe*>(rqRingArea_);
-    rqRing_.rq_tail = 0;
-    rqRing_.ring_entries = rqEntries_;
+  mapMemory();
+  initialRegister(params.ifindex, params.queueId);
+}
+
+IoUringZeroCopyBufferPool::IoUringZeroCopyBufferPool(Params params, TestTag)
+    : ring_(params.ring),
+      pageSize_(params.pageSize),
+      rqEntries_(params.rqEntries),
+      bufAreaSize_(params.numPages * params.pageSize),
+      buffers_(params.numPages),
+      rqRingAreaSize_(getRefillRingSize(params.rqEntries)) {
+  for (auto& buf : buffers_) {
+    buf.pool = this;
   }
+  // rqRing_ is normally set up using information that the kernel fills in via
+  // io_uring_register_ifq(). Unit tests do not do this, so fake it.
+  mapMemory();
+  rqRing_.khead = reinterpret_cast<uint32_t*>(
+      (static_cast<char*>(rqRingArea_) + offsetof(struct io_uring, head)));
+  rqRing_.ktail = reinterpret_cast<uint32_t*>(
+      (static_cast<char*>(rqRingArea_) + offsetof(struct io_uring, tail)));
+  rqRing_.rqes = reinterpret_cast<io_uring_zcrx_rqe*>(
+      static_cast<char*>(rqRingArea_) + sizeof(struct io_uring));
+  rqRing_.rq_tail = 0;
+  rqRing_.ring_entries = rqEntries_;
 }
 
 void IoUringZeroCopyBufferPool::destroy() noexcept {
   std::unique_lock lock{mutex_};
   DCHECK(bufDispensed_ >= rqTail_);
   auto remaining = bufDispensed_ - rqTail_;
+  // Drain refs in overflow queue
+  remaining -= pendingBuffers_.size();
   shutdownReferences_ = remaining;
   wantsShutdown_ = true;
   lock.unlock();
@@ -148,8 +164,6 @@ FOLLY_GNU_DISABLE_WARNING("-Wmissing-designated-field-initializers")
 
 void IoUringZeroCopyBufferPool::initialRegister(
     uint32_t ifindex, uint16_t queueId) {
-  mapMemory();
-
   io_uring_region_desc regionReg = {
       .user_addr = reinterpret_cast<uint64_t>(rqRingArea_),
       .size = rqRingAreaSize_,
@@ -196,6 +210,18 @@ void IoUringZeroCopyBufferPool::initialRegister(
   id_ = ifqReg.zcrx_id;
 }
 
+uint32_t IoUringZeroCopyBufferPool::getRingQueuedCount() const noexcept {
+  return rqTail_ - io_uring_smp_load_acquire(rqRing_.khead);
+}
+
+void IoUringZeroCopyBufferPool::writeBufferToRing(Buffer* buffer) noexcept {
+  uint32_t myTail = rqTail_++;
+
+  io_uring_zcrx_rqe* rqe = &rqRing_.rqes[myTail & rqMask_];
+  rqe->off = (buffer->off & ~IORING_ZCRX_AREA_MASK) | rqAreaToken_;
+  rqe->len = buffer->len;
+}
+
 void IoUringZeroCopyBufferPool::returnBuffer(Buffer* buffer) noexcept {
   std::unique_lock lock{mutex_};
   if (FOLLY_UNLIKELY(wantsShutdown_)) {
@@ -205,16 +231,25 @@ void IoUringZeroCopyBufferPool::returnBuffer(Buffer* buffer) noexcept {
     return;
   }
 
-  uint32_t myTail = static_cast<uint32_t>(rqTail_++);
-  uint32_t nextTail = myTail + 1;
+  uint32_t startTail = rqTail_;
+  uint32_t queueLength = getRingQueuedCount();
+  uint32_t slots = rqRing_.ring_entries - queueLength;
+  auto numToProcess =
+      std::min(pendingBuffers_.size(), static_cast<size_t>(slots));
+  for (size_t i = 0; i < numToProcess; i++) {
+    writeBufferToRing(pendingBuffers_.front());
+    pendingBuffers_.pop();
+  }
 
-  io_uring_zcrx_rqe* rqe;
-  rqe = &rqRing_.rqes[myTail & rqMask_];
-  rqe->off = (buffer->off & ~IORING_ZCRX_AREA_MASK) | rqAreaToken_;
-  rqe->len = buffer->len;
+  if (numToProcess < slots) {
+    writeBufferToRing(buffer);
+  } else {
+    pendingBuffers_.push(buffer);
+  }
 
-  // Update the tail and make visible to kernel
-  io_uring_smp_store_release(rqRing_.ktail, nextTail);
+  if (rqTail_ != startTail) {
+    io_uring_smp_store_release(rqRing_.ktail, rqTail_);
+  }
 }
 
 void IoUringZeroCopyBufferPool::delayedDestroy(uint32_t refs) noexcept {

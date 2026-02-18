@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <queue>
 #include <folly/io/IOBuf.h>
 #include <folly/io/async/Liburing.h>
 #include <folly/synchronization/DistributedMutex.h>
@@ -32,6 +33,8 @@ namespace folly {
 
 class IoUringZeroCopyBufferPool {
  public:
+  friend class IoUringZeroCopyBufferPoolTestHelper;
+
   struct Deleter {
     void operator()(IoUringZeroCopyBufferPool* base);
   };
@@ -59,6 +62,9 @@ class IoUringZeroCopyBufferPool {
  private:
   explicit IoUringZeroCopyBufferPool(Params params);
 
+  struct TestTag {};
+  explicit IoUringZeroCopyBufferPool(Params params, TestTag);
+
   IoUringZeroCopyBufferPool(IoUringZeroCopyBufferPool&&) = delete;
   IoUringZeroCopyBufferPool(IoUringZeroCopyBufferPool const&) = delete;
   IoUringZeroCopyBufferPool& operator=(IoUringZeroCopyBufferPool&&) = delete;
@@ -77,6 +83,8 @@ class IoUringZeroCopyBufferPool {
   void returnBuffer(Buffer* buf) noexcept;
 
   void delayedDestroy(uint32_t refs) noexcept;
+  uint32_t getRingQueuedCount() const noexcept;
+  void writeBufferToRing(Buffer* buffer) noexcept;
 
   io_uring* ring_{nullptr};
   size_t pageSize_{0};
@@ -89,16 +97,17 @@ class IoUringZeroCopyBufferPool {
   size_t rqRingAreaSize_{0};
   // Ring buffer shared between kernel and userspace
   // Constructed in initialRegister()
-  io_uring_zcrx_rq rqRing_;
+  io_uring_zcrx_rq rqRing_{};
   uint64_t rqAreaToken_{0};
-  uint64_t rqTail_{0};
+  uint32_t rqTail_{0};
   unsigned rqMask_{0};
   uint32_t id_{0};
-  uint64_t bufDispensed_{0};
+  uint32_t bufDispensed_{0};
 
   folly::DistributedMutex mutex_;
   std::atomic<bool> wantsShutdown_{false};
   uint32_t shutdownReferences_{0};
+  std::queue<Buffer*> pendingBuffers_;
 };
 
 } // namespace folly

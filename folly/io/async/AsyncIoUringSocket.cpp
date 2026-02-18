@@ -20,6 +20,7 @@
 #include <folly/io/async/AsyncIoUringSocket.h>
 #include <folly/io/async/AsyncSocket.h>
 #include <folly/io/async/IoUringEventBaseLocal.h>
+#include <folly/io/async/IoUringProvidedBufferRing.h>
 #include <folly/memory/Malloc.h>
 #include <folly/portability/SysUio.h>
 
@@ -1179,6 +1180,9 @@ void AsyncIoUringSocket::detachEventBase() {
   readSqe_ = ReadSqe::UniquePtr(new ReadSqe(this));
   readSqe_->setReadCallback(oldReadCallback, false);
   readSqe_->setEventBase(nullptr);
+  SocketAddress remoteAddr;
+  getPeerAddress(&remoteAddr);
+  readSqe_->setUseZeroCopyRx(!remoteAddr.isLoopbackAddress());
 
   unregisterFd();
   if (!drc) {

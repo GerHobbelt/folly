@@ -392,11 +392,11 @@ class AsyncWriter {
     size_t mapSize{0};
   };
 
-  FOLLY_NODISCARD virtual bool setRXZeroCopy(RXZerocopyParams /*params*/) {
+  [[nodiscard]] virtual bool setRXZeroCopy(RXZerocopyParams /*params*/) {
     return false;
   }
 
-  FOLLY_NODISCARD virtual bool getRXZeroCopy() const { return false; }
+  [[nodiscard]] virtual bool getRXZeroCopy() const { return false; }
 
   using ZeroCopyEnableFunc =
       std::function<bool(const std::unique_ptr<folly::IOBuf>& buf)>;
@@ -796,6 +796,16 @@ class AsyncTransport
       CHECK(false) << "setReplaySafetyCallback() not supported";
     }
   }
+
+  /**
+   * Return SO_INCOMING_NAPI_ID for this transport. For socket transports, this
+   * is associated with the NAPI instance/receive queue. For other transports,
+   * it is not defined.
+   *
+   * Returns -1 for error or invalid NAPI ID, or a positive integer for a valid
+   * NAPI ID.
+   */
+  virtual int getNapiId() const { return -1; }
 
  public:
   /**
