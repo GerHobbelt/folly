@@ -42,6 +42,7 @@
 #include <glog/logging.h>
 
 FOLLY_GFLAGS_DECLARE_bool(benchmark);
+FOLLY_GFLAGS_DECLARE_bool(bm_quiet);
 FOLLY_GFLAGS_DECLARE_uint32(bm_result_width_chars);
 FOLLY_GFLAGS_DECLARE_int32(bm_min_iters);
 FOLLY_GFLAGS_DECLARE_int64(bm_max_iters);
@@ -99,6 +100,7 @@ struct TimeIterData {
   std::chrono::high_resolution_clock::duration duration;
   unsigned int niter;
   UserCounters userCounters;
+  size_t suspensionCount = 0;
 };
 
 using BenchmarkFun = std::function<TimeIterData(unsigned int)>;
@@ -129,7 +131,16 @@ struct BenchmarkSuspenderBase {
    * Accumulates time spent outside benchmark.
    */
   static std::chrono::high_resolution_clock::duration timeSpent;
+  /**
+   * Overhead per suspension (set once at startup for best-of mode,
+   * left at 0 for adaptive mode which does late correction).
+   */
   static std::chrono::high_resolution_clock::duration suspenderOverhead;
+  /**
+   * Number of suspensions in the current benchmark invocation.
+   * Reset before each benchmark call, used for late overhead correction.
+   */
+  static size_t suspensionCount;
 };
 
 template <typename Clock>
@@ -196,6 +207,7 @@ struct BenchmarkSuspender : BenchmarkSuspenderBase {
   void tally() {
     auto end = Clock::now();
     timeSpent += (end - start) + suspenderOverhead;
+    ++suspensionCount;
     start = end;
   }
 
@@ -244,6 +256,7 @@ class BenchmarkingState : public BenchmarkingStateBase {
   addBenchmark(std::string file, std::string name, Lambda&& lambda) {
     auto execute = [=](unsigned int times) {
       BenchmarkSuspender<Clock>::timeSpent = {};
+      BenchmarkSuspender<Clock>::suspensionCount = 0;
       unsigned int niter;
 
       // CORE MEASUREMENT STARTS
@@ -254,7 +267,8 @@ class BenchmarkingState : public BenchmarkingStateBase {
       return detail::TimeIterData{
           (end - start) - BenchmarkSuspender<Clock>::timeSpent,
           niter,
-          UserCounters{}};
+          UserCounters{},
+          BenchmarkSuspender<Clock>::suspensionCount};
     };
 
     this->addBenchmarkImpl(
@@ -279,6 +293,7 @@ class BenchmarkingState : public BenchmarkingStateBase {
   addBenchmark(std::string file, std::string name, Lambda&& lambda) {
     auto execute = [=](unsigned int times) {
       BenchmarkSuspender<Clock>::timeSpent = {};
+      BenchmarkSuspender<Clock>::suspensionCount = 0;
       unsigned int niter;
 
       // CORE MEASUREMENT STARTS
@@ -290,7 +305,8 @@ class BenchmarkingState : public BenchmarkingStateBase {
       return detail::TimeIterData{
           (end - start) - BenchmarkSuspender<Clock>::timeSpent,
           niter,
-          counters};
+          counters,
+          BenchmarkSuspender<Clock>::suspensionCount};
     };
 
     this->addBenchmarkImpl(
@@ -323,6 +339,17 @@ BenchmarkingState<std::chrono::high_resolution_clock>& globalBenchmarkState();
  * Usually used when customized printing of results is desired.
  */
 std::vector<BenchmarkResult> runBenchmarksWithResults();
+
+// Format benchmark results as a human-readable table string.
+// Shares formatting logic with the default results printer.
+// `annotations[i]` is appended to the corresponding row.
+std::string benchmarkResultsToString(
+    const std::vector<BenchmarkResult>& results,
+    std::string_view indent = "",
+    const std::vector<std::string>& annotations = {});
+
+// Format a time value (in seconds) as a human-readable string, e.g. "8.5us".
+std::string readableTime(double n, unsigned int decimals);
 
 /**
  * Adds a benchmark wrapped in a std::function.

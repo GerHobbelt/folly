@@ -24,6 +24,7 @@
 
 using folly::dynamic;
 using folly::parseJson;
+using folly::parseJson5;
 using folly::parseJsonWithMetadata;
 using folly::toJson;
 using folly::json::parse_error;
@@ -1162,4 +1163,114 @@ TEST(Json5, TrailingCommaAndAllowNanInf) {
   dynamic arr = dynamic::array(1, 2);
   EXPECT_EQ(arr, fromJson5("[1, 2,]"));
   EXPECT_NO_THROW(fromJson5("Infinity"));
+}
+
+TEST(Json5, UnquotedKeys) {
+  auto obj = fromJson5(R"({
+    hello: "world",    // basic
+    _$_: 1,            // startswith _
+    $foo: 2,           // startswith $
+    "> <": 3,          // mixed with quoted keys
+    a1b2: 4,           // has numbers
+    outer: {inner: 5}, // nested
+  })");
+
+  EXPECT_EQ(obj["hello"], "world");
+  EXPECT_EQ(obj["_$_"], 1);
+  EXPECT_EQ(obj["$foo"], 2);
+  EXPECT_EQ(obj["> <"], 3);
+  EXPECT_EQ(obj["a1b2"], 4);
+  EXPECT_EQ(obj["outer"]["inner"], 5);
+
+  // Illegal: key starting with digit should fail
+  EXPECT_THROW(fromJson5("{1abc: 1}"), std::exception);
+
+  // Illegal: key with special symbol should fail
+  EXPECT_THROW(fromJson5("{a-b: 1}"), std::exception);
+
+  // Without json5 flag, unquoted keys should fail
+  EXPECT_THROW(parseJson("{hello: \"world\"}"), std::exception);
+}
+
+TEST(Json5, SingleQuotedStrings) {
+  EXPECT_EQ(fromJson5("'hello world'"), "hello world");
+  EXPECT_EQ(fromJson5("'say \"hello\"'"), "say \"hello\""); // contains "
+  EXPECT_EQ(fromJson5(R"('I can\'t wait')"), "I can't wait"); // contains '
+  EXPECT_EQ(fromJson5(R"('line1\nline2')"), "line1\nline2"); // contains \n
+  EXPECT_EQ(fromJson5("'\\u0041'"), "A"); // contains escape sequences
+  EXPECT_EQ(fromJson5("''"), ""); // empty
+
+  // Mix single and double quoted string in object
+  auto obj = fromJson5(R"({' ': "mixed", "mixed": '\n'})");
+  EXPECT_EQ(obj[" "], "mixed");
+  EXPECT_EQ(obj["mixed"], "\n");
+
+  // Without json5 flag, single quoted string should fail
+  EXPECT_THROW(parseJson("'hello'"), std::exception);
+}
+
+TEST(Json5Test, MultiLineStrings) {
+  EXPECT_EQ(fromJson5("\"line1\\\nline2\""), "line1\nline2");
+  EXPECT_EQ(fromJson5("\"line1\\\rline2\""), "line1\rline2");
+  EXPECT_EQ(fromJson5("\"line1\\\r\nline2\""), "line1\r\nline2");
+
+  // Multi-line string in object value
+  auto obj = fromJson5("{\"key\": \"hello\\\nworld\"}");
+  EXPECT_EQ(obj["key"], "hello\nworld");
+}
+
+TEST(Json5, PositivePrefix) {
+  auto arr = fromJson5("[+12, +1.2, {\"x\": +42}]");
+  EXPECT_EQ(arr[0], 12);
+  EXPECT_EQ(arr[1], 1.2);
+  EXPECT_EQ(arr[2]["x"], 42);
+
+  EXPECT_EQ(fromJson5("+0"), 0);
+  EXPECT_EQ(fromJson5("+0.0"), 0.0);
+  EXPECT_EQ(fromJson5("+0.10"), 0.1);
+  EXPECT_EQ(fromJson5("+Infinity"), std::numeric_limits<double>::infinity());
+
+  folly::json::serialization_opts numberAsString{
+      .parse_numbers_as_strings = true, .allow_json5_experimental = true};
+  EXPECT_EQ(parseJson("+0", numberAsString), "+0");
+  EXPECT_EQ(parseJson("+0.10", numberAsString), "+0.10");
+  EXPECT_EQ(parseJson("+Infinity", numberAsString), "+Infinity");
+
+  // Error: plus with nothing
+  EXPECT_THROW(fromJson5("+"), std::exception);
+  EXPECT_THROW(fromJson5("+-1"), std::exception);
+  EXPECT_THROW(fromJson5("-+1"), std::exception);
+
+  // Without json5 flag, positive prefix should fail
+  EXPECT_THROW(parseJson("+15"), std::exception);
+}
+
+TEST(Json5, LeadingDecimalPoint) {
+  // Basic leading decimal point
+  EXPECT_EQ(fromJson5(".123"), 0.123);
+  EXPECT_EQ(fromJson5(".0"), 0.0);
+
+  // With sign
+  EXPECT_EQ(fromJson5("+.123"), 0.123);
+  EXPECT_EQ(fromJson5("-.123"), -0.123);
+  EXPECT_EQ(fromJson5("+.0"), 0.0);
+  EXPECT_EQ(fromJson5("-.0"), -0.0);
+
+  // In object and array
+  auto obj = fromJson5("{\"val\": .5}");
+  EXPECT_EQ(obj["val"], 0.5);
+  auto arr = fromJson5("[.0, .1, +.2, -.3, +.04e1]");
+  EXPECT_EQ(arr[0], 0.0);
+  EXPECT_EQ(arr[1], 0.1);
+  EXPECT_EQ(arr[2], 0.2);
+  EXPECT_EQ(arr[3], -0.3);
+  EXPECT_EQ(arr[4], 0.4);
+
+  folly::json::serialization_opts numberAsString{
+      .parse_numbers_as_strings = true, .allow_json5_experimental = true};
+  EXPECT_EQ(parseJson("+.12e-3", numberAsString), "+.12e-3");
+  EXPECT_EQ(parseJson("-.10", numberAsString), "-.10");
+
+  // Without json5 flag, leading decimal point should fail
+  EXPECT_THROW(parseJson(".5"), std::exception);
 }

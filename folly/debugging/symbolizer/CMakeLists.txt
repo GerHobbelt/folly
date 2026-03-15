@@ -53,7 +53,6 @@ folly_add_library(
     folly_exception
     folly_lang_c_string
     folly_portability_sys_mman
-    folly_portability_unistd
     folly_scope_guard
   EXPORTED_DEPS
     folly_container_span
@@ -61,6 +60,7 @@ folly_add_library(
     folly_lang_safe_assert
     folly_likely
     folly_portability_config
+    folly_portability_unistd
     folly_range
 )
 
@@ -122,6 +122,7 @@ folly_add_library(
     folly_portability_libunwind
     folly_tracing_async_stack
   EXPORTED_DEPS
+    folly_c_portability
     folly_portability_sys_types
 )
 

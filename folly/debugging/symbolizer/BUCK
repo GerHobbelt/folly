@@ -51,7 +51,6 @@ non_fbcode_target(
     ],
     deps = [
         "fbsource//xplat/folly/portability:sys_mman",
-        "fbsource//xplat/folly/portability:unistd",
         "//third-party/glog:glog",
         "//xplat/folly:conv",
         "//xplat/folly:exception",
@@ -64,6 +63,7 @@ non_fbcode_target(
     exported_deps = [
         "fbsource//xplat/folly/container:span",
         "fbsource//xplat/folly/portability:config",
+        "fbsource//xplat/folly/portability:unistd",
     ],
 )
 
@@ -117,6 +117,7 @@ non_fbcode_target(
         "//xplat/folly/tracing:async_stack",
     ],
     exported_deps = [
+        "fbsource//xplat/folly:c_portability",
         "fbsource//xplat/folly/portability:libunwind",
         "fbsource//xplat/folly/portability:sys_types",
     ],
@@ -230,7 +231,6 @@ fbcode_target(
         "//folly:scope_guard",
         "//folly/lang:c_string",
         "//folly/portability:sys_mman",
-        "//folly/portability:unistd",
     ],
     exported_deps = [
         "//folly:conv",
@@ -239,6 +239,7 @@ fbcode_target(
         "//folly/container:span",
         "//folly/lang:safe_assert",
         "//folly/portability:config",
+        "//folly/portability:unistd",
     ],
 )
 
@@ -277,6 +278,7 @@ fbcode_target(
         "//folly/tracing:async_stack",
     ],
     exported_deps = [
+        "//folly:c_portability",
         "//folly/portability:sys_types",
     ],
 )

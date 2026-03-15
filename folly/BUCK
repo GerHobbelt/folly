@@ -14,7 +14,6 @@ load(
     "FBCODE",
     "IOS",
     "MACOSX",
-    "WATCHOS",
     "WINDOWS",
 )
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
@@ -124,25 +123,29 @@ non_fbcode_target(
     name = "benchmark",
     srcs = [
         "Benchmark.cpp",
+        # Colocated here to avoid circular dep (Adaptive needs Benchmark types).
+        "detail/BenchmarkAdaptive.cpp",
     ],
     raw_headers = [
         "Benchmark.h",
+        "detail/BenchmarkAdaptive.h",
     ],
     deps = [
         ":file_util",
         ":json",
         ":map_util",
         ":overload",
+        ":random",
         ":string",
         "//third-party/boost:boost_regex",
         "//xplat/folly/container:foreach",
         "//xplat/folly/detail:perf_scoped",
         "//xplat/folly/lang:hint",
+        "//xplat/folly/stats:streaming_stats",
     ],
     exported_deps = [
         ":benchmark_util",
         ":portability",
-        ":portability_gflags",
         ":preprocessor",
         ":range",
         ":scope_guard",
@@ -150,6 +153,7 @@ non_fbcode_target(
         "//third-party/boost:boost",
         "//third-party/glog:glog",
         "//xplat/folly/functional:invoke",
+        "//xplat/folly/portability:gflags",
     ],
 )
 
@@ -366,18 +370,18 @@ non_fbcode_target(
     deps = [
         ":exception",
         ":file_util",
-        ":portability_fcntl",
-        ":portability_fmt_compile",
-        ":portability_sys_file",
         ":scope_guard",
         "//third-party/glog:glog",
+        "//xplat/folly/portability:fcntl",
+        "//xplat/folly/portability:fmt_compile",
+        "//xplat/folly/portability:sys_file",
     ],
     exported_deps = [
         ":exception_wrapper",
         ":expected",
         ":portability",
-        ":portability_unistd",
         ":range",
+        "//xplat/folly/portability:unistd",
     ],
 )
 
@@ -458,15 +462,15 @@ non_fbcode_target(
         "fbsource//xplat/folly/portability:dirent",
         ":conv",
         ":logging_logging",
-        ":portability_fcntl",
-        ":portability_sockets",
-        ":portability_stdlib",
-        ":portability_sys_syscall",
-        ":portability_unistd",
         ":scope_guard",
         ":string",
         "//third-party/boost:boost_range",
         "//xplat/folly/lang:assume",
+        "//xplat/folly/portability:fcntl",
+        "//xplat/folly/portability:sockets",
+        "//xplat/folly/portability:stdlib",
+        "//xplat/folly/portability:sys_syscall",
+        "//xplat/folly/portability:unistd",
         "//xplat/folly/system:at_fork",
         "//xplat/folly/system:shell",
     ],
@@ -480,11 +484,11 @@ non_fbcode_target(
         ":map_util",
         ":optional",
         ":portability",
-        ":portability_sys_resource",
         ":range",
         "//third-party/boost:boost",
         "//third-party/boost:boost_container",
         "//xplat/folly/container:span",
+        "//xplat/folly/portability:sys_resource",
     ],
 )
 
@@ -509,62 +513,6 @@ non_fbcode_target(
         "//xplat/folly:conv",
         "//xplat/folly:string",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_stdlib",
-    exported_deps = ["//xplat/folly/portability:stdlib"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_dirent",
-    exported_deps = ["//xplat/folly/portability:dirent"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_fcntl",
-    exported_deps = ["//xplat/folly/portability:fcntl"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_filesystem",
-    exported_deps = ["//xplat/folly/portability:filesystem"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_fmt_compile",
-    exported_deps = ["//xplat/folly/portability:fmt_compile"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_event",
-    exported_deps = ["//xplat/folly/portability:event"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_openssl",
-    exported_deps = ["//xplat/folly/portability:openssl"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_source_location",
-    exported_deps = ["//xplat/folly/portability:source_location"],
 )
 
 fb_dirsync_cpp_library(
@@ -711,104 +659,6 @@ fb_dirsync_cpp_library(
         "//folly/detail:simple_simd_string_utils",
         "//folly/detail:split_string_simd",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_unistd",
-    exported_deps = ["//xplat/folly/portability:unistd"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sockets",
-    exported_deps = ["//xplat/folly/portability:sockets"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_string",
-    exported_deps = ["//xplat/folly/portability:string"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_constexpr",
-    exported_deps = ["//xplat/folly/portability:constexpr"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_gflags",
-    exported_deps = ["//xplat/folly/portability:gflags"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_time",
-    exported_deps = ["//xplat/folly/portability:time"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_time",
-    exported_deps = ["//xplat/folly/portability:sys_time"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_stat",
-    exported_deps = ["//xplat/folly/portability:sys_stat"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_membarrier",
-    exported_deps = ["//xplat/folly/portability:sys_membarrier"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_mman",
-    exported_deps = ["//xplat/folly/portability:sys_mman"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_resource",
-    exported_deps = ["//xplat/folly/portability:sys_resource"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_file",
-    exported_deps = ["//xplat/folly/portability:sys_file"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_uio",
-    exported_deps = ["//xplat/folly/portability:sys_uio"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_builtins",
-    exported_deps = ["//xplat/folly/portability:builtins"],
 )
 
 non_fbcode_target(
@@ -1110,42 +960,6 @@ non_fbcode_target(
     ],
 )
 
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_iovec",
-    exported_deps = ["//xplat/folly/portability:iovec"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_libunwind",
-    exported_deps = ["//xplat/folly/portability:libunwind"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_math",
-    exported_deps = ["//xplat/folly/portability:math"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_windows",
-    exported_deps = ["//xplat/folly/portability:windows"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_types",
-    apple_sdks = (IOS, MACOSX, WATCHOS),
-    exported_deps = ["//xplat/folly/portability:sys_types"],
-)
-
 fb_dirsync_cpp_library(
     name = "likely",
     headers = ["Likely.h"],
@@ -1159,14 +973,6 @@ fb_dirsync_cpp_library(
     name = "unit",
     headers = ["Unit.h"],
     xplat_impl = folly_xplat_library,
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_config",
-    apple_sdks = ALL_APPLE_SDKS,
-    exported_deps = ["//xplat/folly/portability:config"],
 )
 
 fb_dirsync_cpp_library(
@@ -1491,10 +1297,10 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":portability",
-        ":portability_sys_mman",
-        ":portability_unistd",
         ":synchronization_atomic_struct",
         "//xplat/folly/concurrency:cache_locality",
+        "//xplat/folly/portability:sys_mman",
+        "//xplat/folly/portability:unistd",
     ],
 )
 
@@ -1646,13 +1452,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_pthread",
-    exported_deps = ["//xplat/folly/portability:pthread"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "shared_mutex",
     srcs = [
@@ -1726,8 +1525,8 @@ non_fbcode_target(
     ],
     exported_deps = [
         ":chrono",
-        ":portability_time",
         ":utility",
+        "//xplat/folly/portability:time",
     ],
 )
 
@@ -2980,20 +2779,6 @@ non_fbcode_target(
 non_fbcode_target(
     # @shim
     _kind = folly_xplat_library,
-    name = "portability_sched",
-    exported_deps = ["//xplat/folly/portability:sched"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_sys_syscall",
-    exported_deps = ["//xplat/folly/portability:sys_syscall"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
     name = "experimental_symbolizer_stack_trace",
     exported_deps = ["//xplat/folly/experimental/symbolizer:stack_trace"],
 )
@@ -3020,13 +2805,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_syslog",
-    exported_deps = ["//xplat/folly/portability:syslog"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "timeout_queue",
     srcs = [
@@ -3040,13 +2818,6 @@ non_fbcode_target(
         "//third-party/boost:boost",
         "//third-party/boost:boost_multi_index",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_libgen",
-    exported_deps = ["//xplat/folly/portability:libgen"],
 )
 
 non_fbcode_target(
@@ -3098,19 +2869,12 @@ non_fbcode_target(
         ":function",
         ":operation_cancelled",
         ":optional",
-        ":portability_memory",
         ":scope_guard",
         ":synchronization_detail_sleeper",
         "//third-party/glog:glog",
         "//xplat/folly/lang:new",
+        "//xplat/folly/portability:memory",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_gmock",
-    exported_deps = ["//xplat/folly/portability:gmock"],
 )
 
 non_fbcode_target(
@@ -3235,20 +2999,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_asm",
-    exported_deps = ["//xplat/folly/portability:asm"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_malloc",
-    exported_deps = ["//xplat/folly/portability:malloc"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "poly_exception",
     raw_headers = [
@@ -3302,16 +3052,9 @@ non_fbcode_target(
     deps = [
         ":c_portability",
         ":likely",
-        ":portability_time",
+        "//xplat/folly/portability:time",
         "//xplat/third-party/linker_lib:dl",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_atomic",
-    exported_deps = ["//xplat/folly/portability:atomic"],
 )
 
 non_fbcode_target(
@@ -3340,9 +3083,9 @@ non_fbcode_target(
     ],
     deps = [
         ":portability",
-        ":portability_sys_types",
         ":traits",
         "//third-party/boost:boost",
+        "//xplat/folly/portability:sys_types",
     ],
 )
 
@@ -3398,20 +3141,6 @@ non_fbcode_target(
 non_fbcode_target(
     # @shim
     _kind = folly_xplat_library,
-    name = "portability_gtest",
-    exported_deps = ["//xplat/folly/portability:gtest"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_gtest_prod",
-    exported_deps = ["//xplat/folly/portability:gtest_prod"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
     name = "stats_detail_sliding_window",
     exported_deps = ["//xplat/folly/stats/detail:sliding_window"],
 )
@@ -3431,13 +3160,6 @@ non_fbcode_target(
         ":utility",
         "//xplat/folly/detail:fingerprint_polynomial",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_memory",
-    exported_deps = ["//xplat/folly/portability:memory"],
 )
 
 non_fbcode_target(
@@ -3483,12 +3205,12 @@ non_fbcode_target(
     ],
     deps = [
         ":portability",
-        ":portability_builtins",
         ":range",
         "//third-party/glog:glog",
         "//xplat/folly/container:array",
         "//xplat/folly/detail:group_varint_detail",
         "//xplat/folly/lang:bits",
+        "//xplat/folly/portability:builtins",
     ],
 )
 
@@ -3571,13 +3293,6 @@ non_fbcode_target(
         "//xplat/folly/detail:typelist",
         "//xplat/folly/lang:assume",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "portability_stdio",
-    exported_deps = ["//xplat/folly/portability:stdio"],
 )
 
 non_fbcode_target(
@@ -3988,13 +3703,13 @@ non_fbcode_target(
     deps = [
         ":conv",
         ":likely",
-        ":portability_sys_mman",
-        ":portability_unistd",
         ":random",
         ":scope_guard",
         ":traits",
         "//xplat/folly/detail:atomic_unordered_map_utils",
         "//xplat/folly/lang:bits",
+        "//xplat/folly/portability:sys_mman",
+        "//xplat/folly/portability:unistd",
     ],
 )
 
@@ -4250,15 +3965,24 @@ fbcode_target(
 fbcode_target(
     _kind = cpp_library,
     name = "benchmark",
-    srcs = ["Benchmark.cpp"],
-    headers = ["Benchmark.h"],
+    srcs = [
+        "Benchmark.cpp",
+        # Colocated here to avoid circular dep (Adaptive needs Benchmark types).
+        "detail/BenchmarkAdaptive.cpp",
+    ],
+    headers = [
+        "Benchmark.h",
+        "detail/BenchmarkAdaptive.h",
+    ],
     deps = [
         ":file_util",
         ":map_util",
         ":overload",
+        ":random",
         ":string",
         "//folly/detail:perf_scoped",
         "//folly/json:dynamic",
+        "//folly/stats:streaming_stats",
     ],
     exported_deps = [
         "fbsource//third-party/glog:glog",

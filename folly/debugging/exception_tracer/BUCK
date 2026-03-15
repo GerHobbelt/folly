@@ -151,6 +151,7 @@ non_fbcode_target(
         "//xplat/folly/debugging/exception_tracer:exception_tracer_base",
         "//xplat/folly/debugging/exception_tracer:exception_tracer_callbacks",
         "//xplat/folly/debugging/exception_tracer:stacktrace",
+        "//xplat/folly/lang:exception",
     ],
 )
 
@@ -302,6 +303,7 @@ fbcode_target(
         ":exception_tracer_callbacks",
         ":stacktrace",
         "//folly:utility",
+        "//folly/lang:exception",
     ],
     exported_deps = [
         ":exception_tracer_callbacks",
@@ -337,8 +339,18 @@ LIBSTDCXX_BUCKIFIED_SELECTOR = selects.and_(
     selects.cond("ovr_config//third-party/libgcc:11.x"),
 )
 
+LIBCXX_BUCKIFIED_SELECTOR = selects.and_(
+    selects.cond("ovr_config//cpp:libc++"),
+    selects.or_(
+        selects.cond("ovr_config//third-party/libcxx:17"),
+        selects.cond("ovr_config//third-party/libcxx:19"),
+        selects.cond("ovr_config//third-party/libcxx:21"),
+    ),
+)
+
 STATIC_CXX_STDLIB_SELECTOR = selects.or_(
     LIBSTDCXX_BUCKIFIED_SELECTOR,
+    LIBCXX_BUCKIFIED_SELECTOR,
 )
 
 fbcode_target(
@@ -350,7 +362,10 @@ fbcode_target(
         STATIC_CXX_STDLIB_SELECTOR,
         select({
             "DEFAULT": [],
-            "ovr_config//cpp:libc++": ["-DFOLLY_INSTALL_STD_RETHROW_EXCEPTION_WRAPPER=1"],
+            "ovr_config//cpp:libc++": [
+                "-DFOLLY_INSTALL_STATIC_CXA_FUNCTIONS_WRAPPERS=1",
+                "-DFOLLY_INSTALL_STD_RETHROW_EXCEPTION_WRAPPER=1",
+            ],
             "ovr_config//cpp:libstdc++": [
                 "-DFOLLY_INSTALL_STATIC_CXA_FUNCTIONS_WRAPPERS=1",
                 "-DFOLLY_INSTALL_STD_RETHROW_EXCEPTION_WRAPPER=1",
@@ -363,6 +378,10 @@ fbcode_target(
         select({
             "DEFAULT": [],
             "ovr_config//cpp:libc++": [
+                "-Wl,--wrap=__cxa_throw",
+                "-Wl,--wrap=__cxa_rethrow",
+                "-Wl,--wrap=__cxa_begin_catch",
+                "-Wl,--wrap=__cxa_end_catch",
                 "-Wl,--wrap=_ZSt17rethrow_exceptionSt13exception_ptr",
             ],
             "ovr_config//cpp:libstdc++": [

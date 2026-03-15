@@ -16,21 +16,38 @@
 
 use std::fmt;
 
+use bytes::Bytes;
+use cxx::UniquePtr;
+use iobuf::IOBuf;
+use iobuf::IOBufShared;
+
 #[cxx::bridge]
 mod bridge {
     #[namespace = "facebook::folly_rust::compression"]
     unsafe extern "C++" {
         include!("folly/rust/compression/compression.h");
 
+        #[namespace = "folly"]
+        type IOBuf = iobuf::IOBuf;
+
+        #[namespace = "folly::compression"]
+        #[cxx_name = "Codec"]
+        type CodecFfi;
+
         fn has_codec(codec_type: i32) -> bool;
 
-        fn compress_bytes(codec_type: i32, data: &[u8]) -> Result<UniquePtr<CxxString>>;
+        fn create_codec(codec_type: i32) -> Result<UniquePtr<CodecFfi>>;
 
-        fn uncompress_bytes(
-            codec_type: i32,
+        fn compress(codec: Pin<&mut CodecFfi>, data: &[u8]) -> Result<UniquePtr<IOBuf>>;
+
+        fn uncompress(codec: Pin<&mut CodecFfi>, data: &[u8]) -> Result<UniquePtr<IOBuf>>;
+
+        fn uncompress_length(
+            codec: Pin<&mut CodecFfi>,
             data: &[u8],
             uncompressed_length: u64,
-        ) -> Result<UniquePtr<CxxString>>;
+        ) -> Result<UniquePtr<IOBuf>>;
+
     }
 }
 
@@ -70,24 +87,24 @@ pub enum CodecType {
     ZstdFast = 12,
 }
 
-impl CodecType {
-    /// Convert from the raw integer value used in C++.
-    /// Returns `None` for unrecognized values.
-    pub fn from_i32(value: i32) -> Option<Self> {
+impl TryFrom<i32> for CodecType {
+    type Error = i32;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            1 => Some(CodecType::NoCompression),
-            2 => Some(CodecType::Lz4),
-            3 => Some(CodecType::Snappy),
-            4 => Some(CodecType::Zlib),
-            5 => Some(CodecType::Lz4VarintSize),
-            6 => Some(CodecType::Lzma2),
-            7 => Some(CodecType::Lzma2VarintSize),
-            8 => Some(CodecType::Zstd),
-            9 => Some(CodecType::Gzip),
-            10 => Some(CodecType::Lz4Frame),
-            11 => Some(CodecType::Bzip2),
-            12 => Some(CodecType::ZstdFast),
-            _ => None,
+            1 => Ok(CodecType::NoCompression),
+            2 => Ok(CodecType::Lz4),
+            3 => Ok(CodecType::Snappy),
+            4 => Ok(CodecType::Zlib),
+            5 => Ok(CodecType::Lz4VarintSize),
+            6 => Ok(CodecType::Lzma2),
+            7 => Ok(CodecType::Lzma2VarintSize),
+            8 => Ok(CodecType::Zstd),
+            9 => Ok(CodecType::Gzip),
+            10 => Ok(CodecType::Lz4Frame),
+            11 => Ok(CodecType::Bzip2),
+            12 => Ok(CodecType::ZstdFast),
+            _ => Err(value),
         }
     }
 }
@@ -97,20 +114,46 @@ pub fn has_codec(codec_type: CodecType) -> bool {
     bridge::has_codec(codec_type as i32)
 }
 
-/// Compress a byte slice using the specified codec.
-pub fn compress(codec_type: CodecType, data: &[u8]) -> Result<Vec<u8>, CompressionError> {
-    let result = bridge::compress_bytes(codec_type as i32, data)?;
-    Ok(result.as_bytes().to_vec())
+pub struct Codec {
+    inner: cxx::UniquePtr<bridge::CodecFfi>,
 }
 
-/// Uncompress a byte slice using the specified codec.
-pub fn uncompress(
-    codec_type: CodecType,
-    data: &[u8],
-    uncompressed_length: u64,
-) -> Result<Vec<u8>, CompressionError> {
-    let result = bridge::uncompress_bytes(codec_type as i32, data, uncompressed_length)?;
-    Ok(result.as_bytes().to_vec())
+fn iobuf_to_bytes(iobuf: UniquePtr<IOBuf>) -> Bytes {
+    // This is zero-copy.
+    //
+    // When the IOBuf is contiguous and unshared (always true in our case),
+    // Bytes::from(IOBufShared) uses from_owner() to hold the IOBufShared directly and
+    // point at the C++-allocated buffer — zero-copy. The buffer is freed when Bytes drops.
+    // Falls back to memcpy only for chained or shared IOBufs.
+    Bytes::from(IOBufShared::from(iobuf))
+}
+
+// SAFETY: The underlying folly::compression::Codec is a heap-allocated object
+// with no thread affinity.
+unsafe impl Send for Codec {}
+
+impl Codec {
+    pub fn new(codec_type: CodecType) -> Result<Self, CompressionError> {
+        let inner = bridge::create_codec(codec_type as i32)?;
+        Ok(Self { inner })
+    }
+
+    pub fn compress(&mut self, data: &[u8]) -> Result<Bytes, CompressionError> {
+        let iobuf = bridge::compress(self.inner.pin_mut(), data)?;
+        Ok(iobuf_to_bytes(iobuf))
+    }
+
+    pub fn uncompress(
+        &mut self,
+        data: &[u8],
+        uncompressed_length: Option<u64>,
+    ) -> Result<Bytes, CompressionError> {
+        let iobuf = match uncompressed_length {
+            Some(len) => bridge::uncompress_length(self.inner.pin_mut(), data, len)?,
+            None => bridge::uncompress(self.inner.pin_mut(), data)?,
+        };
+        Ok(iobuf_to_bytes(iobuf))
+    }
 }
 
 #[cfg(test)]
@@ -120,22 +163,22 @@ mod tests {
     #[test]
     fn test_has_codec() {
         assert!(has_codec(CodecType::NoCompression));
-        assert!(has_codec(CodecType::Zstd));
+        assert!(has_codec(CodecType::Lz4));
         assert!(has_codec(CodecType::Snappy));
         assert!(has_codec(CodecType::Zlib));
+        assert!(has_codec(CodecType::Zstd));
         assert!(has_codec(CodecType::Gzip));
-        assert!(has_codec(CodecType::Lz4));
         assert!(has_codec(CodecType::Lz4Frame));
     }
 
     #[test]
-    fn test_codec_type_from_i32() {
-        assert_eq!(CodecType::from_i32(1), Some(CodecType::NoCompression));
-        assert_eq!(CodecType::from_i32(8), Some(CodecType::Zstd));
-        assert_eq!(CodecType::from_i32(12), Some(CodecType::ZstdFast));
-        assert_eq!(CodecType::from_i32(0), None);
-        assert_eq!(CodecType::from_i32(99), None);
-        assert_eq!(CodecType::from_i32(-1), None);
+    fn test_codec_type_try_from() {
+        assert_eq!(CodecType::try_from(1), Ok(CodecType::NoCompression));
+        assert_eq!(CodecType::try_from(8), Ok(CodecType::Zstd));
+        assert_eq!(CodecType::try_from(12), Ok(CodecType::ZstdFast));
+        assert_eq!(CodecType::try_from(0), Err(0));
+        assert_eq!(CodecType::try_from(99), Err(99));
+        assert_eq!(CodecType::try_from(-1), Err(-1));
     }
 
     #[test]
@@ -150,37 +193,79 @@ mod tests {
             CodecType::Lz4Frame,
             CodecType::Bzip2,
             CodecType::ZstdFast,
+            CodecType::Lz4VarintSize,
+            CodecType::Lzma2,
+            CodecType::Lzma2VarintSize,
         ];
+        let requires_length = [CodecType::Lz4, CodecType::Snappy, CodecType::Lz4VarintSize];
         let original = b"Hello, folly compression from Rust! This is a test string that should be compressible.";
 
         for ct in types {
             if !has_codec(ct) {
                 continue;
             }
-            let compressed = compress(ct, original.as_slice()).unwrap();
-            let decompressed = uncompress(ct, &compressed, original.len() as u64).unwrap();
+            let mut codec = Codec::new(ct).expect("create codec failed");
+            let compressed = codec
+                .compress(original.as_slice())
+                .expect("compress failed");
+            let decompressed = codec
+                .uncompress(&compressed, Some(original.len() as u64))
+                .expect("uncompress failed");
             assert_eq!(
-                decompressed,
-                original.to_vec(),
+                &decompressed[..],
+                &original[..],
                 "Roundtrip failed for {:?}",
                 ct
             );
+
+            if !requires_length.contains(&ct) {
+                let decompressed = codec
+                    .uncompress(&compressed, None)
+                    .expect("uncompress (no length) failed");
+                assert_eq!(
+                    &decompressed[..],
+                    &original[..],
+                    "Roundtrip (no length) failed for {:?}",
+                    ct
+                );
+            }
         }
     }
 
     #[test]
     fn test_compress_empty_data() {
         let original: &[u8] = b"";
-        let compressed = compress(CodecType::Zstd, original).unwrap();
-        let decompressed = uncompress(CodecType::Zstd, &compressed, original.len() as u64).unwrap();
-        assert_eq!(decompressed, original.to_vec());
+        let mut codec = Codec::new(CodecType::Zstd).expect("create codec failed");
+        let compressed = codec
+            .compress(original)
+            .expect("compress empty data failed");
+        let decompressed = codec
+            .uncompress(&compressed, Some(original.len() as u64))
+            .expect("uncompress empty data failed");
+        assert_eq!(&decompressed[..], original);
     }
 
     #[test]
     fn test_error_message() {
-        let err = uncompress(CodecType::Zstd, b"not valid compressed data", 100);
+        let mut codec = Codec::new(CodecType::Zstd).expect("create codec failed");
+        let err = codec.uncompress(b"not valid compressed data", Some(100));
         assert!(err.is_err());
-        let msg = err.unwrap_err().to_string();
+        let msg = err.expect_err("expected decompression error").to_string();
         assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_codec_reuse() {
+        let mut codec = Codec::new(CodecType::Zstd).expect("failed to create Zstd codec");
+        for i in 0..3 {
+            let original = format!("test data for codec reuse, iteration {i}");
+            let compressed = codec
+                .compress(original.as_bytes())
+                .expect("compress failed");
+            let decompressed = codec
+                .uncompress(&compressed, Some(original.len() as u64))
+                .expect("uncompress failed");
+            assert_eq!(&decompressed[..], original.as_bytes());
+        }
     }
 }

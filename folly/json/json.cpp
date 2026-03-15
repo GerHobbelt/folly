@@ -61,6 +61,17 @@ bool allowNanInf(json::serialization_opts const& opts) {
   return opts.allow_nan_inf || opts.allow_json5_experimental;
 }
 
+// JSON5 uses ECMAScript 5.1 IdentifierName for unquoted keys.
+// For ASCII, this means: start with [a-zA-Z_$], continue with [a-zA-Z0-9_$].
+bool isIdentifierStart(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
+      c == '$';
+}
+
+bool isIdentifierPart(char c) {
+  return isIdentifierStart(c) || (c >= '0' && c <= '9');
+}
+
 struct Printer {
   // Context class is allows to restore the path to element that we are about to
   // print so that if error happens we can throw meaningful exception.
@@ -344,10 +355,11 @@ struct Input {
     return skipWhile([](char c) { return c >= '0' && c <= '9'; });
   }
 
-  StringPiece skipMinusAndDigits() {
+  StringPiece skipSignAndDigits() {
     bool firstChar = true;
     return skipWhile([&firstChar](char c) {
-      bool result = (c >= '0' && c <= '9') || (firstChar && c == '-');
+      bool result =
+          (c >= '0' && c <= '9') || (firstChar && (c == '-' || c == '+'));
       firstChar = false;
       return result;
     });
@@ -500,7 +512,7 @@ class RecursionGuard {
 };
 
 dynamic parseValue(Input& in, json::metadata_map* map);
-std::string parseString(Input& in);
+std::string parseString(Input& in, char quoteChar = '"');
 dynamic parseNumber(Input& in);
 
 void parseObjectKeyValue(
@@ -547,7 +559,9 @@ dynamic parseObject(Input& in, json::metadata_map* map) {
     if (allowTrailingComma(opts) && *in == '}') {
       break;
     }
-    dynamic key = parseValue(in, map);
+    dynamic key = opts.allow_json5_experimental && isIdentifierStart(*in)
+        ? in.skipWhile(isIdentifierPart)
+        : parseValue(in, map);
     if (opts.convert_int_keys && key.isInt()) {
       key = key.asString();
     } else if (!opts.allow_non_string_keys && !key.isString()) {
@@ -609,6 +623,17 @@ dynamic parseArray(Input& in, json::metadata_map* map) {
 }
 
 dynamic parseNumber(Input& in) {
+  bool const json5 = in.getOpts().allow_json5_experimental;
+  bool const positive = *in == '+';
+  if (positive && !json5) {
+    in.error("expected json value");
+  }
+  if (positive && in.consume("+Infinity")) {
+    if (in.getOpts().parse_numbers_as_strings) {
+      return "+Infinity";
+    }
+    return std::numeric_limits<double>::infinity();
+  }
   bool const negative = (*in == '-');
   if (negative && in.consume("-Infinity")) {
     if (in.getOpts().parse_numbers_as_strings) {
@@ -618,8 +643,11 @@ dynamic parseNumber(Input& in) {
     }
   }
 
-  auto integral = in.skipMinusAndDigits();
-  if (negative && integral.size() < 2) {
+  auto integral = in.skipSignAndDigits();
+  if (positive && integral.size() < 2 && (*in != '.' || !json5)) {
+    in.error("expected digits after `+'");
+  }
+  if (negative && integral.size() < 2 && (*in != '.' || !json5)) {
     in.error("expected digits after `-'");
   }
 
@@ -717,21 +745,36 @@ void decodeUnicodeEscape(Input& in, std::string& out) {
   appendCodePointToUtf8(codePoint, out);
 }
 
-std::string parseString(Input& in) {
-  DCHECK_EQ(*in, '\"');
+std::string parseString(Input& in, char quoteChar) {
+  const bool json5 = in.getOpts().allow_json5_experimental;
+  DCHECK_EQ(*in, quoteChar);
   ++in;
 
   std::string ret;
   for (;;) {
-    auto range = in.skipWhile([](char c) { return c != '\"' && c != '\\'; });
+    auto range = in.skipWhile([quoteChar](char c) {
+      return c != quoteChar && c != '\\';
+    });
     ret.append(range.begin(), range.end());
 
-    if (*in == '\"') {
+    if (*in == quoteChar) {
       ++in;
       break;
     }
     if (*in == '\\') {
       ++in;
+
+      bool consumed = false;
+      for (auto next : {"\r\n", "\r", "\n", "'"}) {
+        if (json5 && in.consume(next)) {
+          consumed = true;
+          ret += next;
+          break;
+        }
+      }
+      if (consumed) {
+        continue;
+      }
       switch (*in) {
           // clang-format off
         case '\"':    ret.push_back('\"'); ++in; break;
@@ -773,6 +816,7 @@ std::string parseString(Input& in) {
 
 dynamic parseValue(Input& in, json::metadata_map* map) {
   RecursionGuard guard(in);
+  const auto json5 = in.getOpts().allow_json5_experimental;
 
   in.skipWhitespace();
   // clang-format off
@@ -780,7 +824,10 @@ dynamic parseValue(Input& in, json::metadata_map* map) {
       *in == '[' ? parseArray(in, map) :
       *in == '{' ? parseObject(in, map) :
       *in == '\"' ? parseString(in) :
+      (*in == '\'' && json5) ?  parseString(in, '\'') :
       (*in == '-' || (*in >= '0' && *in <= '9')) ? parseNumber(in) :
+      (*in == '+' && json5) ? parseNumber(in) :
+      (*in == '.' && json5) ? parseNumber(in) :
       in.consume("true") ? true :
       in.consume("false") ? false :
       in.consume("null") ? nullptr :

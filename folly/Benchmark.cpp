@@ -24,6 +24,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include <folly/MapUtil.h>
 #include <folly/Overload.h>
 #include <folly/String.h>
+#include <folly/detail/BenchmarkAdaptive.h>
 #include <folly/detail/PerfScoped.h>
 #include <folly/json/json.h>
 
@@ -43,84 +45,175 @@
 
 using namespace std;
 
+// === For benchmark+test combos that gate on `FLAGS_benchmark` ===
+
 FOLLY_GFLAGS_DEFINE_bool(benchmark, false, "Run benchmarks.");
 
-FOLLY_GFLAGS_DEFINE_bool(json, false, "Output in JSON format.");
+// === Mode ===
+
+FOLLY_GFLAGS_DEFINE_string(
+    bm_mode,
+    "best-of",
+    "'best-of' (default) or 'adaptive'. "
+    "Adaptive interleaves samples across all benchmarks to cancel "
+    "correlated noise, and runs until the target percentile estimate "
+    "is both stable and precise. "
+    "Set --bm_max_secs=20-30 for reliable results. "
+    "See BenchmarkAdaptive.md.");
+
+// === Benchmark selection ===
+
+FOLLY_GFLAGS_DEFINE_string(
+    bm_regex, "", "Only run benchmarks whose names match this regex.");
+
+FOLLY_GFLAGS_DEFINE_string(
+    bm_file_regex,
+    "",
+    "Only run benchmarks whose source filenames match this regex.");
 
 FOLLY_GFLAGS_DEFINE_bool(
-    bm_estimate_time,
+    bm_list, false, "Print benchmark names and exit without running.");
+
+// === Adaptive: convergence target ===
+
+FOLLY_GFLAGS_DEFINE_double(
+    bm_target_percentile,
+    33.3,
+    "Adaptive: which percentile of per-slice iteration timings to report. "
+    "Default 33.3 approximates the median of good runs, rejecting transient "
+    "slowdowns. Higher values (e.g. 90) capture tail behavior. "
+    "For comparison, best-of mode always reports the minimum (p0).");
+
+FOLLY_GFLAGS_DEFINE_double(
+    bm_target_precision_pct,
+    0.4,
+    "Adaptive: measurement precision target. A benchmark converges "
+    "when the 95% confidence interval around the target percentile "
+    "is narrower than this percentage of the estimate. E.g. 0.4 "
+    "means the CI for a 100ns benchmark must be under 0.4ns wide. "
+    "Tighter values (e.g. 0.1) need longer --bm_max_secs or a "
+    "quieter system.");
+
+// === How long to measure ===
+
+FOLLY_GFLAGS_DEFINE_int32(
+    bm_max_secs,
+    1,
+    "Maximum seconds per benchmark. Adaptive: set to 20-30 for "
+    "robust results on noisy systems. Default 1s is for quick "
+    "iteration.");
+
+FOLLY_GFLAGS_DEFINE_double(
+    bm_min_secs,
+    0.1,
+    "Adaptive: minimum seconds per benchmark before it can converge. "
+    "Ensures enough elapsed time to observe system jitter.");
+
+FOLLY_GFLAGS_DEFINE_uint32(
+    bm_min_samples,
+    20,
+    "Adaptive: minimum samples per benchmark before it can converge. "
+    "Ensures enough data points for stable percentile and CI "
+    "estimates.");
+
+// Best-of mode only:
+
+FOLLY_GFLAGS_DEFINE_int32(
+    bm_min_iters,
+    1,
+    "Best-of: minimum iterations per measurement. The inner loop "
+    "doubles from this until duration exceeds --bm_slice_usec.");
+
+FOLLY_GFLAGS_DEFINE_int64(
+    bm_max_iters, 1 << 30, "Best-of: maximum iterations per measurement.");
+
+FOLLY_GFLAGS_DEFINE_uint32(
+    bm_max_trials,
+    1000,
+    "Best-of: maximum number of measurement trials (epochs). "
+    "The best (minimum-time) trial is reported.");
+
+// === Measurement slice duration ===
+
+FOLLY_GFLAGS_DEFINE_int64(
+    bm_slice_usec,
+    1000,
+    "Duration in microseconds of each contiguous measurement slice. "
+    "Values below 1000 risk harness interference affecting results.");
+
+FOLLY_GFLAGS_DEFINE_int64(
+    bm_min_usec,
+    1000,
+    "Deprecated: use --bm_slice_usec (same meaning, same units).");
+
+// === Instrumentation & diagnostics (mode-agnostic) ===
+
+FOLLY_GFLAGS_DEFINE_bool(
+    bm_warm_up_iteration,
     false,
-    "Estimate running time by returning the geometric mean of latency values between p25 and p75.");
+    "Run one iteration of each benchmark before measuring, to warm "
+    "caches and trigger lazy initialization. Automatically enabled "
+    "when --bm_perf_args is set.");
 
 #if FOLLY_PERF_IS_SUPPORTED
 FOLLY_GFLAGS_DEFINE_string(
     bm_perf_args,
     "",
-    "Run selected benchmarks while attaching `perf` profiling tool."
-    "Advantage over attaching perf externally is that this skips "
-    "initialization. The first iteration of the benchmark is also "
-    "skipped to allow for all statics to be set up. This requires perf "
-    " to be available on the system. Example: --bm_perf_args=\"record -g\"");
+    "Attach `perf` during measurement (skips the first iteration "
+    "for setup). Example: --bm_perf_args=\"record -g\"");
 #endif
 
 FOLLY_GFLAGS_DEFINE_bool(
-    bm_profile, false, "Run benchmarks with constant number of iterations");
-
-FOLLY_GFLAGS_DEFINE_int64(
-    bm_profile_iters, 1000, "Number of iterations for profiling");
-
-FOLLY_GFLAGS_DEFINE_string(
-    bm_relative_to,
-    "",
-    "Print benchmark results relative to an earlier dump (via --bm_json_verbose)");
+    bm_verbose,
+    false,
+    "Log more diagnostic details: convergence progress and baseline "
+    "stats (adaptive), measurement phases (best-of).");
 
 FOLLY_GFLAGS_DEFINE_bool(
-    bm_warm_up_iteration,
-    false,
-    "Run one iteration of the benchmarks before measuring. Always true if `bm_perf_args` is passed");
+    bm_quiet, false, "Silence non-actionable diagnostics.");
+
+// === Output & comparison (mode-agnostic) ===
+
+FOLLY_GFLAGS_DEFINE_bool(json, false, "Print results in JSON format.");
 
 FOLLY_GFLAGS_DEFINE_string(
     bm_json_verbose,
     "",
-    "File to write verbose JSON format (for BenchmarkCompare / --bm_relative_to). "
-    "NOTE: this file is written regardless of options --json and --bm_relative_to.");
+    "Write verbose JSON to this file (for BenchmarkCompare or "
+    "--bm_relative_to). Written regardless of --json.");
 
 FOLLY_GFLAGS_DEFINE_string(
-    bm_regex, "", "Only benchmarks whose names match this regex will be run.");
-
-FOLLY_GFLAGS_DEFINE_string(
-    bm_file_regex,
+    bm_relative_to,
     "",
-    "Only benchmarks whose filenames match this regex will be run.");
-
-FOLLY_GFLAGS_DEFINE_int64(
-    bm_min_usec,
-    100,
-    "Minimum # of microseconds we'll accept for each benchmark.");
-
-FOLLY_GFLAGS_DEFINE_int32(
-    bm_min_iters, 1, "Minimum # of iterations we'll try for each benchmark.");
-
-FOLLY_GFLAGS_DEFINE_int64(
-    bm_max_iters,
-    1 << 30,
-    "Maximum # of iterations we'll try for each benchmark.");
-
-FOLLY_GFLAGS_DEFINE_int32(
-    bm_max_secs, 1, "Maximum # of seconds we'll spend on each benchmark.");
+    "Print results relative to a previous JSON dump "
+    "(produced by --bm_json_verbose).");
 
 FOLLY_GFLAGS_DEFINE_uint32(
-    bm_result_width_chars, 76, "Width of results table in characters");
+    bm_result_width_chars, 76, "Width of the results table in characters.");
 
-FOLLY_GFLAGS_DEFINE_uint32(
-    bm_max_trials,
-    1000,
-    "Maximum number of trials (iterations) executed for each benchmark.");
+// === Profiling with constant iterations (best-of mode only) ===
 
 FOLLY_GFLAGS_DEFINE_bool(
-    bm_list,
+    bm_profile,
     false,
-    "Print out list of all benchmark test names without running them.");
+    "Best-of: run each benchmark with a fixed iteration count "
+    "(--bm_profile_iters) for external profiling. Results will be "
+    "jittery -- not for measurement.");
+
+FOLLY_GFLAGS_DEFINE_int64(
+    bm_profile_iters,
+    1000,
+    "Best-of: number of iterations when --bm_profile is set.");
+
+// === Avoid ===
+
+FOLLY_GFLAGS_DEFINE_bool(
+    bm_estimate_time,
+    false,
+    "Best-of: alternative measurement strategy that reports the "
+    "geometric mean of p25-p75 latencies. Slower than best-of mode, "
+    "with unclear benefits. "
+    "Prefer --bm_mode=adaptive for noise-robust measurements.");
 
 namespace folly {
 namespace detail {
@@ -163,7 +256,7 @@ BENCHMARK(FB_FOLLY_GLOBAL_BENCHMARK_SUSPENDER_BASELINE) {
 #undef FB_FOLLY_GLOBAL_BENCHMARK_BASELINE
 
 static std::pair<double, UserCounters> runBenchmarkGetNSPerIteration(
-    const BenchmarkFun& fun, const double globalBaseline) {
+    const BenchmarkFun& fun, const double globalBaseline, int64_t sliceUsec) {
   using std::chrono::duration_cast;
   using std::chrono::high_resolution_clock;
   using std::chrono::microseconds;
@@ -179,8 +272,8 @@ static std::pair<double, UserCounters> runBenchmarkGetNSPerIteration(
   // We choose a minimum minimum (sic) of 100,000 nanoseconds, but if
   // the clock resolution is worse than that, it will be larger. In
   // essence we're aiming at making the quantization noise 0.01%.
-  static const auto minNanoseconds = std::max<nanoseconds>(
-      nanoseconds(100000), microseconds(FLAGS_bm_min_usec));
+  const auto minNanoseconds =
+      std::max<nanoseconds>(nanoseconds(100000), microseconds(sliceUsec));
 
   // We establish a total time budget as we don't want a measurement
   // to take too long. This will curtail the number of actual trials.
@@ -397,9 +490,11 @@ static string humanReadable(
   return stringPrintf("%.*f%s", decimals, scaledValue, scale->suffix);
 }
 
-static string readableTime(double n, unsigned int decimals) {
+namespace detail {
+string readableTime(double n, unsigned int decimals) {
   return humanReadable(n, decimals, kTimeSuffixes);
 }
+} // namespace detail
 
 static string metricReadable(double n, unsigned int decimals) {
   return humanReadable(n, decimals, kMetricSuffixes);
@@ -409,81 +504,75 @@ namespace {
 
 constexpr std::string_view kUnitHeaders = "relative  time/iter   iters/s";
 constexpr std::string_view kUnitHeadersPadding = "     ";
-void printHeaderContents(std::string_view file) {
-  printf(
+
+std::string headerContents(std::string_view file, size_t columns) {
+  const size_t maxFileNameChars =
+      columns - kUnitHeaders.size() - kUnitHeadersPadding.size();
+  std::string fname(file);
+  if (fname.size() > maxFileNameChars) {
+    constexpr std::string_view overflowFilePrefix = "[...]";
+    fname.erase(0, fname.size() - maxFileNameChars);
+    fname.replace(0, overflowFilePrefix.size(), overflowFilePrefix);
+  }
+  return stringPrintf(
       "%-.*s%*s%*s",
-      static_cast<int>(file.size()),
-      file.data(),
+      static_cast<int>(fname.size()),
+      fname.c_str(),
       static_cast<int>(kUnitHeadersPadding.size()),
       kUnitHeadersPadding.data(),
       static_cast<int>(kUnitHeaders.size()),
       kUnitHeaders.data());
 }
 
-void printDefaultHeaderContents(std::string_view file, size_t columns) {
-  const size_t maxFileNameChars =
-      columns - kUnitHeaders.size() - kUnitHeadersPadding.size();
-
-  if (file.size() <= maxFileNameChars) {
-    printHeaderContents(file);
-  } else {
-    std::string truncatedFile = std::string(file.begin(), file.end());
-    constexpr std::string_view overflowFilePrefix = "[...]";
-    const auto overflow = truncatedFile.size() - maxFileNameChars;
-    truncatedFile.erase(0, overflow);
-    truncatedFile.replace(0, overflowFilePrefix.size(), overflowFilePrefix);
-    printHeaderContents(truncatedFile);
-  }
-}
-
-void printSeparator(char pad, unsigned int columns) {
-  puts(string(columns, pad).c_str());
-}
-
 class BenchmarkResultsPrinter {
  public:
-  BenchmarkResultsPrinter() : columns_(FLAGS_bm_result_width_chars) {}
-  explicit BenchmarkResultsPrinter(std::set<std::string> counterNames)
+  explicit BenchmarkResultsPrinter(
+      std::set<std::string> counterNames = {},
+      std::ostream* os = &std::cout,
+      std::string_view indent = "",
+      size_t columnsAdjust = 0)
       : counterNames_(std::move(counterNames)),
         namesLength_{std::accumulate(
             counterNames_.begin(),
             counterNames_.end(),
             size_t{0},
             [](size_t acc, auto&& name) { return acc + 2 + name.length(); })},
-        columns_(FLAGS_bm_result_width_chars + namesLength_) {}
+        os_(os),
+        indent_(indent),
+        columns_(FLAGS_bm_result_width_chars + namesLength_ - columnsAdjust) {}
 
-  void separator(char pad) { printSeparator(pad, columns_); }
+  void separator(char pad) { line(string(columns_, pad)); }
 
   void header(std::string_view file) {
     separator('=');
-    printDefaultHeaderContents(file, columns_ - namesLength_);
-
+    std::string h = headerContents(file, columns_ - namesLength_);
     for (auto const& name : counterNames_) {
-      printf("  %s", name.c_str());
+      h += "  ";
+      h += name;
     }
-    printf("\n");
+    line(h);
     separator('=');
   }
 
-  void print(const vector<detail::BenchmarkResult>& data) {
-    for (auto& datum : data) {
+  void print(
+      const vector<detail::BenchmarkResult>& data,
+      const std::vector<std::string>& annotations = {}) {
+    for (size_t i = 0; i < data.size(); ++i) {
+      auto& datum = data[i];
       auto file = datum.file;
       if (file != lastFile_) {
-        // New file starting
         header(file);
         lastFile_ = file;
       }
 
       string s = datum.name;
       if (s == "-") {
-        // Simply draw a line across the benchmark results
         separator('-');
         continue;
       }
       if (s[0] == '"') {
-        // Simply print some text. Strips implied quote characters
-        // from the beginning and end of the name.
-        printf("%s\n", s.substr(1, s.length() - 2).c_str());
+        // Strips quote characters from the beginning and end of the name.
+        line(s.substr(1, s.length() - 2));
         continue;
       }
       bool useBaseline = false;
@@ -502,24 +591,22 @@ class BenchmarkResultsPrinter {
       const auto itersPerSec = (secPerIter == 0)
           ? std::numeric_limits<double>::infinity()
           : (1 / secPerIter);
+      std::string row;
       if (!useBaseline) {
-        // Print without baseline
-        printf(
+        row = stringPrintf(
             "%*s%8.8s  %9.9s  %8.8s",
             static_cast<int>(s.size()),
             s.c_str(),
             "", // Padding for "relative" header.
-            readableTime(secPerIter, 2).c_str(),
+            detail::readableTime(secPerIter, 2).c_str(),
             metricReadable(itersPerSec, 2).c_str());
       } else {
-        // Print with baseline
-        const auto rel = baselineNsPerIter_ / nsPerIter * 100.0;
-        printf(
+        row = stringPrintf(
             "%*s%#7.5g%%  %9.9s  %8.8s",
             static_cast<int>(s.size()),
             s.c_str(),
-            rel,
-            readableTime(secPerIter, 2).c_str(),
+            baselineNsPerIter_ / nsPerIter * 100.0,
+            detail::readableTime(secPerIter, 2).c_str(),
             metricReadable(itersPerSec, 2).c_str());
       }
       for (auto const& name : counterNames_) {
@@ -529,15 +616,15 @@ class BenchmarkResultsPrinter {
             // implicit cast from long to double when formatting the output
             case UserMetric::Type::TIME:
               folly::variant_match(ptr->value, [&](auto value) {
-                printf(
+                row += stringPrintf(
                     "  %*s",
                     int(name.length()),
-                    readableTime(value, 2).c_str());
+                    detail::readableTime(value, 2).c_str());
               });
               break;
             case UserMetric::Type::METRIC:
               folly::variant_match(ptr->value, [&](auto value) {
-                printf(
+                row += stringPrintf(
                     "  %*s",
                     int(name.length()),
                     metricReadable(value, 2).c_str());
@@ -546,17 +633,23 @@ class BenchmarkResultsPrinter {
             case UserMetric::Type::CUSTOM:
             default:
               folly::variant_match(ptr->value, [&](auto value) {
-                printf(
+                row += stringPrintf(
                     "  %*" PRId64,
                     int(name.length()),
                     static_cast<int64_t>(value));
               });
           }
         } else {
-          printf("  %*s", int(name.length()), "NaN");
+          row += stringPrintf("  %*s", int(name.length()), "NaN");
         }
       }
-      printf("\n");
+      if (i < annotations.size() && !annotations[i].empty()) {
+        row += indent_;
+        row += detail::kANSIBoldYellow;
+        row += annotations[i];
+        row += detail::kANSIReset;
+      }
+      line(row);
     }
   }
 
@@ -565,8 +658,12 @@ class BenchmarkResultsPrinter {
     return baselineNsPerIter_ != numeric_limits<double>::max();
   }
 
+  void line(std::string_view s) { *os_ << indent_ << s << std::endl; }
+
   std::set<std::string> counterNames_;
   size_t namesLength_{0};
+  std::ostream* os_;
+  std::string indent_;
   size_t columns_{0};
   double baselineNsPerIter_{numeric_limits<double>::max()};
   string lastFile_;
@@ -633,11 +730,12 @@ void printResultComparison(
   // Width available
   const size_t columns = FLAGS_bm_result_width_chars;
 
+  auto sep = [&](char pad) { puts(string(columns, pad).c_str()); };
+
   auto header = [&](const string_view& file) {
-    printSeparator('=', columns);
-    printDefaultHeaderContents(file, columns);
-    printf("\n");
-    printSeparator('=', columns);
+    sep('=');
+    printf("%s\n", headerContents(file, columns).c_str());
+    sep('=');
   };
 
   string lastFile;
@@ -654,7 +752,7 @@ void printResultComparison(
 
     string s = datum.name;
     if (s == "-") {
-      printSeparator('-', columns);
+      sep('-');
       continue;
     }
     if (s[0] == '%') {
@@ -672,7 +770,7 @@ void printResultComparison(
           "%*s           %9s  %7s\n",
           static_cast<int>(s.size()),
           s.c_str(),
-          readableTime(secPerIter, 2).c_str(),
+          detail::readableTime(secPerIter, 2).c_str(),
           metricReadable(itersPerSec, 2).c_str());
     } else {
       // Print with baseline
@@ -682,18 +780,19 @@ void printResultComparison(
           static_cast<int>(s.size()),
           s.c_str(),
           rel,
-          readableTime(secPerIter, 2).c_str(),
+          detail::readableTime(secPerIter, 2).c_str(),
           metricReadable(itersPerSec, 2).c_str());
     }
   }
-  printSeparator('=', columns);
+  sep('=');
 }
 
 void checkRunMode() {
   if (folly::kIsDebug || folly::kIsSanitize) {
-    std::cerr << "WARNING: Benchmark running "
-              << (folly::kIsDebug ? "in DEBUG mode" : "with SANITIZERS")
-              << std::endl;
+    std::cerr
+        << detail::kANSIBoldYellow << "WARNING: " << detail::kANSIReset
+        << "Benchmark running "
+        << (folly::kIsDebug ? "in DEBUG mode" : "with SANITIZERS") << std::endl;
   }
 }
 
@@ -779,15 +878,21 @@ void maybeRunWarmUpIteration(const BenchmarksToRun& toRun) {
     return;
   }
 
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "Running warmup for all benchmarks...";
+  }
   for (const auto* bm : toRun.benchmarks) {
     bm->func(1);
+  }
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "Warmup complete";
   }
 }
 
 class ShouldDrawLineTracker {
  public:
-  explicit ShouldDrawLineTracker(const BenchmarksToRun& toRun)
-      : separatorsAfter_(&toRun.separatorsAfter) {}
+  explicit ShouldDrawLineTracker(const std::vector<size_t>& separatorsAfter)
+      : separatorsAfter_(&separatorsAfter) {}
 
   bool operator()() {
     std::size_t i = curI_++;
@@ -808,6 +913,126 @@ class ShouldDrawLineTracker {
   std::size_t drawAfterI_ = 0;
 };
 
+// Helper for adaptive mode
+auto runAdaptiveMode(
+    auto* printer, const BenchmarksToRun& toRun, int64_t sliceUsec) {
+  auto rrResult = detail::runBenchmarksAdaptive(
+      toRun.benchmarks,
+      toRun.baseline->func,
+      toRun.suspenderBaseline->func,
+      {.sliceUsec = sliceUsec,
+       .targetPercentile = FLAGS_bm_target_percentile,
+       .targetPrecisionPct = FLAGS_bm_target_precision_pct,
+       .minSamples = static_cast<size_t>(FLAGS_bm_min_samples),
+       .minSecs = FLAGS_bm_min_secs,
+       .maxSecs = FLAGS_bm_max_secs,
+       .verbose = FLAGS_bm_verbose,
+       .quiet = FLAGS_bm_quiet});
+
+  if (printer != nullptr) {
+    ShouldDrawLineTracker lineTracker(toRun.separatorsAfter);
+    for (const auto& r : rrResult.results) {
+      printer->print({{r.file, r.name, r.timeInNs, r.counters}});
+      if (lineTracker()) {
+        printer->separator('-');
+      }
+    }
+  }
+
+  return std::pair{std::set<std::string>{}, std::move(rrResult.results)};
+}
+
+// Returns true when a user overrode a gflag on the command line.
+bool userSetGflag([[maybe_unused]] const char* name) {
+#if FOLLY_HAVE_LIBGFLAGS && __has_include(<gflags/gflags.h>)
+  return !gflags::GetCommandLineFlagInfoOrDie(name).is_default;
+#else
+  // No libgflags means we just have global vars, without CLI args.
+  // Falling back to false is fine since we only use this for warnings.
+  return false;
+#endif
+}
+
+// Check that no mode-incompatible flags were explicitly set.
+void validateFlagCombinations() {
+  // Log a user-facing error and exit without a stack trace.
+  auto fatal = [](const std::string& msg) {
+    LOG(ERROR) << detail::kANSIBoldRed << msg << detail::kANSIReset;
+    exit(1);
+  };
+
+  if (FLAGS_bm_mode != "best-of" && FLAGS_bm_mode != "adaptive") {
+    fatal(
+        fmt::format(
+            "Unknown --bm_mode='{}'. Must be 'best-of' or 'adaptive'.",
+            FLAGS_bm_mode));
+  }
+
+  if (FLAGS_bm_mode == "adaptive") {
+    if (userSetGflag("bm_min_iters")) {
+      fatal("--bm_min_iters is only useful in --bm_mode=best-of.");
+    }
+    if (userSetGflag("bm_max_iters")) {
+      fatal("--bm_max_iters is only useful in --bm_mode=best-of.");
+    }
+    if (userSetGflag("bm_max_trials")) {
+      fatal("--bm_max_trials is only useful in --bm_mode=best-of.");
+    }
+    if (userSetGflag("bm_estimate_time")) {
+      fatal(
+          "--bm_estimate_time is incompatible with adaptive mode. "
+          "Adaptive already targets a configurable percentile "
+          "(--bm_target_percentile).");
+    }
+    if (userSetGflag("bm_profile")) {
+      fatal(
+          "--bm_profile is not supported in adaptive mode. "
+          "Use --bm_perf_args to attach perf in any mode.");
+    }
+  } else {
+    // Best-of mode
+    if (userSetGflag("bm_target_percentile")) {
+      fatal("--bm_target_percentile requires --bm_mode=adaptive.");
+    }
+    if (userSetGflag("bm_target_precision_pct")) {
+      fatal("--bm_target_precision_pct requires --bm_mode=adaptive.");
+    }
+    if (userSetGflag("bm_min_secs")) {
+      fatal("--bm_min_secs requires --bm_mode=adaptive.");
+    }
+    if (userSetGflag("bm_min_samples")) {
+      fatal("--bm_min_samples requires --bm_mode=adaptive.");
+    }
+    if (FLAGS_bm_estimate_time && !FLAGS_bm_quiet) {
+      LOG(WARNING)
+          << detail::kANSIBoldYellow
+          << "--bm_estimate_time is slow, with odd semantics (geometric mean "
+          << "of p25-p75). Consider --bm_mode=adaptive (BenchmarkAdaptive.md)."
+          << detail::kANSIReset;
+    }
+  }
+}
+
+// Resolve `--bm_slice_usec` / `--bm_min_usec` (deprecated alias).
+int64_t resolveSliceUsec() {
+  bool minUsecSet = userSetGflag("bm_min_usec");
+  bool sliceUsecSet = userSetGflag("bm_slice_usec");
+  if (minUsecSet && sliceUsecSet) {
+    LOG(ERROR)
+        << detail::kANSIBoldRed
+        << "Cannot set both --bm_min_usec and --bm_slice_usec. "
+        << "Use --bm_slice_usec only (--bm_min_usec is deprecated)."
+        << detail::kANSIReset;
+    exit(1);
+  }
+  if (minUsecSet) {
+    LOG(ERROR) << detail::kANSIBoldRed << "--bm_min_usec is deprecated; "
+               << "use --bm_slice_usec instead." << detail::kANSIReset;
+    return FLAGS_bm_min_usec;
+  }
+  return FLAGS_bm_slice_usec;
+}
+
 std::pair<std::set<std::string>, std::vector<detail::BenchmarkResult>>
 runBenchmarksWithPrinterImpl(
     BenchmarkResultsPrinter* FOLLY_NULLABLE printer,
@@ -815,20 +1040,65 @@ runBenchmarksWithPrinterImpl(
   vector<detail::BenchmarkResult> results;
   results.reserve(toRun.benchmarks.size());
 
+  auto const sliceUsec = resolveSliceUsec();
+  if (sliceUsec < 1000) {
+    LOG(WARNING) << detail::kANSIBoldYellow << "--bm_slice_usec=" << sliceUsec
+                 << " is below 1000; benchmark harness overhead may "
+                 << "interfere with results." << detail::kANSIReset;
+  }
+
+  validateFlagCombinations();
+
   // PLEASE KEEP QUIET. MEASUREMENTS IN PROGRESS.
 
-  auto const globalBaseline =
-      runBenchmarkGetNSPerIteration(toRun.baseline->func, 0);
+  // Adaptive mode: interleaved sampling with paired correction for both
+  // baseline and suspender overhead. Does NOT set suspenderOverhead static;
+  // instead uses late correction based on suspensionCount.
+  if (FLAGS_bm_mode == "adaptive") {
+    return runAdaptiveMode(printer, toRun, sliceUsec);
+  }
+  // Encourage users to try `adaptive` when `--bm_mode` was not passed.
+  if (!userSetGflag("bm_mode")) {
+    std::cerr
+        << "NOTE: Default may change to " << detail::kANSIBold
+        << "faster & more robust `--bm_mode=adaptive`." << detail::kANSIReset
+        << "\n"
+        << "      Details in BenchmarkAdaptive.md.\n"
+        << "Pass `--bm_mode=best-of` to keep current behavior -- report trial "
+        << "with lowest\n"
+        << "iteration cost, each `1-2 * bm_slice_usec` long, repeated per "
+        << "benchmark up to\n"
+        << "`bm_max_trials` or `bm_max_secs`.\n";
+  }
 
-  auto const globalSuspenderBaseline =
-      runBenchmarkGetNSPerIteration(toRun.suspenderBaseline->func, 0);
+  // Best-of mode: measure suspender overhead upfront and set static for
+  // immediate correction in tally().
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "Measuring suspenderBaseline...";
+  }
+  auto const globalSuspenderBaseline = runBenchmarkGetNSPerIteration(
+      toRun.suspenderBaseline->func, 0, sliceUsec);
 
   BenchmarkSuspender::suspenderOverhead = chrono::nanoseconds(
       static_cast<chrono::high_resolution_clock::rep>(
           globalSuspenderBaseline.first));
 
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "suspenderOverhead=" << globalSuspenderBaseline.first
+              << " ns/iter";
+  }
+
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "Measuring globalBaseline...";
+  }
+  auto const globalBaseline =
+      runBenchmarkGetNSPerIteration(toRun.baseline->func, 0, sliceUsec);
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "globalBaseline=" << globalBaseline.first << " ns/iter";
+  }
+
   std::set<std::string> counterNames;
-  ShouldDrawLineTracker shouldDrawLineTracker(toRun);
+  ShouldDrawLineTracker shouldDrawLineTracker(toRun.separatorsAfter);
   for (std::size_t i = 0; i != toRun.benchmarks.size(); ++i) {
     std::pair<double, UserCounters> elapsed;
     const detail::BenchmarkRegistration& bm = *toRun.benchmarks[i];
@@ -839,7 +1109,8 @@ runBenchmarksWithPrinterImpl(
     } else {
       elapsed = FLAGS_bm_estimate_time
           ? runBenchmarkGetNSPerIterationEstimate(bm.func, globalBaseline.first)
-          : runBenchmarkGetNSPerIteration(bm.func, globalBaseline.first);
+          : runBenchmarkGetNSPerIteration(
+                bm.func, globalBaseline.first, sliceUsec);
     }
 
     // if customized user counters is used, it cannot print the result in real
@@ -903,6 +1174,7 @@ bool operator==(const BenchmarkResult& x, const BenchmarkResult& y) {
 std::chrono::high_resolution_clock::duration BenchmarkSuspenderBase::timeSpent;
 std::chrono::high_resolution_clock::duration
     BenchmarkSuspenderBase::suspenderOverhead;
+size_t BenchmarkSuspenderBase::suspensionCount;
 
 void BenchmarkingStateBase::addBenchmarkImpl(
     std::string file, std::string name, BenchmarkFun fun, bool useCounter) {
@@ -958,6 +1230,9 @@ PerfScoped BenchmarkingStateBase::setUpPerfScoped() const {
 template <typename Printer>
 std::pair<std::set<std::string>, std::vector<BenchmarkResult>>
 BenchmarkingStateBase::runBenchmarksWithPrinter(Printer* printer) const {
+  if (FLAGS_bm_verbose) {
+    LOG(INFO) << "Benchmark run starting...";
+  }
   std::lock_guard guard(mutex_);
   BenchmarksToRun toRun = selectBenchmarksToRun(benchmarks_);
   maybeRunWarmUpIteration(toRun);
@@ -975,6 +1250,31 @@ std::vector<BenchmarkResult> BenchmarkingStateBase::runBenchmarksWithResults()
 
 std::vector<BenchmarkResult> runBenchmarksWithResults() {
   return globalBenchmarkState().runBenchmarksWithResults();
+}
+
+std::string benchmarkResultsToString(
+    const std::vector<BenchmarkResult>& results,
+    std::string_view indent,
+    const std::vector<std::string>& annotations) {
+  size_t maxAnnotationWidth = 0;
+  for (const auto& a : annotations) {
+    if (!a.empty()) {
+      maxAnnotationWidth =
+          std::max(maxAnnotationWidth, indent.size() + a.size());
+    }
+  }
+  std::set<std::string> counterNames;
+  for (const auto& r : results) {
+    for (const auto& [key, _] : r.counters) {
+      counterNames.insert(key);
+    }
+  }
+  std::ostringstream oss;
+  BenchmarkResultsPrinter printer(
+      std::move(counterNames), &oss, indent, maxAnnotationWidth);
+  printer.print(results, annotations);
+  printer.separator('=');
+  return oss.str();
 }
 
 } // namespace detail

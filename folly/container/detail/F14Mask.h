@@ -43,6 +43,16 @@ FOLLY_ALWAYS_INLINE static unsigned findFirstSetNonZero(T mask) {
   }
 }
 
+template <typename T>
+FOLLY_ALWAYS_INLINE static unsigned findLastSetNonZero(T mask) {
+  assume(mask != 0);
+  if (sizeof(mask) == sizeof(unsigned)) {
+    return __builtin_clz(static_cast<unsigned>(mask));
+  } else {
+    return __builtin_clzll(mask);
+  }
+}
+
 #if FOLLY_NEON
 using MaskType = uint64_t;
 
@@ -130,14 +140,34 @@ class SparseMaskIter {
   MaskType mask_;
 
  public:
+
+#if FOLLY_AARCH64
+  explicit SparseMaskIter(MaskType mask) : mask_{bitReverse(mask)} {}
+#else
   explicit SparseMaskIter(MaskType mask) : mask_{mask} {}
+#endif
 
   bool hasNext() { return mask_ != 0; }
 
   unsigned next() {
     FOLLY_SAFE_DCHECK(hasNext(), "");
-    unsigned i = findFirstSetNonZero(mask_);
-    mask_ &= (mask_ - 1);
+    constexpr uint64_t lo63 = 0x7FFFFFFFFFFFFFFFull;
+    static_assert(lo63 == (~0ull >> 1));
+    unsigned i =
+        kIsArchAArch64 ? findLastSetNonZero(mask_) : findFirstSetNonZero(mask_);
+    mask_ &= kIsArchAArch64 ? (lo63 >> i) : (mask_ - 1);
+    if constexpr (kIsArchAArch64 && (kMaskSpacing == 4)) {
+      // The result of this function is often used as an index on an 8-byte
+      // element array. In this case, the index needs to be shifted left by 3 to
+      // access the desired memory position. The return statement of this
+      // function contains i >> 2. The compiler is simplifying the shifts by
+      // only issuing a lsl 1 while ommitting the lsr 2. However, it then ANDs
+      // the shifted value by 0xf8, to ensure correctness when i is not a
+      // multiple of 4. We do know that i will always be a multiple of 4. We add
+      // the assume clause so the compiler avoids emitting the &0xf8
+      auto loadIndex = i << 1;
+      assume(loadIndex == (loadIndex & 0xf8));
+    }
     return i / kMaskSpacing;
   }
 };
