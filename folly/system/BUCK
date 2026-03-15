@@ -12,6 +12,7 @@ fb_dirsync_cpp_library(
     use_raw_headers = True,
     xplat_impl = folly_xplat_library,
     deps = [
+        "//folly:cpp_attributes",
         "//folly:scope_guard",
         "//folly/lang:exception",
         "//folly/portability:pthread",
@@ -79,7 +80,7 @@ fb_dirsync_cpp_library(
         "fbsource//third-party/fmt:fmt",
         "fbsource//third-party/glog:glog",
         "//folly:portability",
-        "//folly/experimental/io:huge_pages",
+        "//folly/io:huge_pages",
         "//folly/portability:gflags",
         "//folly/portability:sys_mman",
         "//folly/portability:sys_syscall",

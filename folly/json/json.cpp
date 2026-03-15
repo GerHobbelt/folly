@@ -53,6 +53,14 @@ parse_error make_parse_error(
           expected));
 }
 
+bool allowTrailingComma(json::serialization_opts const& opts) {
+  return opts.allow_trailing_comma || opts.allow_json5_experimental;
+}
+
+bool allowNanInf(json::serialization_opts const& opts) {
+  return opts.allow_nan_inf || opts.allow_json5_experimental;
+}
+
 struct Printer {
   // Context class is allows to restore the path to element that we are about to
   // print so that if error happens we can throw meaningful exception.
@@ -104,7 +112,7 @@ struct Printer {
   void operator()(dynamic const& v, const Context* context) const {
     switch (v.type()) {
       case dynamic::DOUBLE: {
-        if (!opts_.allow_nan_inf) {
+        if (!allowNanInf(opts_)) {
           if (std::isnan(v.asDouble())) {
             throw json::print_error(
                 "folly::toJson: JSON object value was a NaN when serializing " +
@@ -345,7 +353,7 @@ struct Input {
     });
   }
 
-  void skipWhitespace() {
+  bool skipWhitespaceOnly() {
     unsigned index = 0;
     while (true) {
       while (index < range_.size() && range_[index] == ' ') {
@@ -366,6 +374,48 @@ struct Input {
     }
     range_.advance(index);
     storeCurrent();
+    return index;
+  }
+
+  bool skipComment() {
+    if (!opts_.allow_json5_experimental) {
+      return false;
+    }
+    if (consume("//")) {
+      // Single-line comment: skip until CR or LF.
+      char prev = 0;
+      skipWhile([&prev](char curr) {
+        if (prev == '\r' || prev == '\n') {
+          return false;
+        }
+        prev = curr;
+        return true;
+      });
+      return true;
+    }
+    if (consume("/*")) {
+      // Block comment: skip until closing "*/".
+      char prev = 0;
+      skipWhile([&prev](char curr) {
+        if (prev == '*' && curr == '/') {
+          return false;
+        }
+        prev = curr;
+        return true;
+      });
+      if (consume("/")) {
+        return true;
+      }
+      error("unterminated block comment");
+    }
+    return false;
+  }
+
+  void skipWhitespace() {
+    do {
+      skipWhitespaceOnly();
+      // Loop to handle adjacent comments, e.g. `/*a*//*b*/`.
+    } while (skipComment());
   }
 
   void expect(char c) {
@@ -494,7 +544,7 @@ dynamic parseObject(Input& in, json::metadata_map* map) {
   const auto& opts = in.getOpts();
   const bool distinct = opts.validate_keys || opts.convert_int_keys;
   for (;;) {
-    if (opts.allow_trailing_comma && *in == '}') {
+    if (allowTrailingComma(opts) && *in == '}') {
       break;
     }
     dynamic key = parseValue(in, map);
@@ -534,7 +584,7 @@ dynamic parseArray(Input& in, json::metadata_map* map) {
 
   std::vector<uint32_t> lineNumbers;
   for (;;) {
-    if (in.getOpts().allow_trailing_comma && *in == ']') {
+    if (allowTrailingComma(in.getOpts()) && *in == ']') {
       break;
     }
     ret.push_back(parseValue(in, map));
@@ -1064,6 +1114,12 @@ dynamic parseJsonWithMetadata(
 
 dynamic parseJson(StringPiece range) {
   return parseJson(range, json::serialization_opts());
+}
+
+dynamic parseJson5(StringPiece range) {
+  json::serialization_opts opts;
+  opts.allow_json5_experimental = true;
+  return parseJson(range, opts);
 }
 
 dynamic parseJson(StringPiece range, json::serialization_opts const& opts) {

@@ -53,6 +53,7 @@ fb_dirsync_cpp_library(
     headers = [
         "SimpleAsyncIO.h",
     ],
+    enable_static_variant = False,
     xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/io/async:simple_async_io",
@@ -102,65 +103,6 @@ fb_dirsync_cpp_library(
     xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/io/async:mux_io_thread_pool_executor",
-    ],
-)
-
-fb_dirsync_cpp_library(
-    name = "io_uring",
-    headers = [
-        "IoUring.h",
-    ],
-    xplat_impl = folly_xplat_library,
-    exported_deps = [
-        "//folly/io/async:io_uring",
-    ],
-)
-
-fb_dirsync_cpp_library(
-    name = "io_uring_backend",
-    headers = [
-        "IoUringBackend.h",
-        "IoUringBase.h",
-    ],
-    xplat_impl = folly_xplat_library,
-    exported_deps = [
-        "//folly/io/async:io_uring_backend",
-        "//folly/io/async:io_uring_provided_buffer_ring",
-    ],
-)
-
-fb_dirsync_cpp_library(
-    # @autodeps-skip
-    name = "io_uring_provided_buffer_ring",
-    headers = [
-        "IoUringBase.h",
-        "IoUringProvidedBufferRing.h",
-    ],
-    xplat_impl = folly_xplat_library,
-    exported_deps = [
-        "//folly/io/async:io_uring_provided_buffer_ring",
-    ],
-)
-
-fb_dirsync_cpp_library(
-    name = "io_uring_event",
-    headers = [
-        "IoUringEvent.h",
-    ],
-    xplat_impl = folly_xplat_library,
-    exported_deps = [
-        "//folly/io/async:io_uring_event",
-    ],
-)
-
-fb_dirsync_cpp_library(
-    name = "io_uring_event_base_local",
-    headers = [
-        "IoUringEventBaseLocal.h",
-    ],
-    xplat_impl = folly_xplat_library,
-    exported_deps = [
-        "//folly/io/async:io_uring_event_base_local",
     ],
 )
 
