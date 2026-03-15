@@ -463,7 +463,7 @@ class AsyncSSLSocket : public AsyncSocket {
       const folly::SocketAddress& address,
       int timeout = 0,
       const SocketOptionMap& options = emptySocketOptionMap,
-      const folly::SocketAddress& bindAddr = anyAddress(),
+      const BindOptions& bindOptions = anyAddress(),
       const std::string& ifName = "") noexcept override;
 
   /**
@@ -487,7 +487,7 @@ class AsyncSSLSocket : public AsyncSocket {
       std::chrono::milliseconds connectTimeout,
       std::chrono::milliseconds totalConnectTimeout,
       const SocketOptionMap& options = emptySocketOptionMap,
-      const folly::SocketAddress& bindAddr = anyAddress(),
+      const BindOptions& bindOptions = anyAddress(),
       const std::string& ifName = "") noexcept;
 
   using AsyncSocket::connect;

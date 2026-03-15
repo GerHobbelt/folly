@@ -551,6 +551,20 @@ folly_add_library(
 )
 
 folly_add_library(
+  NAME io_uring_buffer_pool_sharing
+  SRCS
+    IoUringBufferPoolSharing.cpp
+  HEADERS
+    IoUringBufferPoolSharing.h
+  DEPS
+    folly_io_async_io_uring_backend
+  EXPORTED_DEPS
+    folly_io_async_async_base
+  EXTERNAL_DEPS
+    ${GLOG_LIBRARIES}
+)
+
+folly_add_library(
   NAME io_uring_connect
   SRCS
     IoUringConnect.cpp

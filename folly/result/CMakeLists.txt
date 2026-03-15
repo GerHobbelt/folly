@@ -32,6 +32,7 @@ folly_add_library(
   EXPORTED_DEPS
     folly_coro_coroutine
     folly_coro_error
+    folly_cpp_attributes
     folly_lang_must_use_immediately
     folly_result_detail_result_or_unwind
     folly_result_detail_result_promise
@@ -44,11 +45,18 @@ folly_add_library(
     epitaph.cpp
   HEADERS
     epitaph.h
+  DEPS
+    folly_debugging_symbolizer_symbolizer
+    folly_demangle
+    folly_portability_config
   EXPORTED_DEPS
+    folly_cpp_attributes
+    folly_debugging_symbolizer_stack_trace
     folly_lang_safe_assert
     folly_portability
     folly_result_result
     folly_result_rich_error
+    folly_result_rich_error_base
     folly_result_rich_msg
 )
 
@@ -76,9 +84,11 @@ folly_add_library(
   HEADERS
     immortal_rich_error.h
   EXPORTED_DEPS
+    folly_portability
     folly_result_detail_ptr_immortal_exception_storage
     folly_result_detail_rich_error_common
     folly_result_rich_error_base
+    folly_traits
 )
 
 folly_add_library(
@@ -86,6 +96,7 @@ folly_add_library(
   HEADERS
     nestable_coded_rich_error.h
   EXPORTED_DEPS
+    folly_portability
     folly_result_coded_rich_error
     folly_result_rich_error
     folly_result_rich_error_base
@@ -119,8 +130,6 @@ folly_add_library(
     folly_portability_gtest_prod
     folly_result_rich_error_base
     folly_utility
-  EXTERNAL_DEPS
-    ${GLOG_LIBRARIES}
 )
 
 folly_add_library(
@@ -128,9 +137,11 @@ folly_add_library(
   HEADERS
     rich_error.h
   EXPORTED_DEPS
+    folly_lang_exception
+    folly_lang_pretty
     folly_portability
     folly_result_detail_rich_error_common
-    folly_result_rich_error_base
+    folly_result_rich_error_fwd
 )
 
 folly_add_library(
@@ -167,6 +178,7 @@ folly_add_library(
   DEPS
     folly_lang_exception
   EXPORTED_DEPS
+    folly_lang_pretty
     folly_portability
     folly_result_rich_error_base
 )

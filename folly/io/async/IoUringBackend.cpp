@@ -1076,23 +1076,39 @@ void IoUringBackend::initSubmissionLinked() {
       throw NotAvailable(ex.what());
     }
   }
+}
 
-  if (options_.zeroCopyRx) {
-    if (options_.bufferPoolHandle.has_value()) {
-      zcBufferPool_ = IoUringZeroCopyBufferPool::importHandle(
-          std::move(options_.bufferPoolHandle.value()), this->ioRingPtr());
-    } else {
-      IoUringZeroCopyBufferPool::Params params = {
-          .ring = this->ioRingPtr(),
-          .numPages = static_cast<size_t>(options_.zcRxNumPages),
-          .pageSize = kZeroCopyPageSize,
-          .rqEntries = static_cast<uint32_t>(options_.zcRxRefillEntries),
-          .ifindex = static_cast<uint32_t>(options_.zcRxIfindex),
-          .queueId = static_cast<uint16_t>(options_.zcRxQueueId),
-      };
-      zcBufferPool_ = IoUringZeroCopyBufferPool::create(params);
-    }
+bool IoUringBackend::createZcBufferPool() {
+  if (zcBufferPool_) {
+    LOG(WARNING) << "Buffer pool already exists";
+    return false;
   }
+  IoUringZeroCopyBufferPool::Params params = {
+      .ring = this->ioRingPtr(),
+      .numPages = static_cast<size_t>(options_.zcRxNumPages),
+      .pageSize = kZeroCopyPageSize,
+      .rqEntries = static_cast<uint32_t>(options_.zcRxRefillEntries),
+      .ifindex = static_cast<uint32_t>(options_.zcRxIfindex),
+      .queueId = static_cast<uint16_t>(options_.zcRxQueueId),
+  };
+  zcBufferPool_ = IoUringZeroCopyBufferPool::create(params);
+  return zcBufferPool_ != nullptr;
+}
+
+bool IoUringBackend::importZcBufferPool(
+    IoUringZeroCopyBufferPool::ExportHandle handle) {
+  if (zcBufferPool_) {
+    LOG(WARNING) << "Buffer pool already exists";
+    return false;
+  }
+  zcBufferPool_ = IoUringZeroCopyBufferPool::importHandle(
+      std::move(handle), this->ioRingPtr());
+  return zcBufferPool_ != nullptr;
+}
+
+IoUringZeroCopyBufferPool::ExportHandle IoUringBackend::exportZcBufferPool() {
+  CHECK(zcBufferPool_) << "No buffer pool to export";
+  return zcBufferPool_->exportHandle();
 }
 
 void IoUringBackend::delayedInit() {
@@ -1167,12 +1183,19 @@ int IoUringBackend::eb_event_base_loop(int flags) {
     if (eb_poll_loop_pre_hook) {
       eb_poll_loop_pre_hook(&call_time);
     }
+    if (pollLoopHook_.preLoopHook) {
+      pollLoopHook_.preLoopHook(pollLoopHook_.hookCtx);
+    }
 
     // do not wait for events if EVLOOP_NONBLOCK is set
     size_t processedEvents = getActiveEvents(waitForEvents);
 
     if (eb_poll_loop_post_hook) {
       eb_poll_loop_post_hook(call_time, static_cast<int>(processedEvents));
+    }
+    if (pollLoopHook_.postLoopHook) {
+      pollLoopHook_.postLoopHook(
+          pollLoopHook_.hookCtx, static_cast<int>(processedEvents));
     }
 
     size_t numProcessedTimers = 0;
@@ -1864,13 +1887,23 @@ void IoUringBackend::queueRecvZc(
 }
 
 int IoUringBackend::computeSrcPortForQueueId(
-    const folly::IPAddress& destAddr, uint16_t destPort) {
+    const folly::IPAddress& destAddr,
+    uint16_t destPort,
+    uint16_t startPort,
+    uint16_t minPort,
+    uint16_t maxPort) {
   if (!options_.srcPortQueueId || napiId_ < 0) {
     return -1;
   }
 
   return options_.srcPortQueueId(
-      destAddr, destPort, options_.zcRxQueueId, options_.zcRxIfname.c_str());
+      destAddr,
+      destPort,
+      options_.zcRxQueueId,
+      options_.zcRxIfname.c_str(),
+      startPort,
+      minPort,
+      maxPort);
 }
 
 void IoUringBackend::processFileOp(IoSqe* sqe, int res) noexcept {

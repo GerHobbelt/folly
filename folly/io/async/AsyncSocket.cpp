@@ -897,7 +897,7 @@ void AsyncSocket::connect(
     const folly::SocketAddress& address,
     int timeout,
     const SocketOptionMap& options,
-    const folly::SocketAddress& bindAddr,
+    const BindOptions& bindOptions,
     const std::string& ifName) noexcept {
   DestructorGuard dg(this);
   eventBase_->dcheckIsInEventBaseThread();
@@ -906,6 +906,9 @@ void AsyncSocket::connect(
 
   // Make sure we're in the uninitialized state
   if (state_ != StateEnum::UNINIT) {
+    if (auto* fd = std::get_if<NetworkSocket>(&bindOptions)) {
+      netops_->close(*fd);
+    }
     return invalidState(callback);
   }
 
@@ -923,18 +926,33 @@ void AsyncSocket::connect(
   auto saddr = reinterpret_cast<sockaddr*>(&addrStorage);
 
   try {
-    // Create the socket
-    // Technically the first parameter should actually be a protocol family
-    // constant (PF_xxx) rather than an address family (AF_xxx), but the
-    // distinction is mainly just historical.  In pretty much all
-    // implementations the PF_foo and AF_foo constants are identical.
-    fd_ = netops_->socket(address.getFamily(), SOCK_STREAM, 0);
-    if (fd_ == NetworkSocket()) {
-      auto errnoCopy = errno;
-      throw AsyncSocketException(
-          AsyncSocketException::INTERNAL_ERROR,
-          withAddr("failed to create socket"),
-          errnoCopy);
+    if (auto* boundFd = std::get_if<NetworkSocket>(&bindOptions)) {
+      struct sockaddr_storage peerAddr{};
+      socklen_t peerLen = sizeof(peerAddr);
+      if (netops_->getpeername(
+              *boundFd,
+              reinterpret_cast<struct sockaddr*>(&peerAddr),
+              &peerLen) == 0) {
+        netops_->close(*boundFd);
+        throw AsyncSocketException(
+            AsyncSocketException::INVALID_STATE,
+            withAddr("boundFd is already connected"));
+      }
+      fd_ = *boundFd;
+    } else {
+      // Create the socket
+      // Technically the first parameter should actually be a protocol family
+      // constant (PF_xxx) rather than an address family (AF_xxx), but the
+      // distinction is mainly just historical.  In pretty much all
+      // implementations the PF_foo and AF_foo constants are identical.
+      fd_ = netops_->socket(address.getFamily(), SOCK_STREAM, 0);
+      if (fd_ == NetworkSocket()) {
+        auto errnoCopy = errno;
+        throw AsyncSocketException(
+            AsyncSocketException::INTERNAL_ERROR,
+            withAddr("failed to create socket"),
+            errnoCopy);
+      }
     }
 
     disableTransparentFunctions(fd_, noTransparentTls_, noTSocks_);
@@ -1003,7 +1021,8 @@ void AsyncSocket::connect(
 #endif
 
     // bind the socket
-    if (bindAddr != anyAddress()) {
+    if (auto* bindAddr = std::get_if<folly::SocketAddress>(&bindOptions);
+        bindAddr && *bindAddr != anyAddress()) {
       int one = 1;
 #if defined(IP_BIND_ADDRESS_NO_PORT) && !FOLLY_MOBILE && !defined(_WIN32) && \
     !defined(__APPLE__)
@@ -1014,7 +1033,7 @@ void AsyncSocket::connect(
       // ports.  Using the IP_BIND_ADDRESS_NO_PORT delays assigning a port until
       // connect expanding the available port range, unless
       // setBindAddressNoPort() is called.
-      if (bindAddr.getPort() == 0) {
+      if (bindAddr->getPort() == 0) {
         if (bindAddressNoPort_ &&
             netops_->setsockopt(
                 fd_, IPPROTO_IP, IP_BIND_ADDRESS_NO_PORT, &one, sizeof(one))) {
@@ -1023,7 +1042,7 @@ void AsyncSocket::connect(
           throw AsyncSocketException(
               AsyncSocketException::NOT_OPEN,
               "failed to setsockopt IP_BIND_ADDRESS_NO_PORT prior to bind on " +
-                  bindAddr.describe(),
+                  bindAddr->describe(),
               errnoCopy);
         }
       } else {
@@ -1037,19 +1056,19 @@ void AsyncSocket::connect(
           throw AsyncSocketException(
               AsyncSocketException::NOT_OPEN,
               "failed to setsockopt SO_REUSEADDR prior to bind on " +
-                  bindAddr.describe(),
+                  bindAddr->describe(),
               errnoCopy);
         }
       }
 
-      bindAddr.getAddress(&addrStorage);
+      bindAddr->getAddress(&addrStorage);
 
-      if (netops_->bind(fd_, saddr, bindAddr.getActualSize()) != 0) {
+      if (netops_->bind(fd_, saddr, bindAddr->getActualSize()) != 0) {
         auto errnoCopy = errno;
         doClose();
         throw AsyncSocketException(
             AsyncSocketException::NOT_OPEN,
-            "failed to bind to async socket: " + bindAddr.describe(),
+            "failed to bind to async socket: " + bindAddr->describe(),
             errnoCopy);
       }
     }

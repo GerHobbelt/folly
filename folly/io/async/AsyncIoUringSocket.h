@@ -88,7 +88,7 @@ class AsyncIoUringSocket : public AsyncSocketTransport {
       const folly::SocketAddress& address,
       std::chrono::milliseconds timeout = std::chrono::milliseconds(0),
       SocketOptionMap const& options = emptySocketOptionMap,
-      const SocketAddress& bindAddr = anyAddress(),
+      const BindOptions& bindOptions = anyAddress(),
       const std::string& ifName = std::string()) noexcept;
 
   void connect(
@@ -96,14 +96,14 @@ class AsyncIoUringSocket : public AsyncSocketTransport {
       const folly::SocketAddress& address,
       int timeout,
       SocketOptionMap const& options,
-      const SocketAddress& bindAddr,
+      const BindOptions& bindOptions,
       const std::string& ifName) noexcept override {
     connect(
         callback,
         address,
         std::chrono::milliseconds(timeout),
         options,
-        bindAddr,
+        bindOptions,
         ifName);
   }
 

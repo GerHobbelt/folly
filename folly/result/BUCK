@@ -23,6 +23,7 @@ fb_dirsync_cpp_library(
     xplat_impl = folly_xplat_cxx_library,
     exported_deps = [
         ":result",
+        "//folly:cpp_attributes",
         "//folly/coro:coroutine",
         "//folly/coro:error",
         "//folly/lang:must_use_immediately",
@@ -35,12 +36,30 @@ fb_dirsync_cpp_library(
     name = "epitaph",
     srcs = ["epitaph.cpp"],
     headers = ["epitaph.h"],
+    # TODO: Remove the `select`s and link the symbolizer unconditionally once
+    # the Messenger APK SO-module layout tolerates the extra transitive deps.
+    preprocessor_flags = select({
+        "DEFAULT": [],
+        "ovr_config//os:android": ["-DFOLLY_EPITAPH_USE_SYMBOLIZER=0"],
+    }),
     use_raw_headers = True,
     xplat_impl = folly_xplat_cxx_library,
+    deps = [
+        "//folly:demangle",
+        "//folly/portability:config",
+    ] + select({
+        "DEFAULT": [
+            "//folly/debugging/symbolizer:symbolizer",
+        ],
+        "ovr_config//os:android": [],
+    }),
     exported_deps = [
         ":result",
         ":rich_error",
+        ":rich_error_base",
+        "//folly:cpp_attributes",
         "//folly:portability",
+        "//folly/debugging/symbolizer:stack_trace",
         "//folly/lang:safe_assert",
         "//folly/result:rich_msg",
     ],
@@ -75,6 +94,8 @@ fb_dirsync_cpp_library(
     xplat_impl = folly_xplat_cxx_library,
     exported_deps = [
         ":rich_error_base",
+        "//folly:portability",
+        "//folly:traits",
         "//folly/result/detail:ptr_immortal_exception_storage",
         "//folly/result/detail:rich_error_common",
     ],
@@ -89,6 +110,7 @@ fb_dirsync_cpp_library(
         ":coded_rich_error",
         ":rich_error",
         ":rich_error_base",
+        "//folly:portability",
         "//folly/result:rich_msg",
     ],
 )
@@ -111,6 +133,7 @@ fb_dirsync_cpp_library(
     use_raw_headers = True,
     xplat_impl = folly_xplat_cxx_library,
     deps = [
+        "fbsource//third-party/glog:glog",
         "//folly:indestructible",
     ],
     exported_deps = [
@@ -124,7 +147,6 @@ fb_dirsync_cpp_library(
         "//folly/lang:rvalue_reference_wrapper",
         "//folly/portability:gtest_prod",
     ],
-    external_deps = ["glog"],
 )
 
 fb_dirsync_cpp_library(
@@ -133,8 +155,10 @@ fb_dirsync_cpp_library(
     use_raw_headers = True,
     xplat_impl = folly_xplat_cxx_library,
     exported_deps = [
-        ":rich_error_base",
+        ":rich_error_fwd",
         "//folly:portability",
+        "//folly/lang:exception",
+        "//folly/lang:pretty",
         "//folly/result/detail:rich_error_common",
     ],
 )
@@ -182,6 +206,7 @@ fb_dirsync_cpp_library(
         "fbsource//third-party/fmt:fmt",
         ":rich_error_base",
         "//folly:portability",
+        "//folly/lang:pretty",
     ],
 )
 

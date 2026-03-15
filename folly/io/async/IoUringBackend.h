@@ -85,7 +85,11 @@ class IoUringBackend : public EventBaseBackendBase {
   bool supportAsyncSocket() { return options_.nativeAsyncSocketSupport; }
 
   int computeSrcPortForQueueId(
-      const folly::IPAddress& destAddr, uint16_t destPort);
+      const folly::IPAddress& destAddr,
+      uint16_t destPort,
+      uint16_t startPort,
+      uint16_t minPort,
+      uint16_t maxPort);
 
   // from EventBaseBackendBase
   int getPollableFd() const override { return ioRing_.ring_fd; }
@@ -225,6 +229,9 @@ class IoUringBackend : public EventBaseBackendBase {
   bool hasBufferProvider() { return bufferProviders_.size() > 0; }
   uint16_t nextBufferProviderGid() { return bufferProviderGidNext_++; }
   IoUringZeroCopyBufferPool* zcBufferPool() { return zcBufferPool_.get(); }
+  bool createZcBufferPool();
+  bool importZcBufferPool(IoUringZeroCopyBufferPool::ExportHandle handle);
+  IoUringZeroCopyBufferPool::ExportHandle exportZcBufferPool();
 
  protected:
   enum class WaitForEventsMode { WAIT, DONT_WAIT };
