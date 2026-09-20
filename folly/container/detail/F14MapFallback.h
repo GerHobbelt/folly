@@ -53,7 +53,7 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
       T>;
 
   template <typename K2>
-  using IsIter = Disjunction<
+  using IsIter = std::disjunction<
       std::is_same<typename Super::iterator, remove_cvref_t<K2>>,
       std::is_same<typename Super::const_iterator, remove_cvref_t<K2>>>;
 
@@ -147,6 +147,15 @@ class F14BasicMap : public std::unordered_map<K, M, H, E, A> {
       ++first;
     }
   }
+
+#if !defined(__cpp_lib_containers_ranges) || \
+    __cpp_lib_containers_ranges < 202202L
+  template <std::ranges::input_range R>
+    requires std::convertible_to<std::ranges::range_reference_t<R>, value_type>
+  void insert_range(R&& range) {
+    insert(std::ranges::begin(range), std::ranges::end(range));
+  }
+#endif
 
   void insert(std::initializer_list<value_type> ilist) {
     insert(ilist.begin(), ilist.end());

@@ -128,7 +128,7 @@ struct _has_free_operator_co_await<
 /// returns an Awaiter.
 template <typename T>
 struct is_awaitable
-    : folly::Disjunction<
+    : std::disjunction<
           detail::_has_member_operator_co_await<T>,
           detail::_has_free_operator_co_await<T>,
           is_awaiter<T>> {};
@@ -147,11 +147,10 @@ struct get_awaiter_fn {
   template <
       typename Awaitable,
       std::enable_if_t<
-          folly::Conjunction<
+          std::conjunction_v<
               is_awaiter<Awaitable>,
-              folly::Negation<detail::_has_free_operator_co_await<Awaitable>>,
-              folly::Negation<
-                  detail::_has_member_operator_co_await<Awaitable>>>::value,
+              std::negation<detail::_has_free_operator_co_await<Awaitable>>,
+              std::negation<detail::_has_member_operator_co_await<Awaitable>>>,
           int> = 0>
   Awaitable& operator()(Awaitable&& awaitable) const {
     return static_cast<Awaitable&>(awaitable);
@@ -169,10 +168,10 @@ struct get_awaiter_fn {
   template <
       typename Awaitable,
       std::enable_if_t<
-          folly::Conjunction<
+          std::conjunction<
               detail::_has_free_operator_co_await<Awaitable>,
-              folly::Negation<
-                  detail::_has_member_operator_co_await<Awaitable>>>::value,
+              std::negation<detail::_has_member_operator_co_await<Awaitable>>>::
+              value,
           int> = 0>
   decltype(auto) operator()(Awaitable&& awaitable) const {
     return operator co_await(static_cast<Awaitable&&>(awaitable));

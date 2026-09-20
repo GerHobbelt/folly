@@ -34,6 +34,7 @@
 #include <folly/Conv.h>
 #include <folly/Traits.h>
 #include <folly/container/Iterator.h>
+#include <folly/memory/UninitializedMemoryHacks.h>
 #include <folly/portability/GTest.h>
 #include <folly/sorted_vector_types.h>
 
@@ -1717,4 +1718,66 @@ TEST(smallVector, ImmovableTypes) {
     folly::small_vector<TrivialNonCopyableNorMovable> sv{10};
   }
   SUCCEED();
+}
+
+namespace {
+template <typename C, typename... A>
+using detect_resize_without_initialization =
+    decltype(folly::resizeWithoutInitialization(
+        std::declval<C&>(), std::declval<A>()...));
+} // namespace
+
+static_assert(
+    folly::is_detected_v<
+        detect_resize_without_initialization,
+        folly::small_vector<int, 4>,
+        std::size_t>,
+    "resizeWithoutInitialization must be available for trivial elements");
+static_assert(
+    !folly::is_detected_v<
+        detect_resize_without_initialization,
+        folly::small_vector<std::string, 4>,
+        std::size_t>,
+    "resizeWithoutInitialization must be unavailable for non-trivially-destructible elements");
+static_assert(
+    folly::is_detected_v<
+        detect_resize_without_initialization,
+        std::vector<int>,
+        std::size_t>,
+    "std::vector must remain supported");
+
+TEST(smallVector, resizeWithoutInitializationGrowsPreservingPrefix) {
+  folly::small_vector<int, 4> sv{1, 2, 3};
+  sv.resize_without_initialization(6);
+  EXPECT_EQ(sv.size(), 6u);
+  EXPECT_GE(sv.capacity(), 6u);
+  for (std::size_t i = 3; i < sv.size(); ++i) {
+    sv[i] = static_cast<int>(i * 10);
+  }
+  const folly::small_vector<int, 4> expected{1, 2, 3, 30, 40, 50};
+  EXPECT_EQ(sv, expected);
+}
+
+TEST(smallVector, resizeWithoutInitializationSpillsToHeapPreservingPrefix) {
+  folly::small_vector<int, 2> sv{7, 8};
+  sv.resize_without_initialization(100);
+  EXPECT_EQ(sv.size(), 100u);
+  EXPECT_GE(sv.capacity(), 100u);
+  const folly::small_vector<int, 2> prefix{sv[0], sv[1]};
+  const folly::small_vector<int, 2> expectedPrefix{7, 8};
+  EXPECT_EQ(prefix, expectedPrefix);
+}
+
+TEST(smallVector, resizeWithoutInitializationShrinks) {
+  folly::small_vector<int, 4> sv{1, 2, 3, 4, 5};
+  sv.resize_without_initialization(2);
+  const folly::small_vector<int, 4> expected{1, 2};
+  EXPECT_EQ(sv, expected);
+}
+
+TEST(smallVector, resizeWithoutInitializationFreeFunction) {
+  folly::small_vector<uint64_t, 2> sv{5};
+  folly::resizeWithoutInitialization(sv, 32);
+  EXPECT_EQ(sv.size(), 32u);
+  EXPECT_EQ(sv[0], 5u);
 }

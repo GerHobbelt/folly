@@ -65,7 +65,7 @@ class F14BasicSet
       T>;
 
   template <typename K>
-  using IsIter = Disjunction<
+  using IsIter = std::disjunction<
       std::is_same<iterator, remove_cvref_t<K>>,
       std::is_same<const_iterator, remove_cvref_t<K>>>;
 
@@ -100,6 +100,15 @@ class F14BasicSet
       ++first;
     }
   }
+
+#if !defined(__cpp_lib_containers_ranges) || \
+    __cpp_lib_containers_ranges < 202202L
+  template <std::ranges::input_range R>
+    requires std::convertible_to<std::ranges::range_reference_t<R>, value_type>
+  void insert_range(R&& range) {
+    insert(std::ranges::begin(range), std::ranges::end(range));
+  }
+#endif
 
  private:
   template <typename Arg>

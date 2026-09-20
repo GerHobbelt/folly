@@ -3,7 +3,6 @@
     have_libgflags_override = {True|[False]}
 """
 
-load("@fbsource//tools/build_defs:buckconfig.bzl", "read_bool")
 load(
     "@fbsource//tools/build_defs:default_platform_defs.bzl",
     "ANDROID",
@@ -18,7 +17,9 @@ load(
 load("@fbsource//tools/build_defs:fb_xplat_cxx_binary.bzl", "fb_xplat_cxx_binary")
 load("@fbsource//tools/build_defs:fb_xplat_cxx_library.bzl", "fb_xplat_cxx_library")
 load("@fbsource//tools/build_defs:fb_xplat_cxx_test.bzl", "fb_xplat_cxx_test")
+load("@fbsource//tools/build_defs:selects.bzl", "selects")
 load("@fbsource//tools/build_defs/dirsync:dirsync_redirect.bzl", "dirsync_redirect")
+load("@prelude//utils:buckconfig.bzl", "read_bool")
 
 def should_enable_gflags():
     return read_bool("folly", "have_libgflags_override", False)
@@ -34,14 +35,14 @@ def cpp_flags():
     # headers -- e.g. disabling F14 vector intrinsics and changing jemalloc/type
     # layouts -- which breaks fbcode targets built against xplat/folly. So drop
     # these overrides when mobile is disabled and let autoconf match fbcode.
-    flags = select({
+    flags = selects.with_or({
         "DEFAULT": [
             "-DFOLLY_HAVE_LIBJEMALLOC=0",
             "-DFOLLY_HAVE_PREADV=0",
             "-DFOLLY_HAVE_PWRITEV=0",
             "-DFOLLY_HAVE_TFO=0",
         ],
-        "ovr_config//os:linux": select({
+        ("ovr_config//os:linux", "ovr_config//os:macos"): select({
             "DEFAULT": [],
             "ovr_config//project/folly:mobile[enabled]": [
                 "-DFOLLY_HAVE_LIBJEMALLOC=0",
@@ -60,9 +61,9 @@ def cpp_flags():
 
     else:
         flags += select({
-            "DEFAULT": select({
+            "DEFAULT": selects.with_or({
                 "DEFAULT": ["-DFOLLY_MOBILE=1"],
-                "ovr_config//os:linux": select({
+                ("ovr_config//os:linux", "ovr_config//os:macos"): select({
                     "DEFAULT": [],
                     "ovr_config//project/folly:mobile[enabled]": ["-DFOLLY_MOBILE=1"],
                 }),
@@ -180,10 +181,9 @@ def folly_xplat_library(
     # statically link folly, producing duplicate gflag registrations that crash
     # on macOS (macOS lacks Linux's flat namespace symbol deduplication).
     force_static = select({
-        "DEFAULT": select({
+        "DEFAULT": selects.with_or({
+            ("ovr_config//os/constraints:macos", "ovr_config//runtime/constraints:android-host-test", "ovr_config//runtime:fbcode"): False,
             "DEFAULT": force_static,
-            "ovr_config//runtime/constraints:android-host-test": False,
-            "ovr_config//runtime:fbcode": False,
         }),
         "ovr_config//build_mode:arvr_mode[enabled]": force_static,
     })

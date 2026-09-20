@@ -56,6 +56,7 @@ class IoUringZeroCopyBufferPool {
     ExportHandle& operator=(const ExportHandle&) = delete;
 
     int napiId_{-1};
+    int queueId_{-1};
 
    private:
     friend class IoUringZeroCopyBufferPool;
@@ -67,6 +68,8 @@ class IoUringZeroCopyBufferPool {
   using UniquePtr = std::unique_ptr<IoUringZeroCopyBufferPool>;
   static UniquePtr create(Params params);
   static UniquePtr importHandle(ExportHandle handle, struct io_uring* ring);
+
+  static bool kernelZeroCopyRxSupported();
 
   ExportHandle exportHandle() const;
 

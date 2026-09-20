@@ -28,8 +28,10 @@
  * See F14.md
  */
 
+#include <concepts>
 #include <cstddef>
 #include <initializer_list>
+#include <ranges>
 #include <tuple>
 
 #include <folly/CppAttributes.h>
@@ -349,6 +351,13 @@ class F14BasicSet {
             typename std::iterator_traits<InputIt>::iterator_category>::value &&
         bucket_count() == 0;
     bulkInsert(first, last, autoReserve);
+  }
+
+  /// Add elements from a range.
+  template <std::ranges::input_range R>
+    requires std::convertible_to<std::ranges::range_reference_t<R>, value_type>
+  void insert_range(R&& range) {
+    insert(std::ranges::begin(range), std::ranges::end(range));
   }
 
   /// Add elements from an initializer list.
@@ -1085,7 +1094,7 @@ class F14VectorSetImpl
   using Super = F14BasicSet<Policy>;
 
   template <typename K>
-  using IsIter = Disjunction<
+  using IsIter = std::disjunction<
       std::is_same<typename Policy::Iter, remove_cvref_t<K>>,
       std::is_same<typename Policy::ReverseIter, remove_cvref_t<K>>>;
 

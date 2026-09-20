@@ -828,6 +828,20 @@ class small_vector
     this->incrementSize(extra);
   }
 
+  // Grows without initializing the new elements.
+  // See folly::resizeWithoutInitialization.
+  void resize_without_initialization(size_type sz) {
+    static_assert(
+        std::is_trivially_destructible_v<value_type>,
+        "resize_without_initialization requires a trivially destructible value_type");
+    if (sz <= size()) {
+      downsize(sz);
+      return;
+    }
+    makeSize(sz);
+    this->setSize(sz);
+  }
+
   value_type* data() noexcept {
     return this->isExtern() ? u.heap() : u.buffer();
   }

@@ -59,6 +59,12 @@ struct F3 : T3 {
 };
 struct F4 : T1 {};
 
+struct T6 {
+  T6(const T6&) {}
+  T6& operator=(const T6&) { return *this; }
+};
+static_assert(!std::is_trivially_copyable_v<T6>);
+
 template <class>
 struct A {};
 struct B {};
@@ -76,6 +82,8 @@ template <>
 struct IsRelocatable<T1> : std::true_type {};
 template <>
 FOLLY_ASSUME_RELOCATABLE(T2);
+template <>
+FOLLY_ASSUME_RELOCATABLE(T6);
 } // namespace folly
 
 TEST(Traits, scalars) {
@@ -89,6 +97,18 @@ TEST(Traits, containers) {
   EXPECT_FALSE(IsRelocatable<vector<F1>>::value);
   EXPECT_TRUE((IsRelocatable<pair<F1, F1>>::value));
   EXPECT_TRUE((IsRelocatable<pair<T1, T2>>::value));
+  EXPECT_TRUE((IsRelocatable<pair<const T1, T2>>::value));
+  EXPECT_TRUE((IsRelocatable<pair<const T6, T2>>::value));
+  EXPECT_FALSE((IsRelocatable<pair<const vector<F1>, T2>>::value));
+}
+
+TEST(Traits, constQualified) {
+  EXPECT_TRUE(IsRelocatable<const int>::value);
+  EXPECT_TRUE(IsRelocatable<const T1>::value);
+  EXPECT_TRUE(IsRelocatable<const T3>::value);
+  EXPECT_TRUE(IsRelocatable<const T6>::value);
+  EXPECT_FALSE(IsRelocatable<const F3>::value);
+  EXPECT_FALSE(IsRelocatable<const vector<F1>>::value);
 }
 
 TEST(Traits, original) {
@@ -155,25 +175,6 @@ TEST(Traits, conditional) {
   EXPECT_TRUE(Cond<true>::fun_std("hello"));
   EXPECT_TRUE(Cond<false>::fun_folly("hello"));
   EXPECT_FALSE(Cond<true>::fun_folly("hello"));
-}
-
-TEST(Trait, logicOperators) {
-  static_assert(Conjunction<true_type>::value);
-  static_assert(!Conjunction<false_type>::value);
-  static_assert(is_same<Conjunction<true_type>::type, true_type>::value);
-  static_assert(is_same<Conjunction<false_type>::type, false_type>::value);
-  static_assert(Conjunction<true_type, true_type>::value);
-  static_assert(!Conjunction<true_type, false_type>::value);
-
-  static_assert(Disjunction<true_type>::value);
-  static_assert(!Disjunction<false_type>::value);
-  static_assert(is_same<Disjunction<true_type>::type, true_type>::value);
-  static_assert(is_same<Disjunction<false_type>::type, false_type>::value);
-  static_assert(Disjunction<true_type, true_type>::value);
-  static_assert(Disjunction<true_type, false_type>::value);
-
-  static_assert(!Negation<true_type>::value);
-  static_assert(Negation<false_type>::value);
 }
 
 TEST(Traits, isNegative) {
@@ -328,7 +329,7 @@ struct some_tag {};
 template <typename T>
 struct container {
   template <class... Args>
-  container(
+  explicit container(
       folly::type_t<some_tag, decltype(T(std::declval<Args>()...))>,
       Args&&...) {}
 };

@@ -429,6 +429,36 @@ TEST(HeapVectorTypes, FromVector) {
   }
 }
 
+TEST(HeapVectorTypes, FromEmptyVector) {
+  {
+    folly::heap_vector_map<int, float>::container_type vec;
+    heap_vector_map<int, float> m(std::move(vec));
+    EXPECT_TRUE(m.empty());
+  }
+  {
+    folly::heap_vector_map<int, float>::container_type vec;
+    heap_vector_map<int, float> m(folly::sorted_unique, std::move(vec));
+    EXPECT_TRUE(m.empty());
+  }
+  {
+    folly::heap_vector_set<int>::container_type vec;
+    heap_vector_set<int> s(folly::sorted_unique, std::move(vec));
+    EXPECT_TRUE(s.empty());
+  }
+}
+
+TEST(HeapVectorTypes, Traits) {
+  static_assert(folly::is_heap_vector_map_v<heap_vector_map<int, int>>);
+  static_assert(folly::is_heap_vector_set_v<heap_vector_set<int>>);
+  static_assert(folly::is_heap_vector_map<heap_vector_map<int, int>>::value);
+  static_assert(folly::is_heap_vector_set<heap_vector_set<int>>::value);
+
+  static_assert(!folly::is_heap_vector_map_v<heap_vector_set<int>>);
+  static_assert(!folly::is_heap_vector_set_v<heap_vector_map<int, int>>);
+  static_assert(!folly::is_heap_vector_map_v<int>);
+  static_assert(!folly::is_heap_vector_set_v<int>);
+}
+
 TEST(HeapVectorTypes, IterateOverVectorWithinMap) {
   const int size = 10;
   {

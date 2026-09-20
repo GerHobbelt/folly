@@ -147,7 +147,7 @@ template <
     typename KeyEqual,
     typename ArgKey>
 struct EligibleForHeterogeneousFind
-    : Conjunction<
+    : std::conjunction<
           is_transparent<Hasher>,
           is_transparent<KeyEqual>,
           is_invocable<Hasher, ArgKey const&>,
@@ -158,7 +158,7 @@ template <
     typename Hasher,
     typename KeyEqual,
     typename ArgKey>
-using EligibleForHeterogeneousInsert = Conjunction<
+using EligibleForHeterogeneousInsert = std::conjunction<
     EligibleForHeterogeneousFind<TableKey, Hasher, KeyEqual, ArgKey>,
     std::is_constructible<TableKey, ArgKey>>;
 
@@ -199,7 +199,7 @@ struct HeterogeneousPreHashCompatible<
     std::enable_if_t<
         detail::HasCompatibleTest<Hash1, Hash2>::value &&
         detail::HasCompatibleTest<Hash2, Hash1>::value>>
-    : Disjunction<
+    : std::disjunction<
           typename Hash1::template is_compatible<Hash2>,
           typename Hash2::template is_compatible<Hash1>> {};
 

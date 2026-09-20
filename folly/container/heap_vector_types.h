@@ -326,6 +326,9 @@ template <class Container>
 void heapify(Container& cont) {
   using size_type = typename Container::size_type;
   size_type size = cont.size();
+  if (FOLLY_UNLIKELY(size == 0)) {
+    return;
+  }
   std::vector<size_type> offsets;
   offsets.resize(size);
   getOffsets(size, offsets);
@@ -1453,6 +1456,13 @@ inline void swap(
   return a.swap(b);
 }
 
+template <typename T>
+inline constexpr bool is_heap_vector_set_v =
+    is_instantiation_of_v<heap_vector_set, T>;
+
+template <typename T>
+struct is_heap_vector_set : std::bool_constant<is_heap_vector_set_v<T>> {};
+
 #if FOLLY_HAS_MEMORY_RESOURCE
 
 namespace pmr {
@@ -1583,6 +1593,13 @@ inline void swap(
     heap_vector_map<K, V, C, A, G>& b) noexcept {
   return a.swap(b);
 }
+
+template <typename T>
+inline constexpr bool is_heap_vector_map_v =
+    is_instantiation_of_v<heap_vector_map, T>;
+
+template <typename T>
+struct is_heap_vector_map : std::bool_constant<is_heap_vector_map_v<T>> {};
 
 #if FOLLY_HAS_MEMORY_RESOURCE
 
