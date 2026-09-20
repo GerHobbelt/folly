@@ -1,10 +1,6 @@
-load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target")
-load("@fbcode_macros//build_defs:cpp_binary.bzl", "cpp_binary")
-load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_benchmark.bzl", "fb_dirsync_cpp_benchmark")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_binary.bzl", "fb_dirsync_cpp_binary")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_unittest.bzl", "fb_dirsync_cpp_unittest")
-load("../../defs.bzl", "folly_xplat_cxx_test")
 
 oncall("fbcode_entropy_wardens_folly")
 
@@ -42,7 +38,6 @@ fb_dirsync_cpp_binary(
 fb_dirsync_cpp_unittest(
     name = "bits_test",
     srcs = ["BitsTest.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "fbsource//third-party/fmt:fmt",
         "//folly:random",
@@ -173,7 +168,6 @@ fb_dirsync_cpp_unittest(
 fb_dirsync_cpp_unittest(
     name = "rvalue_reference_wrapper_test",
     srcs = ["RValueReferenceWrapperTest.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly/lang:rvalue_reference_wrapper",
         "//folly/portability:gtest",
@@ -193,7 +187,6 @@ fb_dirsync_cpp_unittest(
 fb_dirsync_cpp_unittest(
     name = "safe_assert_test",
     srcs = ["SafeAssertTest.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "fbsource//third-party/glog:glog",
         "//folly:benchmark",
@@ -236,7 +229,6 @@ fb_dirsync_cpp_unittest(
     name = "cstring_view_test",
     srcs = ["cstring_view_test.cpp"],
     supports_static_listing = False,
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "fbsource//third-party/fmt:fmt",
         "//folly:fbstring",
@@ -295,8 +287,7 @@ fb_dirsync_cpp_unittest(
     ],
 )
 
-fbcode_target(
-    _kind = cpp_unittest,
+fb_dirsync_cpp_unittest(
     name = "badge_test",
     srcs = ["BadgeTest.cpp"],
     deps = [
@@ -305,8 +296,7 @@ fbcode_target(
     ],
 )
 
-fbcode_target(
-    _kind = cpp_binary,
+fb_dirsync_cpp_binary(
     name = "bits_class_benchmark",
     srcs = ["BitsClassBenchmark.cpp"],
     headers = [],
@@ -317,8 +307,7 @@ fbcode_target(
     ],
 )
 
-fbcode_target(
-    _kind = cpp_unittest,
+fb_dirsync_cpp_unittest(
     name = "bits_class_test",
     srcs = ["BitsClassTest.cpp"],
     headers = [],
