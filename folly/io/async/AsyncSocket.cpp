@@ -288,7 +288,12 @@ class AsyncSocket::BytesWriteRequest : public AsyncSocket::WriteRequest {
   }
 
   void destroy() override {
-    socket_->releaseIOBuf(std::move(ioBuf_), releaseIOBufCallback_);
+    auto* FOLLY_NONNULL socket = CHECK_NOTNULL(socket_);
+    if (ioBuf_ && socket->containsZeroCopyBuf(ioBuf_.get())) {
+      socket->setZeroCopyBuf(std::move(ioBuf_), releaseIOBufCallback_);
+    } else {
+      socket->releaseIOBuf(std::move(ioBuf_), releaseIOBufCallback_);
+    }
     this->~BytesWriteRequest();
     free(this);
   }
@@ -773,6 +778,9 @@ AsyncSocket::AsyncSocket(AsyncSocket* oldAsyncSocket)
   }
   oldAsyncSocket->iouSendHandle_.reset();
   oldAsyncSocket->detachNetworkSocket();
+  if (oldAsyncSocket->isZeroCopyWriteInProgress()) {
+    moveZeroCopyStateFrom(*oldAsyncSocket);
+  }
 
   VLOG(5) << "move AsyncSocket(" << oldAsyncSocket << "->" << this
           << ", evb=" << eventBase_ << ", fd=" << fd_
@@ -1558,6 +1566,12 @@ void AsyncSocket::releaseZeroCopyBuf(uint32_t id) {
   }
 
   idZeroCopyBufPtrMap_.erase(iter);
+  if (idZeroCopyBufPtrMap_.empty()) {
+    if ((state_ == StateEnum::CLOSED || state_ == StateEnum::ERROR) &&
+        fd_ != NetworkSocket()) {
+      closeNetworkSocket();
+    }
+  }
 }
 
 void AsyncSocket::moveZeroCopyStateFrom(AsyncSocket& other) {
@@ -1594,51 +1608,67 @@ void AsyncSocket::moveZeroCopyStateFrom(AsyncSocket& other) {
 }
 
 void AsyncSocket::drainZeroCopyQueue() {
-  // try to drain ZC writes if any - this is best effort
-  size_t prevSize = 0;
-  while (idZeroCopyBufPtrMap_.size() != prevSize) {
-    prevSize = idZeroCopyBufPtrMap_.size();
-    handleErrMessages();
-  }
-
   if (idZeroCopyBufPtrMap_.empty()) {
     return;
   }
 
+  // try to drain ZC writes if any - this is best effort
+  handleErrMessages();
+
   // Enable SO_LINGER if requested.
-  if (zeroCopyDrainConfig_.linger.has_value()) {
+  if (!idZeroCopyBufPtrMap_.empty() &&
+      zeroCopyDrainConfig_.linger.has_value()) {
     struct linger optLinger = {1, zeroCopyDrainConfig_.linger.value()};
     if (setSockOpt(SOL_SOCKET, SO_LINGER, &optLinger) != 0) {
       VLOG(2) << "AsyncSocket::drainZeroCopyQueue(): error setting SO_LINGER "
               << "on " << fd_ << ": errno=" << errno;
     }
   }
+}
 
-  if (eventBase_) {
-    idZeroCopyBufPtrMap_.clear();
-    // copy the buffers and adjust the allocatedBytesBuffered_
-    std::vector<std::unique_ptr<folly::IOBuf>> bufs;
-    for (auto& info : std::exchange(idZeroCopyBufInfoMap_, {})) {
-      if (info.second.buf_) {
-        detachIOBuf(*info.second.buf_);
-        bufs.emplace_back(std::move(info.second.buf_));
-      }
-    }
-    // enqueue for later destruction
-    eventBase_->scheduleAt(
-        [b = std::move(bufs)] {},
-        std::chrono::steady_clock::now() + zeroCopyDrainConfig_.drainDelay);
-  } else {
-    while (!idZeroCopyBufPtrMap_.empty()) {
-      releaseZeroCopyBuf(idZeroCopyBufPtrMap_.begin()->first);
-    }
+void AsyncSocket::scheduleZeroCopyDrain() {
+  if (idZeroCopyBufPtrMap_.empty()) {
+    return;
   }
+  auto* FOLLY_NONNULL eventBase = CHECK_NOTNULL(eventBase_);
+  eventBase->scheduleAt(
+      [this,
+       guard = DestructorGuard(this),
+       keepAlive = getKeepAliveToken(*eventBase)]() mutable {
+        handleErrMessages();
+        if (idZeroCopyBufPtrMap_.empty()) {
+          return;
+        }
+        if (std::chrono::steady_clock::now() >= zeroCopyDrainDeadline_) {
+          forceReleaseZeroCopyBufs();
+          return;
+        }
+        scheduleZeroCopyDrain();
+      },
+      std::chrono::steady_clock::now() + zeroCopyDrainConfig_.drainDelay);
+}
+
+void AsyncSocket::forceReleaseZeroCopyBufs() {
+  LOG(ERROR)
+      << "AsyncSocket::forceReleaseZeroCopyBufs(this=" << this << ", fd=" << fd_
+      << "): giving up after " << zeroCopyDrainConfig_.maxDrainDuration.count()
+      << "ms waiting for " << idZeroCopyBufPtrMap_.size()
+      << " MSG_ZEROCOPY completion(s); releasing "
+      << idZeroCopyBufInfoMap_.size()
+      << " buffer(s) the kernel may still reference";
+
+  while (!idZeroCopyBufPtrMap_.empty()) {
+    releaseZeroCopyBuf(idZeroCopyBufPtrMap_.begin()->first);
+  }
+  closeNetworkSocket();
 }
 
 void AsyncSocket::setZeroCopyBuf(
     std::unique_ptr<folly::IOBuf>&& buf, ReleaseIOBufCallback* cb) {
   folly::IOBuf* ptr = buf.get();
-  auto& p = idZeroCopyBufInfoMap_[ptr];
+  auto iter = idZeroCopyBufInfoMap_.find(ptr);
+  CHECK(iter != idZeroCopyBufInfoMap_.end());
+  auto& p = iter->second;
   CHECK(p.buf_.get() == nullptr);
 
   p.buf_ = std::move(buf);
@@ -2592,7 +2622,7 @@ bool AsyncSocket::isDetachable() const {
   DCHECK(eventBase_ != nullptr);
   eventBase_->dcheckIsInEventBaseThread();
 
-  return !writeTimeout_.isScheduled();
+  return !writeTimeout_.isScheduled() && idZeroCopyBufPtrMap_.empty();
 }
 
 void AsyncSocket::cacheAddresses() {
@@ -4714,6 +4744,20 @@ void AsyncSocket::doClose() {
 
   drainZeroCopyQueue();
 
+  if (!idZeroCopyBufPtrMap_.empty()) {
+    zeroCopyDrainDeadline_ = std::chrono::steady_clock::now() +
+        zeroCopyDrainConfig_.maxDrainDuration;
+    scheduleZeroCopyDrain();
+    return;
+  }
+
+  closeNetworkSocket();
+}
+
+void AsyncSocket::closeNetworkSocket() {
+  if (fd_ == NetworkSocket()) {
+    return;
+  }
   if (const auto shutdownSocketSet = wShutdownSocketSet_.lock()) {
     shutdownSocketSet->close(fd_);
   } else {

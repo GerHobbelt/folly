@@ -21,6 +21,7 @@
 #include <limits>
 #include <ostream>
 #include <random>
+#include <type_traits>
 #include <utility>
 
 #include <folly/Likely.h>
@@ -54,11 +55,11 @@ class xoshiro256pp {
   static_assert(alignof(VectorType) >= alignof(ResType));
 
   using state_array = VectorType[32];
-  using state_span = decltype(span(std::declval<state_array&>()));
+  using state_span = decltype(std::span(std::declval<state_array&>()));
 
   template <typename SeedSeq>
   static constexpr bool is_seed_seq =
-      is_invocable_v<seed_seq_generate_fn, state_span, SeedSeq&>;
+      std::is_invocable_v<seed_seq_generate_fn, state_span, SeedSeq&>;
 
  public:
   using result_type = ResType;
@@ -115,7 +116,7 @@ class xoshiro256pp {
   void seed(SeedSeq& seq) {
     state_array arr;
     std::memcpy(&arr, &state, sizeof(state_array));
-    seed_seq_generate(span(arr), seq);
+    seed_seq_generate(std::span(arr), seq);
     std::memcpy(&state, &arr, sizeof(state_array));
     cur = ResultCount;
   }

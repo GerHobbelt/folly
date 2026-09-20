@@ -1450,13 +1450,13 @@ class Future : private futures::detail::FutureBase<T> {
   /// - `RESULT.valid() == true`
   template <class ExceptionType, class F>
   typename std::enable_if<
-      isFutureOrSemiFuture<invoke_result_t<F, ExceptionType>>::value,
+      isFutureOrSemiFuture<std::invoke_result_t<F, ExceptionType>>::value,
       Future<T>>::type
   thenError(tag_t<ExceptionType>, F&& func) &&;
 
   template <class ExceptionType, class F>
   typename std::enable_if<
-      !isFutureOrSemiFuture<invoke_result_t<F, ExceptionType>>::value,
+      !isFutureOrSemiFuture<std::invoke_result_t<F, ExceptionType>>::value,
       Future<T>>::type
   thenError(tag_t<ExceptionType>, F&& func) &&;
 
@@ -1500,13 +1500,13 @@ class Future : private futures::detail::FutureBase<T> {
   /// - `RESULT.valid() == true`
   template <class F>
   typename std::enable_if<
-      isFutureOrSemiFuture<invoke_result_t<F, exception_wrapper>>::value,
+      isFutureOrSemiFuture<std::invoke_result_t<F, exception_wrapper>>::value,
       Future<T>>::type
   thenError(F&& func) &&;
 
   template <class F>
   typename std::enable_if<
-      !isFutureOrSemiFuture<invoke_result_t<F, exception_wrapper>>::value,
+      !isFutureOrSemiFuture<std::invoke_result_t<F, exception_wrapper>>::value,
       Future<T>>::type
   thenError(F&& func) &&;
 
@@ -1895,7 +1895,7 @@ class Future : private futures::detail::FutureBase<T> {
 
   template <class ExceptionType, class F>
   typename std::enable_if<
-      isFutureOrSemiFuture<invoke_result_t<F, ExceptionType>>::value,
+      isFutureOrSemiFuture<std::invoke_result_t<F, ExceptionType>>::value,
       Future<T>>::type
   thenErrorImpl(
       tag_t<ExceptionType>,
@@ -1905,7 +1905,7 @@ class Future : private futures::detail::FutureBase<T> {
 
   template <class ExceptionType, class F>
   typename std::enable_if<
-      !isFutureOrSemiFuture<invoke_result_t<F, ExceptionType>>::value,
+      !isFutureOrSemiFuture<std::invoke_result_t<F, ExceptionType>>::value,
       Future<T>>::type
   thenErrorImpl(
       tag_t<ExceptionType>,
@@ -1915,7 +1915,7 @@ class Future : private futures::detail::FutureBase<T> {
 
   template <class F>
   typename std::enable_if<
-      isFutureOrSemiFuture<invoke_result_t<F, exception_wrapper>>::value,
+      isFutureOrSemiFuture<std::invoke_result_t<F, exception_wrapper>>::value,
       Future<T>>::type
   thenErrorImpl(
       F&& func,
@@ -1924,7 +1924,7 @@ class Future : private futures::detail::FutureBase<T> {
 
   template <class F>
   typename std::enable_if<
-      !isFutureOrSemiFuture<invoke_result_t<F, exception_wrapper>>::value,
+      !isFutureOrSemiFuture<std::invoke_result_t<F, exception_wrapper>>::value,
       Future<T>>::type
   thenErrorImpl(
       F&& func,
@@ -2057,7 +2057,7 @@ template <
     class ItT = typename std::iterator_traits<It>::value_type,
     class Result = typename decltype(std::declval<ItT>().thenValue(
         std::declval<F>()))::value_type>
-  requires is_invocable_v<F, typename ItT::value_type&&>
+  requires std::is_invocable_v<F, typename ItT::value_type&&>
 std::vector<Future<Result>> mapValue(It first, It last, F func);
 
 /**
@@ -2070,7 +2070,7 @@ template <
     class ItT = typename std::iterator_traits<It>::value_type,
     class Result = typename decltype(std::declval<ItT>().thenTry(
         std::declval<F>()))::value_type>
-  requires(!is_invocable_v<F, typename ItT::value_type &&>)
+  requires(!std::is_invocable_v<F, typename ItT::value_type &&>)
 std::vector<Future<Result>> mapTry(It first, It last, F func, int = 0);
 
 /**
@@ -2086,7 +2086,7 @@ template <
         typename decltype(std::move(std::declval<ItT>())
                               .via(std::declval<Executor*>())
                               .thenValue(std::declval<F>()))::value_type>
-  requires is_invocable_v<F, typename ItT::value_type&&>
+  requires std::is_invocable_v<F, typename ItT::value_type&&>
 std::vector<Future<Result>> mapValue(Executor& exec, It first, It last, F func);
 
 /**
@@ -2102,7 +2102,7 @@ template <
         typename decltype(std::move(std::declval<ItT>())
                               .via(std::declval<Executor*>())
                               .thenTry(std::declval<F>()))::value_type>
-  requires(!is_invocable_v<F, typename ItT::value_type &&>)
+  requires(!std::is_invocable_v<F, typename ItT::value_type &&>)
 std::vector<Future<Result>> mapTry(
     Executor& exec, It first, It last, F func, int = 0);
 
@@ -2187,16 +2187,16 @@ SemiFuture<Unit> makeSemiFuture();
 // makeSemiFutureWith(SemiFuture<T>()) -> SemiFuture<T>
 template <class F>
 typename std::enable_if<
-    isFutureOrSemiFuture<invoke_result_t<F>>::value,
-    SemiFuture<typename invoke_result_t<F>::value_type>>::type
+    isFutureOrSemiFuture<std::invoke_result_t<F>>::value,
+    SemiFuture<typename std::invoke_result_t<F>::value_type>>::type
 makeSemiFutureWith(F&& func);
 
 // makeSemiFutureWith(T()) -> SemiFuture<T>
 // makeSemiFutureWith(void()) -> SemiFuture<Unit>
 template <class F>
 typename std::enable_if<
-    !(isFutureOrSemiFuture<invoke_result_t<F>>::value),
-    SemiFuture<lift_unit_t<invoke_result_t<F>>>>::type
+    !(isFutureOrSemiFuture<std::invoke_result_t<F>>::value),
+    SemiFuture<lift_unit_t<std::invoke_result_t<F>>>>::type
 makeSemiFutureWith(F&& func);
 
 /// Make a failed Future from an exception_ptr.
@@ -2226,7 +2226,7 @@ SemiFuture<T> makeSemiFuture(E&& e);
 template <class T, class E>
   requires std::is_base_of_v<std::exception, E>
 [[deprecated("do not specify exception type template parameter explicitly")]]
-SemiFuture<T> makeSemiFuture(const folly::type_identity_t<E>& e);
+SemiFuture<T> makeSemiFuture(const std::type_identity_t<E>& e);
 
 /** Make a Future out of a Try */
 template <class T>
@@ -2281,16 +2281,17 @@ Future<Unit> makeFuture();
 
 // makeFutureWith(Future<T>()) -> Future<T>
 template <class F>
-typename std::
-    enable_if<isFuture<invoke_result_t<F>>::value, invoke_result_t<F>>::type
-    makeFutureWith(F&& func);
+typename std::enable_if<
+    isFuture<std::invoke_result_t<F>>::value,
+    std::invoke_result_t<F>>::type
+makeFutureWith(F&& func);
 
 // makeFutureWith(T()) -> Future<T>
 // makeFutureWith(void()) -> Future<Unit>
 template <class F>
 typename std::enable_if<
-    !(isFuture<invoke_result_t<F>>::value),
-    Future<lift_unit_t<invoke_result_t<F>>>>::type
+    !(isFuture<std::invoke_result_t<F>>::value),
+    Future<lift_unit_t<std::invoke_result_t<F>>>>::type
 makeFutureWith(F&& func);
 
 /// Make a failed Future from an exception_ptr.
@@ -2328,7 +2329,7 @@ Future<T> makeFuture(E&& e);
 template <class T, class E>
   requires std::is_base_of_v<std::exception, E>
 [[deprecated("do not specify exception type template parameter explicitly")]]
-Future<T> makeFuture(const folly::type_identity_t<E>& e);
+Future<T> makeFuture(const std::type_identity_t<E>& e);
 
 /**
   Make a Future out of a Try
@@ -2521,7 +2522,7 @@ template <
     class F,
     class ItT = typename std::iterator_traits<
         typename Collection::iterator>::value_type,
-    class Result = typename invoke_result_t<F, ItT&&>::value_type>
+    class Result = typename std::invoke_result_t<F, ItT&&>::value_type>
 std::vector<Future<Result>> window(Collection input, F func, size_t n);
 
 template <
@@ -2529,13 +2530,13 @@ template <
     class F,
     class ItT = typename std::iterator_traits<
         typename Collection::iterator>::value_type,
-    class Result = typename invoke_result_t<F, ItT&&>::value_type>
+    class Result = typename std::invoke_result_t<F, ItT&&>::value_type>
 std::vector<Future<Result>> window(
     Executor::KeepAlive<> executor, Collection input, F func, size_t n);
 
 template <typename F, typename T, typename ItT>
 using MaybeTryArg = typename std::
-    conditional<is_invocable_v<F, T&&, Try<ItT>&&>, Try<ItT>, ItT>::type;
+    conditional<std::is_invocable_v<F, T&&, Try<ItT>&&>, Try<ItT>, ItT>::type;
 
 /** repeatedly calls func on every result, e.g.
     reduce(reduce(reduce(T initial, result of first), result of second), ...)
@@ -2585,12 +2586,14 @@ auto unorderedReduce(Collection&& c, T&& initial, F&& func)
 ///    returns SemiFuture<Unit>
 /// predicate behaves like std::function<bool(void)>
 template <class P, class F>
-typename std::enable_if<isFuture<invoke_result_t<F>>::value, Future<Unit>>::type
-whileDo(P&& predicate, F&& thunk);
-template <class P, class F>
 typename std::
-    enable_if<isSemiFuture<invoke_result_t<F>>::value, SemiFuture<Unit>>::type
+    enable_if<isFuture<std::invoke_result_t<F>>::value, Future<Unit>>::type
     whileDo(P&& predicate, F&& thunk);
+template <class P, class F>
+typename std::enable_if<
+    isSemiFuture<std::invoke_result_t<F>>::value,
+    SemiFuture<Unit>>::type
+whileDo(P&& predicate, F&& thunk);
 
 /// Repeat the given future (i.e., the computation it contains) n times.
 ///
