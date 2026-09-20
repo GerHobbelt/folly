@@ -16,92 +16,38 @@
 
 #pragma once
 
-#include <atomic>
 #include <cstddef>
-#include <limits>
 #include <memory>
-#include <vector>
+#include <utility>
 
-#include <folly/executors/SoftRealTimeExecutor.h>
-#include <folly/executors/ThreadPoolExecutor.h>
+#include <folly/executors/StripedEDFThreadPoolExecutor.h>
 
 namespace folly {
 
-class EDFThreadPoolSemaphore {
- public:
-  virtual ~EDFThreadPoolSemaphore() = default;
-  virtual void post(uint32_t value) = 0;
-  virtual void wait() = 0;
-  virtual uint32_t valueGuess() const = 0;
-};
-
-template <class Semaphore>
-class EDFThreadPoolSemaphoreImpl : public EDFThreadPoolSemaphore {
- public:
-  template <class... Args>
-  explicit EDFThreadPoolSemaphoreImpl(Args&&... args)
-      : sem_(std::forward<Args>(args)...) {}
-
-  void post(uint32_t value) override { sem_.post(value); }
-  void wait() override { sem_.wait(); }
-  uint32_t valueGuess() const override { return sem_.valueGuess(); }
-
- private:
-  Semaphore sem_;
-};
-
 /**
- * `EDFThreadPoolExecutor` is a `SoftRealTimeExecutor` that implements the
- * earliest-deadline-first scheduling policy. Deadline ties are resolved by
- * submission order.
+ * DEPRECATED: use `folly::StripedEDFThreadPoolExecutor` directly. This wrapper
+ * exists only for legacy callers.
+ *
+ * `EDFThreadPoolExecutor` is a `StripedEDFThreadPoolExecutor` restricted to a
+ * single stripe (`strictOrdering = true`): a `SoftRealTimeExecutor` that
+ * implements a strict global earliest-deadline-first scheduling policy, with
+ * deadline ties resolved by submission order.
  */
-class EDFThreadPoolExecutor
-    : public SoftRealTimeExecutor,
-      public ThreadPoolExecutor {
+class EDFThreadPoolExecutor : public StripedEDFThreadPoolExecutor {
  public:
-  class Task;
-  class TaskQueue;
-
-  static constexpr uint64_t kEarliestDeadline = 0;
-  static constexpr uint64_t kLatestDeadline =
-      std::numeric_limits<uint64_t>::max();
-
-  static std::unique_ptr<EDFThreadPoolSemaphore> makeDefaultSemaphore();
-  static std::unique_ptr<EDFThreadPoolSemaphore> makeLifoSemSemaphore();
-  static std::unique_ptr<EDFThreadPoolSemaphore> makeThrottledLifoSemSemaphore(
-      std::chrono::nanoseconds wakeUpInterval = {});
+  struct Options {
+    ThrottledLifoSem::Options tlsOptions;
+  };
 
   explicit EDFThreadPoolExecutor(
       std::size_t numThreads,
       std::shared_ptr<ThreadFactory> threadFactory =
           std::make_shared<NamedThreadFactory>("EDFThreadPool"),
-      std::unique_ptr<EDFThreadPoolSemaphore> semaphore =
-          makeDefaultSemaphore());
-
-  ~EDFThreadPoolExecutor() override;
-
-  using ThreadPoolExecutor::add;
-
-  void add(Func f) override;
-  void add(Func f, uint64_t deadline) override;
-  void add(std::vector<Func> fs, uint64_t deadline) override;
-
-  size_t getTaskQueueSize() const;
-
- protected:
-  void threadRun(ThreadPtr thread) override;
-  void stopThreads(std::size_t numThreads) override;
-  std::size_t getPendingTaskCountImpl() const override final;
-
- private:
-  bool tryStopThread(const ThreadPtr& thread, bool isPoison);
-
-  void fillTaskInfo(const Task& task, TaskInfo& info);
-  void registerTaskEnqueue(const Task& task);
-
-  std::unique_ptr<TaskQueue> taskQueue_;
-  std::unique_ptr<EDFThreadPoolSemaphore> sem_;
-  std::atomic<int> threadsToStop_{0};
+      const Options& options = {})
+      : StripedEDFThreadPoolExecutor(
+            numThreads,
+            std::move(threadFactory),
+            {.tlsOptions = options.tlsOptions, .strictOrdering = true}) {}
 };
 
 } // namespace folly

@@ -17,6 +17,7 @@
 #include <folly/io/IOBuf.h>
 
 #include <cstddef>
+#include <limits>
 #include <random>
 #include <unordered_map>
 

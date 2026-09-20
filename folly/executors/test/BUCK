@@ -1,6 +1,5 @@
 load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target")
 load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
-load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_benchmark.bzl", "fb_dirsync_cpp_benchmark")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_unittest.bzl", "fb_dirsync_cpp_unittest")
 
@@ -23,18 +22,6 @@ fb_dirsync_cpp_unittest(
         "//folly/executors:codel",
         "//folly/portability:gflags",
         "//folly/portability:gtest",
-    ],
-)
-
-fb_dirsync_cpp_benchmark(
-    name = "EDFThreadPoolExecutorBenchmark",
-    srcs = ["EDFThreadPoolExecutorBenchmark.cpp"],
-    deps = [
-        "//folly:benchmark",
-        "//folly:mpmc_queue",
-        "//folly/executors:cpu_thread_pool_executor",
-        "//folly/executors:edf_thread_pool_executor",
-        "//folly/executors:thread_pool_executor",
     ],
 )
 
@@ -170,12 +157,12 @@ fbcode_target(
     name = "ThreadPoolExecutorTest",
     srcs = ["ThreadPoolExecutorTest.cpp"],
     deps = [
+        "fbsource//third-party/boost:boost_thread",
         "//folly:c_portability",
         "//folly:default_keep_alive_executor",
         "//folly:exception",
         "//folly/container:f14_hash",
         "//folly/executors:cpu_thread_pool_executor",
-        "//folly/executors:edf_thread_pool_executor",
         "//folly/executors:future_executor",
         "//folly/executors:io_thread_pool_executor",
         "//folly/executors:thread_pool_executor",
@@ -192,9 +179,6 @@ fbcode_target(
         "//folly/synchronization:latch",
         "//folly/synchronization/detail:spin",
         "//folly/system:thread_id",
-    ],
-    external_deps = [
-        ("boost", None, "boost_thread"),
     ],
 )
 
@@ -303,14 +287,12 @@ fb_dirsync_cpp_unittest(
     srcs = ["FunctionSchedulerTest.cpp"],
     labels = ["slow"],
     deps = [
+        "fbsource//third-party/boost:boost_thread",
         "fbsource//third-party/glog:glog",
         "//folly:random",
         "//folly/executors:function_scheduler",
         "//folly/portability:gtest",
         "//folly/synchronization:baton",
-    ],
-    external_deps = [
-        ("boost", None, "boost_thread"),
     ],
 )
 
@@ -330,6 +312,7 @@ fb_dirsync_cpp_unittest(
     ],
     deps = [
         "//folly:random",
+        "//folly/executors:edf_thread_pool_executor",
         "//folly/executors:striped_edf_thread_pool_executor",
         "//folly/portability:gtest",
         "//folly/portability:sched",

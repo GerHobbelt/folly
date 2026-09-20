@@ -308,20 +308,11 @@ fb_dirsync_cpp_library(
 
 fb_dirsync_cpp_library(
     name = "edf_thread_pool_executor",
-    srcs = ["EDFThreadPoolExecutor.cpp"],
     headers = ["EDFThreadPoolExecutor.h"],
     use_raw_headers = True,
-    deps = [
-        "fbsource//third-party/glog:glog",
-        "//folly/concurrency:process_local_unique_id",
-        "//folly/portability:gflags",
-        "//folly/synchronization:lifo_sem",
-        "//folly/synchronization:throttled_lifo_sem",
-        "//folly/tracing:static_tracepoint",
-    ],
     exported_deps = [
-        ":soft_real_time_executor",
-        ":thread_pool_executor",
+        ":striped_edf_thread_pool_executor",
+        "//folly/synchronization:throttled_lifo_sem",
     ],
 )
 
@@ -499,9 +490,7 @@ fb_dirsync_cpp_library(
     deps = [
         "//folly/tracing:static_tracepoint",
     ],
-    exported_external_deps = [
-        "boost",
-    ],
+    exported_deps = ["fbsource//third-party/boost:boost"],
 )
 
 # !!!! fbcode/folly/executors/TARGETS was merged into this file, see https://fburl.com/workplace/xl8l9yuo for more info !!!!
