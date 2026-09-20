@@ -33,13 +33,17 @@ convergence" below. The maxims here apply to all prose (docs, posts, comments).
   clarity or accuracy, or to make it materially shorter without losing needed
   content or increasing reader effort. Replace an abstract process label when
   the target audience would have to unpack it.
-- **Pick the right shape.** Lifecycle/procedure → numbered list. Parallel states
-  / parallel facts (N≥2) / inline enumeration (3+ items) → bullets, with lead
-  labels where they aid scanning. Reserve semicolon/em-dash glue for tight
-  causal pairs ("keep X — stripping breaks Y"). The shape rule fires regardless
-  of punctuation. An enumeration or parallel-states comparison hiding in prose
-  is a shape miss — rewrite the container, not just the sentences. (The Iterate
-  loop's Shape pass applies this for commit messages specifically.)
+- **Pick the right shape:**
+  - Lifecycle or procedure → numbered list.
+  - 2+ parallel states, facts, decisions, or reasons → bullets.
+  - 3+ inline items → bullets.
+
+  Use lead labels where they aid scanning. Reserve semicolon/em-dash glue for
+  tight causal pairs ("keep X — stripping breaks Y"). A parallel comparison or
+  enumeration hiding in prose is a shape miss — rewrite the container, not just
+  the sentences. (The Iterate loop's Shape pass applies this for commit messages
+  specifically.)
+
 - **Lead with why.** For prose about code, start with the problem or goal. Add a
   constraint, rejected alternative, or invariant when it explains the choice.
   Include enough of what the code does to make that reason clear, then leave
@@ -91,6 +95,9 @@ concision.
 ## Sentences
 
 - Short sentences. Short paragraphs.
+- **Dense sentences.** If a sentence stacks 4+ noun phrases or chained
+  possessives, cut it if unneeded; otherwise restructure it. For a sentence over
+  20 words, read it aloud; cut or restructure it if you stumble.
 - One claim per sentence by default — the goal is fast comprehension. Glue
   (em-dash, semicolon) when the second clause depends on the first to make sense
   ("keep X — stripping breaks Y"). Split independent claims: "X — and Y" → "X.
@@ -264,8 +271,8 @@ below — don't re-enumerate here.
 
 ## Iterate — inner loop, until convergence
 
-When required, dual revision follows this iterative inner loop after it
-converges (see "Outer evaluator" below).
+When `{FA}/critic-iterate.md` "Fresh Review" applies, run it after this
+iterative inner loop converges.
 
 Per round: explanation → shape → cut (including the test plan) → plain language
 → cold re-read. Converge when a full round makes no edit.
@@ -293,7 +300,6 @@ part is lost, cut it.
 
 Cut on (locality first, style second):
 
-- **Nothing material lost** — the artifact reads cleanly without it.
 - **Restates the title or an earlier sentence.** (Includes wrap-ups, especially
   invariant restatements after a goal-led lead.)
 - **Unneeded intermediate detail.** State the result the reader needs. Keep
@@ -317,9 +323,6 @@ Cut on (locality first, style second):
   concrete risk and how the change prevents it ("if X is called twice, Y now
   dedups instead of erroring") — keep, leading with the risk.
 
-When "tighter" is rationalizable, ask whether a shorter version preserves the
-needed structure without increasing reader effort. If yes, use it.
-
 ### Cut test — per section
 
 Before defending individual sentences, test the section itself: **would deleting
@@ -333,12 +336,6 @@ Commit Summaries usually don't need these sections:
 - **File-by-file / shape-of-diff.** Let the diff carry file shape.
 - **"What survives" / mission-preserved.** Keep the invariant once, not as a
   section.
-
-### Test plan — cut tests
-
-Cut an item if a cheaper check provides the same coverage or it only narrates
-the diff without saying what was checked. Match each verb to the rigor used, and
-reduce routine checks to `CI`. See "## Test plans" below.
 
 ### Cold re-read and loop
 
@@ -398,57 +395,10 @@ passes the sentence Cut test, and lead with the content that earns it.
   terms ("idempotent", "race condition") are fine in body prose; for titles,
   apply the title-only test.
 
-## Outer evaluator — anchor-free regeneration + rubric (separate)
-
-When dual revision is required, run it AFTER the inner loop converges. Follow
-`critic-iterate.md` "Dual Revision". The source-aware fresh evaluator integrates
-the required cold read. For commit and diff messages, it provides two outputs:
-
-1. **Anchor-free regenerated draft.** The reviewer produces its OWN draft from
-   the allowed inputs (task note, selected rule files, diff artifact) before
-   reading the author draft. This is the primary signal — the side-by-side
-   comparison surfaces failures the author can't see because they're locked into
-   their draft (mis-led lead, wrong shape choice, buried invariant, missing
-   must-know fact). Compare structurally, not sentence-by-sentence.
-2. **Rubric findings.** A small rubric (below) the reviewer runs anchor-free
-   against its own draft and reports against the author's. Scoped to patterns
-   that require fresh eyes — NOT a re-run of the cut test.
-
-Use `critic-iterate.md` "Integration and closure" to triage the result, run the
-required author review, and decide whether another external pair follows.
-
-### Rubric (fresh-eyes patterns only)
-
-For each item: read the FULL draft (Summary + Test Plan) with that one item in
-mind. Capture ✅ (clean) or ❌ (offending — quote + location).
-
-1. **Opening states the goal early?** Apply "State the goal early." Flag missing
-   or buried goals, unnecessary setup before the goal, unjustified
-   invariant-first leads, stack references that are dependency bookkeeping
-   rather than explanation, and unclear intended readers.
-2. **Any sentence stacks 4+ noun phrases or chains possessives** ("the X's Y
-   whose Z affects W")? First ask: does this sentence earn its slot? If not,
-   cut. If yes, restructure.
-3. **Any sentence > 30 words?** Read aloud. If you stumble, first ask: does this
-   sentence earn its slot? If not, cut. If yes, restructure.
-4. **Any 2+ parallel facts in prose that should be bullets?**
-5. **Any 3+ inline items in prose that should be bullets?**
-6. **Does the draft give the intended audience exactly the facts and
-   relationships needed for its purpose?** Flag true but unnecessary detail,
-   abstractions the reader must unpack, and missing relationships the reader
-   must guess. When two versions require the same effort and convey the same
-   needed structure, prefer the shorter one.
-
-Cut-test patterns (mechanism narration, scope defense, predecessor
-re-explanation, verb-as-label, wrap-ups) are NOT in the rubric — the inner loop
-owns them. If the regenerated draft is markedly different on any of those,
-that's a finding worth reporting; but the rubric itself doesn't pattern-match
-for them.
-
 ## Test plans — what you checked, briefly
 
 A reviewer learns trust from the rigor of your verification, not from
-exit-code 0. The inner loop's Test-plan cut tests (above) call back here.
+exit-code 0.
 
 Failure modes:
 
@@ -474,9 +424,6 @@ Verb choice carries rigor. Match what you actually did: "checked", "verified",
 X", "ran Y") leaves ambiguous whether you read the result. Vary the word — don't
 lean on "eyeballed" as a tic.
 
-Bullets scan; prose runs together. Iterate the Test Plan with the same loop
-discipline as the Summary.
-
 Good — `CI` / `Docs-only` first for vanilla diffs, the rest for the non-obvious
 cases:
 
@@ -484,74 +431,6 @@ cases:
 - "Skimmed materialized JSON — only the 6 expected handles changed."
 - "Added a unit test for the new branch; pre-existing tests still pass."
 - Before/after screenshots, repro, "A-B-A-B to rule out luck".
-
-Avoid:
-
-- "Compilation succeeded."
-- "`buck2 test ... passed`" (unless ASan-only or similar non-obvious mode).
-
-## Worked examples
-
-### Bug fix — short message
-
-**Good (3 sentences):**
-
-> TW job names routinely contain regex metacharacters.
->
-> `fullStringRegex("tsp_x/foo.bar")` used to produce `^tsp_x/foo.bar$` — this
-> accidentally overmatches, e.g. capturing `tsp_x/foozbar`.
->
-> Fix this by escaping the regexes.
-
-**Typical agent draft on the same diff:**
-
-> `fullStringRegex(s)` produced `^s$` — which silently over-matched any spec
-> whose handle contained regex metacharacters (e.g. `tsp_x/foo.bar` matched
-> `tsp_x/fooXbar`). No production spec deliberately exercised regex semantics;
-> this is a latent bug fix. Source diff is two lines per file. The materialized
-> JSON delta is exactly the 613 metacharacter-bearing regexes getting their
-> meta-characters escaped — reviewable now that the predecessor diff
-> determinized the ordering.
-
-**Lesson:** "No production spec deliberately exercised regex semantics" is an
-empirical check — belongs in Test Plan, not Summary. "this is a latent bug fix"
-labels what the example already shows. Sentence 3 describes diff shape. Sentence
-4 previews the predecessor instead of a brief xref. The good version drops all
-four; the example carries the bug.
-
-### Refactor — short message with invariant
-
-**Good (3 sentences + Test Plan):**
-
-> This refactor does NOT change the materialized JSON.
->
-> The goal here is to make migration specs operate on explicit job handles,
-> **not** on regexes. Regexes are confusing and risky (the prior diff shows a
-> latent bug).
->
-> Test Plan:
->
-> - CI (materialized JSON byte-identity is enforced).
-
-### Substantial change — essay-shaped
-
-```
-# Motivation
-<short — problem statement, situation, or proposal context>
-
-# Mechanism (only when non-obvious)
-<short, code-pointer-style>
-
-# Alternatives rejected
-- <option A> — <one-line why not>
-- <option B> — <one-line why not>
-
-# Killswitch / rollback (for risky changes)
-<killswitch name, what flipping it does>
-
-# Notes on design choices (optional)
-- <specific decision> — <one-line why>
-```
 
 ## Note on genre
 

@@ -26,28 +26,12 @@
 #include <boost/preprocessor/logical/not.hpp>
 #include <boost/preprocessor/tuple/to_list.hpp>
 
-#include <folly/CppAttributes.h>
-#include <folly/Portability.h>
-#include <folly/Preprocessor.h>
+#include <folly/CPortability.h>
 #include <folly/Traits.h>
 #include <folly/Utility.h>
 #include <folly/lang/CustomizationPoint.h>
 
 #define FOLLY_DETAIL_FORWARD_REF(a) static_cast<decltype(a)&&>(a)
-
-/**
- *  include or backport:
- *  * std::invoke
- *  * std::invoke_result
- *  * std::invoke_result_t
- *  * std::is_invocable
- *  * std::is_invocable_r
- *  * std::is_invocable_r_v
- *  * std::is_nothrow_invocable
- *  * std::is_nothrow_invocable_v
- *  * std::is_nothrow_invocable_r
- *  * std::is_nothrow_invocable_r_v
- */
 
 namespace folly {
 
@@ -284,8 +268,6 @@ struct invoke_private_overload;
 
 template <bool, typename I>
 struct invoke_traits_base_ {};
-template <typename I>
-struct invoke_traits_base_<false, I> {};
 template <typename I>
 struct invoke_traits_base_<true, I> {
   inline static constexpr I invoke{};
@@ -665,74 +647,6 @@ invoke_member_wrapper_fn(F) -> invoke_member_wrapper_fn<F>;
       [](auto&& __folly_param_o, auto&&... __folly_param_a) constexpr FOLLY_DETAIL_FORWARD_BODY( \
           FOLLY_DETAIL_FORWARD_REF(__folly_param_o)                                              \
               .membername(FOLLY_DETAIL_FORWARD_REF(__folly_param_a)...)))
-
-/***
- *  FOLLY_CREATE_STATIC_MEMBER_INVOKER
- *
- *  Used to create an invoker type template bound to a specific static-member-
- *  invocable name.
- *
- *  Example:
- *
- *    FOLLY_CREATE_STATIC_MEMBER_INVOKER(foo_invoker, foo);
- *
- *  The type template `foo_invoker` is generated in the current namespace and
- *  may be used as follows:
- *
- *    struct CanFoo {
- *      static int foo(Bar&) { return 1; }
- *      static int foo(Car&&) noexcept { return 2; }
- *    };
- *
- *    using traits = folly::invoke_traits<foo_invoker<CanFoo>>;
- *
- *    traits::invoke(Car{}) // 2
- *
- *    traits::invoke_result<Bar&> // has member
- *    traits::invoke_result_t<Bar&> // int
- *    traits::invoke_result<Bar&&> // empty
- *    traits::invoke_result_t<Bar&&> // error
- *
- *    traits::is_invocable_v<Bar&> // true
- *    traits::is_invocable_v<Bar&&> // false
- *
- *    traits::is_invocable_r_v<int, Bar&> // true
- *    traits::is_invocable_r_v<char*, Bar&> // false
- *
- *    traits::is_nothrow_invocable_v<Bar&> // false
- *    traits::is_nothrow_invocable_v<Car&&> // true
- *
- *    traits::is_nothrow_invocable_v<int, Bar&> // false
- *    traits::is_nothrow_invocable_v<char*, Bar&> // false
- *    traits::is_nothrow_invocable_v<int, Car&&> // true
- *    traits::is_nothrow_invocable_v<char*, Car&&> // false
- */
-#define FOLLY_CREATE_STATIC_MEMBER_INVOKER(classname, membername)       \
-  template <typename T>                                                 \
-  struct classname {                                                    \
-    template <typename... Args, typename U = T>                         \
-    [[maybe_unused]] FOLLY_ERASE_HACK_GCC constexpr auto operator()(    \
-        Args&&... args) const                                           \
-        noexcept(noexcept(U::membername(static_cast<Args&&>(args)...))) \
-            -> decltype(U::membername(static_cast<Args&&>(args)...)) {  \
-      return U::membername(static_cast<Args&&>(args)...);               \
-    }                                                                   \
-  }
-
-/***
- *  FOLLY_CREATE_STATIC_MEMBER_INVOKER_SUITE
- *
- *  Used to create an invoker type template and associated variable template
- *  bound to a specific static-member-invocable name. The invoker variable
- *  template is named like the static-member-invocable name and the invoker type
- *  template is named with a suffix of _fn.
- *
- *  See FOLLY_CREATE_STATIC_MEMBER_INVOKER.
- */
-#define FOLLY_CREATE_STATIC_MEMBER_INVOKER_SUITE(membername)       \
-  FOLLY_CREATE_STATIC_MEMBER_INVOKER(membername##_fn, membername); \
-  template <typename T>                                            \
-  [[maybe_unused]] inline constexpr membername##_fn<T> membername {}
 
 /***
  *  FOLLY_CREATE_MEMBER_ACCESSOR

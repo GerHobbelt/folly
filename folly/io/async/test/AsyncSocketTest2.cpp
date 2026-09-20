@@ -997,13 +997,25 @@ TEST_P(AsyncSocketConnectTFOTest, ConnectWriteAndClose) {
  * Test calling two sequential writes for zero-copy. 1st with TFO
  * we fallback to turn off the zc flag and for following writes
  * we continue as usual.
+ *
+ * Only exercises the io_uring SEND_ZC + TFO first send, so this is its own
+ * test suite instantiated with just that one param combo rather than a
+ * TEST_P on AsyncSocketConnectTFOTest, which would otherwise generate
+ * param variants that can never apply.
  */
-TEST_P(AsyncSocketConnectTFOTest, ConnectWriteZeroCopyFastOpen) {
-  if (getBackendType() != BackendType::IO_URING ||
-      getTFOState() != TFOState::ENABLED) {
-    GTEST_SKIP() << "only exercises the io_uring SEND_ZC + TFO first send";
-  }
+#if FOLLY_ALLOW_TFO
+class AsyncSocketConnectTFOZeroCopyTest : public AsyncSocketConnectTFOTest {};
 
+INSTANTIATE_TEST_SUITE_P(
+    ConnectTFOZeroCopyTests,
+    AsyncSocketConnectTFOZeroCopyTest,
+    ::testing::Values(
+        ConnectTestParam(BackendType::IO_URING, TFOState::ENABLED)),
+    [](const ::testing::TestParamInfo<ConnectTestParam>&) {
+      return "IoUringBackend_TFOEnabled";
+    });
+
+TEST_P(AsyncSocketConnectTFOZeroCopyTest, ConnectWriteZeroCopyFastOpen) {
   TestServer server(/*enableTFO=*/true);
   EventBase& evb = getEventBase();
   std::shared_ptr<AsyncSocket> socket = AsyncSocket::newSocket(&evb);
@@ -1045,6 +1057,7 @@ TEST_P(AsyncSocketConnectTFOTest, ConnectWriteZeroCopyFastOpen) {
   ASSERT_TRUE(socket->isClosedBySelf());
   ASSERT_FALSE(socket->isClosedByPeer());
 }
+#endif // FOLLY_ALLOW_TFO
 
 /**
  * Zero-copy write on an established (non-TFO) io_uring socket. Exercises the
@@ -4534,10 +4547,22 @@ TEST_P(AsyncSocketTest, TestEvbDetachWtRegisteredIOHandlers) {
   socket->close();
 }
 
-TEST_P(AsyncSocketTest, TestEvbDetachThenClose) {
-  if (GetParam() == BackendType::IO_URING) {
-    GTEST_SKIP() << "io_uring does not support detachNetworkSocket()";
-  }
+// Not a TEST_P(AsyncSocketTest, ...): detachNetworkSocket() is structurally
+// unsupported under the io_uring backend (in-flight multishot recv SQEs and
+// per-fd provided buffer rings can't be safely handed off synchronously; see
+// D91003790 for an abandoned attempt at an async-aware variant). A plain,
+// non-parameterized fixture keeps tests like this one off the IoUringBackend
+// instantiation entirely, rather than registering them there and skipping at
+// runtime.
+class AsyncSocketNoIoUringTest : public ::testing::Test {
+ protected:
+  EventBase& getEventBase() { return evb_; }
+
+ private:
+  EventBase evb_;
+};
+
+TEST_F(AsyncSocketNoIoUringTest, TestEvbDetachThenClose) {
   // Start listening on a local port
   TestServer server;
 

@@ -122,7 +122,7 @@ Per pass:
 3. **Author pass.** Fix every in-scope flag immediately.
 4. **Cold re-read.** Read the whole artifact as if written by someone else. Fix
    every in-scope issue it finds; any edit requires another full pass. For
-   high-stakes artifacts (see "Dual revision"), this self cold read does not
+   high-stakes artifacts (see "Fresh Review"), this self cold read does not
    replace the required Codex review sequence after self-convergence.
 
 If significant new input changes an artifact's motivation, constraints, or
@@ -147,17 +147,17 @@ convergence. Resolve concrete critique before fresh review.
 The convergence proof. Required for every pass unless a specialization grants an
 explicit exemption.
 
-Outside prose dual review, format author passes inline in the chat, with each
-finding marked:
+For non-prose artifacts and prose that does not require Fresh Review, format
+author passes inline in the chat, with each finding marked:
 
 - ✅ APPLIED — quote the affected text/element (with location), state the
   change.
 - ❌ REJECTED — quote the affected text/element, state why kept.
 
-For prose dual review, use the `MUST_TAKE` / `MINOR` / `REJECTED` classes under
-"Integration and closure" for reviewer and author findings. Quote the affected
-text and state the applied change or why it was rejected. For `MINOR`, also say
-why the candidate was acceptable without it.
+When prose requires Fresh Review, use the `MUST_TAKE` / `MINOR` / `REJECTED`
+classes under "Integration and closure" for reviewer and author findings. Quote
+the affected text and state the applied change or why it was rejected. For
+`MINOR`, also say why the candidate was acceptable without it.
 
 In either format, list each `SCOPE_EXPANSION` separately.
 
@@ -184,7 +184,7 @@ already emitted artifacts, but it must not be the first place they appear. Relay
 a CLI delegate's `passes.md` entries when you next act on the task or are asked;
 never wake just to relay.
 
-For dual revision, include all reviewer output directories in the next
+For fresh review, include all reviewer output directories in the next
 accountability artifact. If no later artifact is due, include them in the final
 debrief instead. They already preserve the exact reports and process traces; do
 not add a separate relay step. Paste a complete report only on request or when
@@ -196,21 +196,7 @@ accountability artifact, which follows the author / cold-read step above. If you
 are about to type "Done" / "Applied" / etc. without having emitted every
 required pass artifact, you are not done.
 
-**Rule-doc structural audit.** For any rule-doc edit, the artifact must show
-placement and consolidation work. Include:
-
-- **Rule-application search**: name which existing rules govern the edit's
-  topic. Place the edit next to them. Skipping this is how existing rules get
-  silently ignored.
-- Related rule(s) found, with file / heading or search terms that found none.
-- The destination heading and adjacent headings checked for fit.
-- Related files read in full.
-- The consolidation decision: moved / merged / cross-referenced / deliberately
-  left separate, with a reason.
-
-Bare conclusions like "no structural issues" are invalid.
-
-## Dual Revision
+## Fresh Review
 
 Self-revision alone has self-anchoring bias: the author's choices feel
 load-bearing, removing feels like loss, and container restructures get missed.
@@ -286,6 +272,9 @@ returns an alternative or findings.
   is execution-only, not a readable input.
 - For review of a change, read-only access to the diff.
 
+Treat task-note wording as evidence, not approved prose: define, replace, or cut
+language the intended reader would not understand.
+
 Mark each source path as required to read or merely permitted.
 
 For prose, a requested addition must name the reader task or required
@@ -297,6 +286,10 @@ enough to keep it; "shorter" alone is not enough to cut it.
 author-side passes. Before acting on review, mark any useful proposal outside
 the user's agreed task as `SCOPE_EXPANSION`. Without user approval, do not apply
 it or let it block completion.
+
+For prose, compare the candidate with the independent frame by reader model and
+structure, not sentence by sentence. Neither is preferred; keep the structure
+that better serves the reader.
 
 For external prose review, classify every remaining fresh-reviewer finding
 before editing; its response already integrates the cold report:
@@ -360,31 +353,9 @@ finish, resume above at step 2.
 
 **Run external review:** follow `{FA}/critic-iterate/run-review.md`.
 
-**Commit / diff messages — separate inner loop from outer evaluator.** The
-author runs the `write.md` inner loop to convergence before the outer evaluator.
-
-Before opening the author draft or cold report, the evaluator drafts from only
-the task note, the rule files selected under "Fresh reviewer inputs," and the
-diff. Treat task-note wording as untrusted: define, replace, or cut anything the
-intended reader would not understand. Emit the finalized draft as required
-above, then follow the general prose order: compare the author draft before
-classifying the cold report.
-
-The evaluator returns the regenerated draft verbatim, followed by quoted rubric
-flags against the author draft. Apply the plain-language check to the author
-draft too, even when its wording came from the task note; include cold-reader
-artifact failures among the flags.
-
-The author uses the general `MUST_TAKE` / `MINOR` / `REJECTED` triage and
-closure rules.
-
-**Structural best-of-both.** Treat the regenerated draft as a diagnostic and
-idea source, not a second draft to blend. Borrow changes that reduce reader
-effort: clearer ordering, plainer language, or less unnecessary text. First
-preserve exactly the structure the target audience needs; when two versions do
-that with equal effort, prefer the shorter one. Reject changes that mainly add
-coverage, copy the reviewer wholesale, or replace a concrete relationship with
-an abstraction the reader must unpack.
+**Commit / diff messages.** Before opening the author draft or cold report, put
+a complete independent message, including its Test Plan, in `REVIEW FRAME:`.
+Then follow the general comparison, triage, and closure rules.
 
 **Context packet discipline (commit messages).** The author or orchestrator
 still builds a context packet for commit messages. For fresh review, pass only
@@ -451,7 +422,7 @@ output feeds convergence. Downgrade only for pure-mechanical work (file moves,
 grep-and-report, ID renames).
 
 Never substitute self-assessment for a required delegated check (Codex reviewer
-calls per Dual Revision, or any subagent call this file mandates).
+calls required by Fresh Review, or any subagent call this file mandates).
 
 **Writing delegation:** use the Codex CLI unless the ambient model is Opus 5+ or
 GPT-5.5+ (check with
@@ -461,22 +432,11 @@ delegating writing, follow `{FA}/critic-iterate/delegated-author.md`.
 ## Resist These Shortcuts
 
 - Do NOT skim on later passes. Each pass must be as careful as the first.
-- Avoid confirmation bias — critic is adversary, not cheerleader.
-- Do NOT defer an in-scope issue to a later pass or reviewer.
 - Do NOT dismiss an in-scope issue as "pre-existing."
-- Do NOT narrate completion before pasting the accountability artifact.
-- Do NOT pick critic dimensions after inspecting the draft.
-- Do NOT use reviewer failure as an escape hatch. Codex CLI infra failure
-  blocks; bad reviewer output must be retried, not accepted.
-- Do NOT skip required dual revision because a commit message "looks tight" or
-  the outer evaluator seems unnecessary. Only the "Dual-Revision Thresholds"
-  exemptions apply.
-- User critique is not dual revision; run the applicable Codex review, including
-  anchor-free regeneration where required.
-- A reviewer result belongs to the exact candidate it inspected, not to a
-  completed workflow stage. After any later text edit, the round no longer
-  covers the final revision; follow "Integration and closure" to choose another
-  pair or close after author review.
+- Do NOT skip required fresh review because a commit message "looks tight." Only
+  the "Fresh Review Thresholds" exemptions apply.
+- User critique is not fresh review; run the applicable Codex review, including
+  the independent `REVIEW FRAME:` where required.
 - Critic-iterate runs the full process on every trigger. Do not label material
   intended for future reuse as scratch. Beyond the explicit exemptions in this
   file, the sole process exemption is an explicit user ask for "one inner loop".
@@ -521,21 +481,22 @@ Then cold re-read per the general cycle.
 
 Every prose edit that triggers this rule requires an accountability artifact.
 
-### Dual-Revision Thresholds
+### Fresh Review Thresholds
 
 The general "high-stakes" definition applies to all writing. Concrete thresholds
 for cases that need them:
 
-- **Commit messages:** dual revision required when the change affects ≥1
+- **Commit messages:** fresh review is required when the change affects ≥1
   sentence of substantive content. Mechanically forced version bumps, renames,
   and pure config-value changes are exempt when one sentence says everything the
   reader needs, the context packet adds no other `Reader must know` fact, and
   the author checks the message against the diff. A design choice or known
-  comprehension failure restores dual revision.
+  comprehension failure restores fresh review.
 - **Rule-doc edits** in the rules package containing this file or another
-  personal or project rule document: dual revision required for every semantic
+  personal or project rule document: fresh review is required for every semantic
   or readability change; there is no size threshold.
-- **Posts seeking input:** dual revision required by default, with no threshold.
+- **Posts seeking input:** fresh review is required by default, with no
+  threshold.
 
 ### Self-Dog-Fooding Gate
 
