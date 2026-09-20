@@ -10,9 +10,9 @@ Resolve package paths relative to this file's directory.
 
 Author and orchestrator sessions load these package files:
 
-- `core/breadcrumbs.md`: always. Before drafting a durable explanation, recover
-  applicable breadcrumbs as specified there.
-- `core/conflicts.md`: before deciding whether a broader rule or skill applies.
+- `task-ledger.md`: when `task-ledger.loader.md` applies. Before drafting a
+  durable explanation, reread the active workstream ledger.
+- `rule-conflicts.md`: before deciding whether a broader rule or skill applies.
 - `writing.md`: before drafting or revising prose.
 - `writing/concise-rules.md`: before editing a rule document.
 - `design-vetting.md`: before choosing a substantive design or correctness fix.
@@ -57,16 +57,19 @@ do not themselves trigger another critic-iterate cycle.
 
 ## Explicit user controls
 
-Apply these only when the user explicitly requests them:
+Apply these only to the current task, and only when the user explicitly requests
+them:
 
 - `no c-i`: skip critic-iterate without stopping the task.
 - `draft-only` or `initial draft`: stop after the first complete artifact,
   before author critique.
 - `c-i-0`: run the General Cycle to convergence, with no external review.
-- `c-i-K` or `critic-iterate-K` (`K > 0`): set the task's external-review budget
-  to `K` rounds.
-- `c-i+K` (`K > 0`): if the previous turn ended because the review budget was
-  exhausted, extend review by `K` rounds.
+
+In these bullets, `K > 0` is a review budget, not a required round count. Finish
+when the closure rules permit, even if rounds remain.
+
+- `c-i-K` or `critic-iterate-K`: set the external-review budget to `K` rounds.
+- `c-i+K`: after an `OutOfBudget` stop, add `K` rounds to that budget.
 
 ## Evidence
 
@@ -136,7 +139,7 @@ the whole artifact with that input in scope. Do not limit the pass to the local
 edit unless the change is an isolated typo or formatting fix.
 
 When critic findings, reviewer findings, or loaded rules appear to conflict,
-apply `core/conflicts.md` before triage.
+apply `rule-conflicts.md` before triage.
 
 Before drafting durable prose, apply `writing.md` "Set the reader before the
 outline".
@@ -163,6 +166,8 @@ For prose dual review, use the `MUST_TAKE` / `MINOR` / `REJECTED` classes under
 "Integration and closure" for reviewer and author findings. Quote the affected
 text and state the applied change or why it was rejected. For `MINOR`, also say
 why the candidate was acceptable without it.
+
+In either format, list each `SCOPE_EXPANSION` separately.
 
 What "text/element (with location)" means by artifact type:
 
@@ -297,14 +302,17 @@ does not need that fact. Truth, relatedness, or hypothetical usefulness is not
 enough to keep it; "shorter" alone is not enough to cut it.
 
 **Integration and closure.** The General Cycle's no-edit rule governs
-author-side passes. For external prose review, classify every fresh-reviewer
-finding before editing; its response already integrates the cold report:
+author-side passes. Before acting on review, mark any useful proposal outside
+the user's agreed task as `SCOPE_EXPANSION`. Without user approval, do not apply
+it or let it block completion.
+
+For external prose review, classify every remaining fresh-reviewer finding
+before editing; its response already integrates the cold report:
 
 - `MUST_TAKE`: must be fixed; leaving it would materially harm correctness or
   the reader's task.
 - `MINOR`: worth fixing, but the artifact still works without it.
-- `REJECTED`: wrong, already addressed, outside the reader's task, or
-  net-negative.
+- `REJECTED`: wrong, already addressed, or net-negative.
 
 A material error, missed requirement, wrong action, or reader blocker is
 `MUST_TAKE`. Escalate if the allowed evidence cannot repair a material finding.
@@ -331,35 +339,34 @@ After each review round:
    - If neither the last fresh review nor later checks found a `MUST_TAKE`
      issue, finish.
    - If every `MUST_TAKE` fix since the last fresh review was mechanical, verify
-     each one directly and finish. Rewriting prose is not mechanical.
+     each one directly and finish. Rewording prose is not mechanical.
    - If review budget remains, start another review round and return to step 1.
    - Otherwise, reread the finished draft.
+     - Start another review round despite the exhausted budget only when:
+       - later edits could cause an important misunderstanding or wrong action;
+         and
+       - no fresh reviewer checked or proposed the resulting meaning.
 
-     Start another review round only when:
-     - later edits could make the reader misunderstand something important or
-       take the wrong action; and
-     - no fresh reviewer checked or proposed the resulting meaning.
+       Tell the user first. When the round finishes, return to step 1 and
+       mention the extra round in the final debrief.
 
-     Tell the user before re-reviewing. When the round finishes, return to step
-     1. Mention any extra rounds in the final debrief.
+     - Otherwise, finish with a notice that starts with the exact text
+       `OutOfBudget:`:
 
-     Otherwise, finish with a notice that starts with the exact text
-     `OutOfBudget:`:
+       > OutOfBudget: This output may have easy-to-spot gaps because I ran out
+       > of review budget. Reply `c-i+K` to allow up to K more review rounds;
+       > later rounds usually yield smaller gains. The default is 1 round;
+       > personal rules may override it with `critic-iterate-N`.
 
-     > OutOfBudget: This output may have easy-to-spot gaps because I ran out of
-     > review budget. Reply `c-i+K` to allow up to K more review rounds; later
-     > rounds usually yield smaller gains. The default is 1 round; personal
-     > rules may override it with `critic-iterate-N`.
-
-Record the dispositions only in the accountability artifact. For other
-artifacts, take the better version, merge, or apply its findings.
+Record dispositions only in the accountability artifact; summarize
+`SCOPE_EXPANSION` items in the final debrief. For other artifacts, take the
+better version, merge, or apply its findings.
 
 Do not edit the candidate while either reviewer runs. If it changes after a
 round starts, that round no longer covers the revision. After the reviewers
 finish, resume above at step 2.
 
-**Codex reviewer mechanism.** Every required reviewer call uses this fixed
-command surface and private output path.
+**Codex reviewer mechanism.** Use this fixed command:
 
 ```bash
 package_dir="$(dirname "$(readlink -f "/path/to/critic-iterate.md")")"
@@ -368,7 +375,6 @@ review_tmp=$(mktemp -d)
 .../codex-reviewer.py \
   --preamble-dir="$package_dir/critic-iterate" \
   --preamble=fresh-review-preamble \
-  --workdir="$(mktemp -d)" \
   "$review_tmp/fresh-prompt.md"
 ```
 
@@ -379,7 +385,6 @@ absolute value; the child shell will not inherit them:
 .../codex-reviewer.py \
   --preamble-dir="$package_dir/critic-iterate" \
   --preamble=cold-review-preamble \
-  --workdir="$(mktemp -d)" \
   "$review_tmp/cold-prompt.md" >"$review_tmp/cold-result.txt"
 ```
 
@@ -395,21 +400,20 @@ Otherwise, treat the round as failed; never scan temporary directories or infer
 a result from partial output.
 
 On success it prints `REVIEW_OUTPUT_DIR=<path>` followed by the review. The
-private directory holds the same review in `review.md`, plus
-`effective-prompt.md`, `run.jsonl`, and `err.txt` for audit.
+private directory holds the same review in `review.md`, the model setting and
+reasoning effort in `metadata.json`, plus `effective-prompt.md`, `run.jsonl`,
+and `err.txt` for audit.
 
 The outer marker names the fresh-review directory. The fresh response includes
 the child marker; the author records both.
 
-Each prompt must name every input its reviewer may read. Do not include raw chat
-or the full context packet. For commit / diff-message review, follow the
-specialization below. The cold reader uses a fresh temporary directory. For the
-fresh reviewer, pass an absolute repository or relative-path base only when it
-needs caller-relative sources or a repository diff. Otherwise use a fresh
-temporary directory as shown above.
+Each prompt must name every input its reviewer may read. Start repo-relative
+commands with `cd <repo> &&`. Do not include raw chat or the full context
+packet. For commit / diff-message review, follow the specialization below.
 
-`run.jsonl` and `err.txt` are process evidence, not material to use when
-revising the artifact. On failure, inspect the smallest relevant log excerpt.
+The author revises from the outer fresh review's `review.md`; it already
+incorporates the cold report. Every other file in either private directory is
+process evidence. On failure, inspect the smallest relevant log excerpt.
 
 Before accepting a prose review, confirm that its only cold-review launch
 precedes any source read or statement about the artifact, that `REVIEW FRAME:`
@@ -466,19 +470,19 @@ the short task note described above, not the whole packet. Structure the
 author-side packet into three named sections so the author can scan it
 predictably:
 
-Before constructing the author packet or reviewer task note, recover applicable
-breadcrumbs as specified in `core/breadcrumbs.md`. Build the author packet from
-current task inputs relevant to Stack context, Reader must know, or Decision
-trail, including the recovered goal and unsuperseded requirements or decisions.
-Before the author uses or dispatches the packet, treat every input as a claim or
-requirement, not approved wording. Apply "Evidence" when a false claim could
-change the message, then check each input against the intended reader's starting
-knowledge. Keep code identifiers when they anchor a fact or help find the
-relevant code. Explain the concrete actor, condition, action, or outcome hidden
-by unfamiliar shorthand, and define unavoidable technical terms on first use.
-Raw input may be overcomplete, but not opaque.
+Before constructing the author packet or reviewer task note, reread the active
+workstream ledger when one exists. Build the author packet from current task
+inputs relevant to Stack context, Reader must know, or Decision trail, including
+any ledger goal and unsuperseded requirements or rationale. Before the author
+uses or dispatches the packet, treat every input as a claim or requirement, not
+approved wording. Apply "Evidence" when a false claim could change the message,
+then check each input against the intended reader's starting knowledge. Keep
+code identifiers when they anchor a fact or help find the relevant code. Explain
+the concrete actor, condition, action, or outcome hidden by unfamiliar
+shorthand, and define unavoidable technical terms on first use. Raw input may be
+overcomplete, but not opaque.
 
-Never pass breadcrumb paths or raw history to the fresh-review task note.
+Never pass ledger paths or raw ledger contents to the fresh-review task note.
 
 - **Stack context** — for diffs in a stack: what predecessors covered and what
   follow-ons will do. Include review-affecting predecessor framing or follow-on

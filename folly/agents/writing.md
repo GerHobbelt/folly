@@ -198,9 +198,9 @@ Example: Prefer `check job migration state vs that of its reservation` over
 body is suspect — "paired" in the bad title above fails this test (paired how,
 with what?). Swap context-dependent jargon for plainer language.
 
-## Two modes — brief or essay
+## Commit Summary — brief or essay
 
-Match the message shape to the change:
+Match the Summary shape to the change:
 
 In either mode, state framing in the prose; rely on external links only for
 detail or evidence.
@@ -213,7 +213,7 @@ cases may need only the reason they were added.
 by several independent reader concerns or by one causal chain that cannot be
 understood correctly in one or two sentences. Diff size does not decide message
 length: a one-line race fix may need how the bug was detected, what caused it,
-why the fix works, and how that was checked.
+and why the fix works.
 
 Example (D104870443, ~70 words):
 
@@ -326,7 +326,7 @@ this section remove context the target audience needs?** Sentence-level cuts
 protect sections that shouldn't exist — every sentence looks defensible when
 read alone.
 
-Commit messages usually don't need these sections:
+Commit Summaries usually don't need these sections:
 
 - **Roadmap / implementation status.** Track future work outside the commit.
 - **File-by-file / shape-of-diff.** Let the diff carry file shape.

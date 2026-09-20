@@ -29,6 +29,8 @@ from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Iterable, Sequence
 
+from folly.agents.scripts import isolated_agent
+
 from . import checkpoint_accounting
 
 
@@ -50,7 +52,9 @@ TOOL_FILES = {
 CHECKPOINT_TOOL_FILES = {
     "backtest-checkpoint": PurePosixPath("backtest/checkpoint.py"),
 }
+AGENT_RUNTIME_FILES = (PurePosixPath("scripts/isolated_agent.py"),)
 RESERVED_INPUT_NAMES = {"AGENTS.md", "AGENTS.override.md"}
+RESERVED_INPUT_ROOTS = {".codex", ".git", ".llms"}
 RULE_LOADING_INSTRUCTION = (
     "Read every rule listed in `rules/rules-inventory.md`, in order. Follow "
     "those rules for conditional loads; do not look for ambient rule files.\n\n"
@@ -78,13 +82,20 @@ class Manifest:
 @dataclass(frozen=True)
 class Run:
     root: Path
-    workdir: Path
-    codex_home: Path
+    agent_workspace: isolated_agent.Workspace
     prompt: Path
     rules_root: Path
     install_rules: bool
     critic_iterate_rounds: int | None
     checkpoint: bool
+
+    @property
+    def workdir(self) -> Path:
+        return self.agent_workspace.task
+
+    @property
+    def agent_home(self) -> Path:
+        return self.agent_workspace.home
 
 
 @dataclass(frozen=True)
@@ -117,6 +128,8 @@ def _validate_input_destination(path: PurePosixPath) -> None:
         raise RunnerError("input destinations may not use the reserved rules/")
     if path.name in RESERVED_INPUT_NAMES:
         raise RunnerError(f"input destination would be loaded as hidden policy: {path}")
+    if path.parts[0] in RESERVED_INPUT_ROOTS:
+        raise RunnerError(f"input destination uses a reserved policy root: {path}")
 
 
 def load_manifest(path: Path) -> Manifest:
@@ -299,7 +312,12 @@ def _generation_sources(
         sources.append((runner_path.parent / "checkpoint_accounting.py").resolve())
     sources.extend(
         _resolve_below(rules_root, path, "rule")
-        for path in (*selected_rules, *support_files, *tool_files)
+        for path in (
+            *AGENT_RUNTIME_FILES,
+            *selected_rules,
+            *support_files,
+            *tool_files,
+        )
     )
     return tuple(dict.fromkeys(sources))
 
@@ -466,17 +484,16 @@ def prepare(
         tempfile.mkdtemp(prefix=f"{date.today():%Y%m%d}-{scenario.name}-", dir=run_root)
     )
     try:
+        agent_workspace = isolated_agent.CODEX.prepare(root, initialize_engine=False)
         run = Run(
             root,
-            root / "workdir",
-            root / "codex-home",
+            agent_workspace,
             root / "author-prompt.md",
             rules_root,
             install_rules,
             critic_iterate_rounds,
             checkpoint_run,
         )
-        run.workdir.mkdir()
         prompt_prefix = RULE_LOADING_INSTRUCTION if install_rules else ""
         if critic_iterate_rounds is not None:
             prompt_prefix += f"c-i-{critic_iterate_rounds}\n\n"
@@ -509,7 +526,7 @@ def prepare(
         (root / "run.json").write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n"
         )
-    except (OSError, RunnerError):
+    except (OSError, RunnerError, isolated_agent.IsolationError):
         shutil.rmtree(root, ignore_errors=True)
         raise
     return run
@@ -555,7 +572,7 @@ def _install_tools(run: Run) -> tuple[Path, dict[str, Path]]:
     if run.checkpoint:
         # The installed reviewer wrapper writes its attempts here for accounting.
         (run.root / "reviews").mkdir(mode=0o700)
-    policy = run.codex_home / "rules" / "default.rules"
+    policy = run.agent_home / "rules" / "default.rules"
     policy.parent.mkdir(parents=True)
     policy.write_text("\n".join(lines) + "\n")
     return tool_bin, tools
@@ -580,21 +597,10 @@ def _preserve_output(run: Run) -> bool:
     return output_stat.st_size > 0
 
 
-def _author_environment(run: Run, tool_bin: Path | None) -> dict[str, str]:
-    environment = os.environ.copy()
-    for name in tuple(environment):
-        if name.startswith(("CODEX_", "PYTHON")) or name in {
-            "BASH_ENV",
-            "CRITIC_ITERATE_RULES_DIR",
-            "ENV",
-            "FOLLY_BACKTEST_RUN_DIR",
-            "FOLLY_BACKTEST_WORKDIR",
-            "ZDOTDIR",
-        }:
-            environment.pop(name)
-    environment["CODEX_HOME"] = str(run.codex_home)
+def _author_environment_additions(run: Run, tool_bin: Path | None) -> dict[str, str]:
+    environment = {}
     if tool_bin is not None:
-        inherited_path = environment.get("PATH")
+        inherited_path = os.environ.get("PATH")
         environment["PATH"] = (
             os.pathsep.join([str(tool_bin), inherited_path])
             if inherited_path
@@ -606,24 +612,6 @@ def _author_environment(run: Run, tool_bin: Path | None) -> dict[str, str]:
         environment["FOLLY_BACKTEST_RUN_DIR"] = str(run.root)
         environment["FOLLY_BACKTEST_WORKDIR"] = str(run.workdir)
     return environment
-
-
-def _author_command(run: Run, codex: Path, model: str, effort: str) -> list[str]:
-    return [
-        str(codex),
-        "-a",
-        "never",
-        "exec",
-        "--skip-git-repo-check",
-        "--json",
-        "--model",
-        model,
-        "--config",
-        f"model_reasoning_effort={json.dumps(effort)}",
-        "--cd",
-        str(run.workdir),
-        "-",
-    ]
 
 
 def _finish_run(run: Run, returncode: int) -> int:
@@ -652,6 +640,8 @@ def _finish_run(run: Run, returncode: int) -> int:
             records = checkpoint_accounting.collect(
                 run.root,
                 run.critic_iterate_rounds,
+                output=run.workdir / "output.md",
+                agent_home=run.agent_home,
             )
         except Exception:
             # The author succeeded; preserve the accounting traceback instead of
@@ -677,8 +667,6 @@ def launch(
         if run.install_rules:
             tool_bin, tools = _install_tools(run)
             executables.update(tools)
-        else:
-            run.codex_home.mkdir()
         _update_metadata(
             run,
             executables={
@@ -689,23 +677,31 @@ def launch(
         _update_metadata(run, status="launch-error")
         raise
 
-    environment = _author_environment(run, tool_bin)
-    command = _author_command(run, codex_path, model, effort)
     try:
+        isolated_agent.CODEX.initialize(
+            run.agent_workspace, command_runner=command_runner
+        )
         with (
             run.prompt.open("rb") as stdin,
             (run.root / "trace.jsonl").open("wb") as stdout,
             (run.root / "err.txt").open("wb") as stderr,
         ):
-            result = command_runner(
-                command,
+            result = isolated_agent.CODEX.run(
+                run.agent_workspace,
+                isolated_agent.Request(
+                    model=model,
+                    effort=effort,
+                    access="workspace-write",
+                    working_directory="task",
+                ),
                 stdin=stdin,
                 stdout=stdout,
                 stderr=stderr,
-                env=environment,
-                check=False,
+                additions=_author_environment_additions(run, tool_bin),
+                executable=codex_path,
+                command_runner=command_runner,
             )
-    except OSError:
+    except (OSError, RunnerError, isolated_agent.IsolationError):
         _update_metadata(run, status="launch-error")
         raise
     return _finish_run(run, result.returncode)
@@ -783,7 +779,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.model,
             args.reasoning_effort,
         )
-    except (RunnerError, json.JSONDecodeError, OSError) as error:
+    except (
+        RunnerError,
+        isolated_agent.IsolationError,
+        json.JSONDecodeError,
+        OSError,
+    ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 

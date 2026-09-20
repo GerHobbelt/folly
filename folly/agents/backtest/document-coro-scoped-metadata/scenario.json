@@ -28,9 +28,8 @@
     }
   ],
   "rules": [
-    "core.md",
-    "core/breadcrumbs.md",
-    "core/conflicts.md",
+    "task-ledger.md",
+    "rule-conflicts.md",
     "design-vetting.md",
     "writing.md",
     "critic-iterate.md"

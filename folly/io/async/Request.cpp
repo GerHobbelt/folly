@@ -422,13 +422,13 @@ RequestContext::State::insertNewData(
     RequestContext::State::Combined* cur,
     const RequestToken& token,
     std::unique_ptr<RequestData>& data,
-    bool found) {
+    bool tokenWasPresent) {
   Combined* newCombined = nullptr;
-  // Update value to point to the new data.
-  const bool willInsertCallbackData =
-      data && data->hasCallback() && !cur->callbackData_.contains(data.get());
-  if ((!found || willInsertCallbackData) && cur->needExpand()) {
-    // Replace the current Combined with an expanded one
+  const bool willInsertCallbackData = data && data->hasCallback();
+  // We can skip the needExpand() check if the token insertion does
+  // not need expansion since it was just erased, so it can take the
+  // same slot, and we're not inserting into callbackData.
+  if ((!tokenWasPresent || willInsertCallbackData) && cur->needExpand()) {
     newCombined = expand(cur);
     cur = newCombined;
     cur->acquireDataRefs();
@@ -775,6 +775,26 @@ RequestContext::setShallowCopyContext() {
     return staticContext->requestContext.get();
   }
   return nullptr;
+}
+
+void RequestContextSaverScopeGuard::setContext(
+    std::shared_ptr<RequestContext>&& ctx) {
+  // Consume the argument even when there is nothing to replace, like
+  // RequestContext::setContext() does.
+  auto newCtx = std::move(ctx);
+  if (RequestContext::try_get() == newCtx.get()) {
+    return; // Nothing to replace.
+  }
+  // Destruction of the current context happens under prev_ context.
+  std::ignore = RequestContext::setContext(std::move(prev_));
+  prev_ = RequestContext::setContext(std::move(newCtx));
+}
+
+void RequestContextSaverScopeGuard::restoreContext() {
+  if (RequestContext::try_get() == prev_.get()) {
+    return; // Avoid a shared_ptr copy if there is nothing to do.
+  }
+  std::ignore = RequestContext::setContext(prev_);
 }
 
 #ifndef NDEBUG

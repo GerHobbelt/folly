@@ -2,13 +2,44 @@
 
 ## Only for humans & agents editing rules
 
-`README.md`, every `CONTRIB.md`, `*.contrib.md`, and `*.entrypoint.md` are
-development material, not operational rules. Never load them as task policy. If
-asked to do so outside rule development, stop and ask the user.
+`README.md`, every `CONTRIB.md`, and `*.contrib.md` are development material,
+not operational rules. Never load them as task policy. If asked to do so outside
+rule development, stop and ask the user.
 
 The **user rule file** (`AGENTS.md`, `CLAUDE.md`, or equivalent) starts rule
 loading. During normal work, load only operational files it or another rule
 names.
+
+## How do I use this directory?
+
+Rule packages are identified by `*.loader.md` files. Each loader lists brief
+trigger conditions for its rules. Read on to add these to your rule file. Then,
+read the [tutorial](TUTORIAL.md).
+
+### Meta-internal installation
+
+Tell your agent to "follow fbcode/folly/agents/facebook/INSTALL.md".
+
+### OSS installation
+
+Symlink this dir to `~/folly_agents`, and add this to your user rule file:
+
+```markdown
+# `folly/agents` rules
+
+`{FA}` means `~/folly_agents`; spell file reads with ~.
+
+Immediately batch-load these from `{FA}/`:
+
+- `rule-conflicts.loader.md`
+- `task-ledger.loader.md`
+- `critic-iterate.loader.md`
+- `design-vetting.loader.md`
+- `writing.loader.md`
+- `code.loader.md`
+
+If a loader or rule is missing, stop and notify the user.
+```
 
 ## Purpose
 
@@ -24,6 +55,8 @@ the context they just consumed rather than the context their readers have.
 
 The main rules target those gaps:
 
+- `task-ledger.md` keeps current goals, requirements, and unfinished work
+  recoverable across long or interleaved workstreams.
 - `critic-iterate.md` improves quality by spending more model time and tokens on
   repeated drafting and independent review across design, code, and writing.
 - `design-vetting.md` surfaces requirements, constraints, failure modes, and the
@@ -35,9 +68,6 @@ The main rules target those gaps:
 
 ## Find files
 
-- `<name>.entrypoint.md` marks `<name>.md` as the first rule in a package. It
-  holds the trigger and loading text that a generator can copy into the user
-  rule file. Paths inside it are written from the user rule file's location.
 - Other `.md` files may contain rules or support material, but their names do
   not activate them or make them package roots. During a task, load one only
   when the user rule file or another operational rule names it.

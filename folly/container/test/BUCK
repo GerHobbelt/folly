@@ -441,19 +441,7 @@ fb_dirsync_cpp_unittest(
         "//folly/container:f14_hash",
         "//folly/container:regex_match_cache",
         "//folly/container:sorted_vector_types",
-        "//folly/container:span",
         "//folly/lang:keep",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-    ],
-)
-
-fb_dirsync_cpp_unittest(
-    name = "span_test",
-    srcs = ["span_test.cpp"],
-    supports_static_listing = False,
-    deps = [
-        "//folly/container:span",
         "//folly/portability:gmock",
         "//folly/portability:gtest",
     ],
