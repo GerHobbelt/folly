@@ -6,7 +6,7 @@ load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_binary.bzl", "fb_dirsync_cpp_binary")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_unittest.bzl", "fb_dirsync_cpp_unittest")
-load("../../../defs.bzl", "folly_xplat_cxx_binary", "folly_xplat_cxx_library", "folly_xplat_cxx_test")
+load("../../../defs.bzl", "folly_xplat_cxx_library", "folly_xplat_cxx_test")
 load("../../../io/async/test/certs/defs.bzl", "alias_pem")
 
 oncall("fbcode_entropy_wardens_folly")
@@ -76,18 +76,17 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_pipe_test",
     srcs = ["AsyncPipeTest.cpp"],
-    raw_headers = [],
+    contacts = ["oncall+secure_pipes@xmail.facebook.com"],
+    emails = ["oncall+secure_pipes@xmail.facebook.com"],
     supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly:memory",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_pipe",
-        "//xplat/folly/io/async:async_socket",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_pipe",
+        "//folly/portability:gtest",
+        "//folly/portability:unistd",
     ],
 )
 
@@ -175,51 +174,48 @@ non_fbcode_target(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_ssl_socket_write_test",
-    srcs = [
-        "AsyncSSLSocketWriteTest.cpp",
-    ],
+    srcs = ["AsyncSSLSocketWriteTest.cpp"],
     contacts = ["oncall+secure_pipes@xmail.facebook.com"],
+    emails = ["oncall+secure_pipes@xmail.facebook.com"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_socket",
-        "//xplat/folly/io/async:async_ssl_socket",
+        "//folly/io:iobuf",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_socket",
+        "//folly/io/async:async_ssl_socket",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_socket_exception_test",
-    srcs = [
-        "AsyncSocketExceptionTest.cpp",
-    ],
+    srcs = ["AsyncSocketExceptionTest.cpp"],
     contacts = ["oncall+secure_pipes@xmail.facebook.com"],
+    emails = ["oncall+secure_pipes@xmail.facebook.com"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "fbsource//xplat/folly/portability:openssl",
-        "//xplat/folly:conv",
-        "//xplat/folly/io/async:async_socket_exception",
-        "//xplat/folly/io/async:ssl_context",
-        "//xplat/folly/io/async/ssl:ssl_errors",
+        "//folly:conv",
+        "//folly/io/async:async_socket_exception",
+        "//folly/io/async:ssl_context",
+        "//folly/io/async/ssl:ssl_errors",
+        "//folly/portability:gtest",
+        "//folly/portability:openssl",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_socket_observer_test",
-    srcs = [
-        "AsyncSocketObserverTest.cpp",
-    ],
+    srcs = ["AsyncSocketObserverTest.cpp"],
+    labels = ["case-isolation-failure"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
         ":async_socket_test_lib",
         ":mocks",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
     ],
 )
 
@@ -244,146 +240,141 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_socket_test",
     srcs = [
         "AsyncSocketTest.cpp",
-        # Disabled until we have folly/test:socket_address_test_helper
         "AsyncSocketTest2.cpp",
     ],
+    labels = ["case-isolation-failure"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/io:socket_option_map",
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "fbsource//xplat/folly/portability:sockets",
-        "fbsource//xplat/folly/portability:unistd",
-        "fbsource//xplat/folly/synchronization:baton",
-        "fbsource//xplat/folly/synchronization:rw_spin_lock",
-        ":async_socket_test_lib",
+        ":async_socket_test_lib",  # @manual
         ":blocking_socket",
+        ":callback_state_enum",
         ":conn_callback",
         ":mocks",
         ":tfo_util",
         ":util",
-        "//xplat/folly:exception_wrapper",
-        "//xplat/folly:network_address",
-        "//xplat/folly:random",
-        "//xplat/folly:test_socket_address_test_helper",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_socket",
-        "//xplat/folly/io/async:scoped_event_base_thread",
-        "//xplat/folly/io/async:server_socket",
-        "//xplat/folly/net:net_ops",
-        "//xplat/folly/net:network_socket",
-        "//xplat/folly/net/test:mock_net_ops_dispatcher",
-        "//xplat/folly/net/test:mock_tcpinfo_dispatcher",
-        "//xplat/folly/testing:test_util",
+        "//folly:exception_wrapper",
+        "//folly:network_address",
+        "//folly:random",
+        "//folly/io:iobuf",
+        "//folly/io:socket_option_map",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_socket",
+        "//folly/io/async:scoped_event_base_thread",
+        "//folly/io/async:server_socket",
+        "//folly/net:net_ops",
+        "//folly/net:network_socket",
+        "//folly/net/test:mock_net_ops_dispatcher",
+        "//folly/net/test:mock_tcpinfo_dispatcher",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
+        "//folly/portability:sockets",
+        "//folly/portability:unistd",
+        "//folly/synchronization:baton",
+        "//folly/synchronization:rw_spin_lock",
+        "//folly/test:socket_address_test_helper",
+        "//folly/testing:test_util",
+    ],
+    external_deps = [
+        ("glibc", None, "rt"),
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_transport_test",
-    srcs = [
-        "AsyncTransportTest.cpp",
-    ],
+    srcs = ["AsyncTransportTest.cpp"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
         ":mocks",
-        "//xplat/folly/io/async:async_socket",
-        "//xplat/folly/io/async:async_transport",
+        "//folly/io/async:async_socket",
+        "//folly/io/async:async_transport",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "event_handler_test",
-    srcs = [
-        "EventHandlerTest.cpp",
-    ],
+    srcs = ["EventHandlerTest.cpp"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "fbsource//xplat/folly/portability:sockets",
-        "//xplat/folly:mpmc_queue",
-        "//xplat/folly:scope_guard",
-        "//xplat/folly/io/async:async_base",
+        "//folly:mpmc_queue",
+        "//folly:scope_guard",
+        "//folly/io/async:async_base",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
+        "//folly/portability:sockets",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_timeout_test",
     srcs = ["AsyncTimeoutTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly/io/async:async_base",
+        "//folly/io/async:async_base",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_udp_socket_test",
-    srcs = [
-        # "AsyncUDPSocketTest.cpp",
-    ],
+    srcs = ["AsyncUDPSocketTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
+    labels = ["heavyweight"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/io:socket_option_map",
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "fbsource//xplat/folly/portability:sockets",
-        "//xplat/folly:conv",
-        "//xplat/folly:network_address",
-        "//xplat/folly:string",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_udp_server_socket",
-        "//xplat/folly/io/async:async_udp_socket",
-        "//xplat/folly/testing:test_util",
+        "//folly:conv",
+        "//folly:network_address",
+        "//folly:string",
+        "//folly/io:iobuf",
+        "//folly/io:socket_option_map",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_udp_server_socket",
+        "//folly/io/async:async_udp_socket",
+        "//folly/net/test:mock_net_ops_dispatcher",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
+        "//folly/portability:sockets",
+        "//folly/testing:test_util",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_udp_socket_gso_gro_test",
-    srcs = [
-        # "AsyncUDPSocketGSOGROTest.cpp",
-    ],
+    srcs = ["AsyncUDPSocketGSOGROTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly:conv",
-        "//xplat/folly:network_address",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_udp_server_socket",
-        "//xplat/folly/io/async:async_udp_socket",
+        "//folly:conv",
+        "//folly:network_address",
+        "//folly/io:iobuf",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_udp_server_socket",
+        "//folly/io/async:async_udp_socket",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "async_udp_socket_sendmmsg_test",
     srcs = ["AsyncUDPSocketSendmmsgTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/io:iobuf",
-        "fbsource//xplat/folly/portability:gmock",
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly:conv",
-        "//xplat/folly:network_address",
-        "//xplat/folly/io/async:async_base",
-        "//xplat/folly/io/async:async_udp_server_socket",
-        "//xplat/folly/io/async:async_udp_socket",
+        "//folly:conv",
+        "//folly:network_address",
+        "//folly/io:iobuf",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_udp_server_socket",
+        "//folly/io/async:async_udp_socket",
+        "//folly/portability:gmock",
+        "//folly/portability:gtest",
     ],
 )
 
@@ -420,54 +411,50 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "delayed_destruction_base_test",
     srcs = ["DelayedDestructionBaseTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly/io/async:delayed_destruction",
+        "//folly/io/async:delayed_destruction",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "delayed_destruction_test",
     srcs = ["DelayedDestructionTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//third-party/glog:glog",
-        "//xplat/folly/io/async:delayed_destruction",
+        "fbsource//third-party/glog:glog",
+        "//folly/io/async:delayed_destruction",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "destructor_check_test",
     srcs = ["DestructorCheckTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly:memory",
-        "//xplat/folly/io/async:destructor_check",
+        "//folly:memory",
+        "//folly/io/async:destructor_check",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_binary,
+fb_dirsync_cpp_binary(
     name = "event_base_benchmark",
     srcs = ["EventBaseBenchmark.cpp"],
+    headers = [],
     allocator = "malloc",
-    raw_headers = [],
     deps = [
-        "fbsource//xplat/folly/portability:gflags",
-        "//xplat/folly:benchmark",
-        "//xplat/folly/io/async:async_base",
+        "//folly:benchmark",
+        "//folly/io/async:async_base",
+        "//folly/portability:gflags",
     ],
 )
 
@@ -494,33 +481,35 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "event_base_test",
     srcs = ["EventBaseTest.cpp"],
     allocator = "malloc",
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
+    labels = [
+        "heavyweight",
+        "load-sensitive-timing-test",
+    ],
     supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/init:init",
-        "fbsource//xplat/folly/portability:gtest",
         ":async_signal_handler_test_lib",
         ":event_base_test_lib",
+        "//folly/init:init",
+        "//folly/portability:gtest",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "event_base_local_test",
     srcs = ["EventBaseLocalTest.cpp"],
     allocator = "malloc",
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "fbsource//xplat/folly/synchronization:baton",
-        "//xplat/folly/io/async:async_base",
+        "//folly/io/async:async_base",
+        "//folly/portability:gtest",
+        "//folly/synchronization:baton",
     ],
 )
 
@@ -554,16 +543,17 @@ fb_dirsync_cpp_unittest(
 #     ],
 # )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "hhwheel_timer_test",
     srcs = ["HHWheelTimerTest.cpp"],
     contacts = ["oncall+thrift@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+thrift@xmail.facebook.com"],
+    labels = ["slow"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
         ":util",
-        "//xplat/folly/io/async:async_base",
+        "//folly/io/async:async_base",
+        "//folly/portability:gtest",
+        "//folly/portability:unistd",
     ],
 )
 
@@ -754,18 +744,17 @@ non_fbcode_target(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "ssl_options_test",
     srcs = ["SSLOptionsTest.cpp"],
     contacts = ["oncall+secure_pipes@xmail.facebook.com"],
-    raw_headers = [],
+    emails = ["oncall+secure_pipes@xmail.facebook.com"],
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
         ":ssl_util",
-        "//xplat/folly/io/async:ssl_context",
-        "//xplat/folly/io/async:ssl_options",
-        "//xplat/folly/ssl:openssl_ptr_types",
+        "//folly/io/async:ssl_context",
+        "//folly/io/async:ssl_options",
+        "//folly/portability:gtest",
+        "//folly/ssl:openssl_ptr_types",
     ],
 )
 
@@ -929,22 +918,6 @@ fbcode_target(
 
 fbcode_target(
     _kind = cpp_unittest,
-    name = "async_pipe_test",
-    srcs = [
-        "AsyncPipeTest.cpp",
-    ],
-    emails = ["oncall+secure_pipes@xmail.facebook.com"],
-    supports_static_listing = False,
-    deps = [
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_pipe",
-        "//folly/portability:gtest",
-        "//folly/portability:unistd",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
     name = "async_ssl_socket_test",
     srcs = [
         "AsyncSSLSocketTest.cpp",
@@ -1008,207 +981,6 @@ fbcode_target(
 
 fbcode_target(
     _kind = cpp_unittest,
-    name = "async_ssl_socket_write_test",
-    srcs = [
-        "AsyncSSLSocketWriteTest.cpp",
-    ],
-    emails = ["oncall+secure_pipes@xmail.facebook.com"],
-    supports_static_listing = False,
-    deps = [
-        "//folly/io:iobuf",
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_socket",
-        "//folly/io/async:async_ssl_socket",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_socket_exception_test",
-    srcs = [
-        "AsyncSocketExceptionTest.cpp",
-    ],
-    emails = ["oncall+secure_pipes@xmail.facebook.com"],
-    supports_static_listing = False,
-    deps = [
-        "//folly:conv",
-        "//folly/io/async:async_socket_exception",
-        "//folly/io/async:ssl_context",
-        "//folly/io/async/ssl:ssl_errors",
-        "//folly/portability:gtest",
-        "//folly/portability:openssl",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_socket_observer_test",
-    srcs = [
-        "AsyncSocketObserverTest.cpp",
-    ],
-    labels = ["case-isolation-failure"],
-    supports_static_listing = False,
-    deps = [
-        ":async_socket_test_lib",
-        ":mocks",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_socket_test",
-    srcs = [
-        "AsyncSocketTest.cpp",
-        "AsyncSocketTest2.cpp",
-    ],
-    labels = ["case-isolation-failure"],
-    supports_static_listing = False,
-    deps = [
-        ":async_socket_test_lib",  # @manual
-        ":blocking_socket",
-        ":callback_state_enum",
-        ":conn_callback",
-        ":mocks",
-        ":tfo_util",
-        ":util",
-        "//folly:exception_wrapper",
-        "//folly:network_address",
-        "//folly:random",
-        "//folly/io:iobuf",
-        "//folly/io:socket_option_map",
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_socket",
-        "//folly/io/async:scoped_event_base_thread",
-        "//folly/io/async:server_socket",
-        "//folly/net:net_ops",
-        "//folly/net:network_socket",
-        "//folly/net/test:mock_net_ops_dispatcher",
-        "//folly/net/test:mock_tcpinfo_dispatcher",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-        "//folly/portability:sockets",
-        "//folly/portability:unistd",
-        "//folly/synchronization:baton",
-        "//folly/synchronization:rw_spin_lock",
-        "//folly/test:socket_address_test_helper",
-        "//folly/testing:test_util",
-    ],
-    external_deps = [
-        ("glibc", None, "rt"),
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_transport_test",
-    srcs = [
-        "AsyncTransportTest.cpp",
-    ],
-    supports_static_listing = False,
-    deps = [
-        ":mocks",
-        "//folly/io/async:async_socket",
-        "//folly/io/async:async_transport",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "event_handler_test",
-    srcs = [
-        "EventHandlerTest.cpp",
-    ],
-    supports_static_listing = False,
-    deps = [
-        "//folly:mpmc_queue",
-        "//folly:scope_guard",
-        "//folly/io/async:async_base",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-        "//folly/portability:sockets",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_timeout_test",
-    srcs = ["AsyncTimeoutTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly/io/async:async_base",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_udp_socket_test",
-    srcs = ["AsyncUDPSocketTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    labels = ["heavyweight"],
-    supports_static_listing = False,
-    deps = [
-        "//folly:conv",
-        "//folly:network_address",
-        "//folly:string",
-        "//folly/io:iobuf",
-        "//folly/io:socket_option_map",
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_udp_server_socket",
-        "//folly/io/async:async_udp_socket",
-        "//folly/net/test:mock_net_ops_dispatcher",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-        "//folly/portability:sockets",
-        "//folly/testing:test_util",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_udp_socket_gso_gro_test",
-    srcs = ["AsyncUDPSocketGSOGROTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly:conv",
-        "//folly:network_address",
-        "//folly/io:iobuf",
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_udp_server_socket",
-        "//folly/io/async:async_udp_socket",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "async_udp_socket_sendmmsg_test",
-    srcs = ["AsyncUDPSocketSendmmsgTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly:conv",
-        "//folly:network_address",
-        "//folly/io:iobuf",
-        "//folly/io/async:async_base",
-        "//folly/io/async:async_udp_server_socket",
-        "//folly/io/async:async_udp_socket",
-        "//folly/portability:gmock",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
     name = "decorated_async_transport_wrapper_test",
     srcs = ["DecoratedAsyncTransportWrapperTest.cpp"],
     deps = [
@@ -1216,91 +988,6 @@ fbcode_target(
         "//folly/io/async:async_transport",
         "//folly/io/async:decorated_async_transport_wrapper",
         "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "delayed_destruction_base_test",
-    srcs = ["DelayedDestructionBaseTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly/io/async:delayed_destruction",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "delayed_destruction_test",
-    srcs = ["DelayedDestructionTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "fbsource//third-party/glog:glog",
-        "//folly/io/async:delayed_destruction",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "destructor_check_test",
-    srcs = ["DestructorCheckTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly:memory",
-        "//folly/io/async:destructor_check",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_binary,
-    name = "event_base_benchmark",
-    srcs = ["EventBaseBenchmark.cpp"],
-    headers = [],
-    allocator = "malloc",
-    deps = [
-        "//folly:benchmark",
-        "//folly/io/async:async_base",
-        "//folly/portability:gflags",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "event_base_test",
-    srcs = ["EventBaseTest.cpp"],
-    headers = [],
-    allocator = "malloc",
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    labels = [
-        "heavyweight",
-        "load-sensitive-timing-test",
-    ],
-    supports_static_listing = False,
-    deps = [
-        ":async_signal_handler_test_lib",
-        ":event_base_test_lib",
-        "//folly/init:init",
-        "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "event_base_local_test",
-    srcs = ["EventBaseLocalTest.cpp"],
-    headers = [],
-    allocator = "malloc",
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    deps = [
-        "//folly/io/async:async_base",
-        "//folly/portability:gtest",
-        "//folly/synchronization:baton",
     ],
 )
 
@@ -1319,21 +1006,6 @@ fbcode_target(
         "//folly:random",
         "//folly/io/async:async_base",
         "//folly/portability:gtest",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "hhwheel_timer_test",
-    srcs = ["HHWheelTimerTest.cpp"],
-    headers = [],
-    emails = ["oncall+thrift@xmail.facebook.com"],
-    labels = ["slow"],
-    deps = [
-        ":util",
-        "//folly/io/async:async_base",
-        "//folly/portability:gtest",
-        "//folly/portability:unistd",
     ],
 )
 
@@ -1443,21 +1115,6 @@ fbcode_target(
         "//folly/io/async:ssl_context",
         "//folly/portability:gtest",
         "//folly/testing:test_util",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "ssl_options_test",
-    srcs = ["SSLOptionsTest.cpp"],
-    headers = [],
-    emails = ["oncall+secure_pipes@xmail.facebook.com"],
-    deps = [
-        ":ssl_util",
-        "//folly/io/async:ssl_context",
-        "//folly/io/async:ssl_options",
-        "//folly/portability:gtest",
-        "//folly/ssl:openssl_ptr_types",
     ],
 )
 

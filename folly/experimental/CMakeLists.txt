@@ -23,14 +23,6 @@ folly_add_library(
 )
 
 folly_add_library(
-  NAME flat_combining_priority_queue
-  HEADERS
-    FlatCombiningPriorityQueue.h
-  EXPORTED_DEPS
-    folly_concurrency_container_flat_combining_priority_queue
-)
-
-folly_add_library(
   NAME function_scheduler
   HEADERS
     FunctionScheduler.h
@@ -38,19 +30,7 @@ folly_add_library(
     folly_executors_function_scheduler
 )
 
-folly_add_library(
-  NAME threaded_repeating_function_runner
-  HEADERS
-    ThreadedRepeatingFunctionRunner.h
-  EXPORTED_DEPS
-    folly_executors_threaded_repeating_function_runner
-)
-
-add_subdirectory(channels)
 add_subdirectory(coro)
-add_subdirectory(crypto)
 add_subdirectory(exception_tracer)
-add_subdirectory(flat_combining)
 add_subdirectory(observer)
-add_subdirectory(settings)
 add_subdirectory(symbolizer)

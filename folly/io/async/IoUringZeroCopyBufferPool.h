@@ -36,8 +36,8 @@ class IoUringZeroCopyBufferPool {
  public:
   struct Params {
     struct io_uring* ring;
-    size_t numPages;
-    size_t pageSize;
+    size_t numBuffers;
+    size_t bufferSizeHint;
     uint32_t rqEntries;
     uint32_t ifindex;
     uint16_t queueId;
@@ -54,6 +54,8 @@ class IoUringZeroCopyBufferPool {
     ExportHandle& operator=(ExportHandle&&) = default;
     ExportHandle(const ExportHandle&) = delete;
     ExportHandle& operator=(const ExportHandle&) = delete;
+
+    int napiId_{-1};
 
    private:
     friend class IoUringZeroCopyBufferPool;

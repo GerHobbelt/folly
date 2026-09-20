@@ -197,6 +197,12 @@ struct IoUringOptions {
     return *this;
   }
 
+  IoUringOptions& setZeroCopyImport(bool v) {
+    zcRxImport = v;
+
+    return *this;
+  }
+
   IoUringOptions& setZeroCopyRxInterface(std::string v) {
     zcRxIfname = std::move(v);
     zcRxIfindex = ::if_nametoindex(zcRxIfname.c_str());
@@ -230,8 +236,8 @@ struct IoUringOptions {
     return *this;
   }
 
-  IoUringOptions& setZeroCopyRxNumPages(int v) {
-    zcRxNumPages = v;
+  IoUringOptions& setZeroCopyRxNumBuffers(int v) {
+    zcRxNumBuffers = v;
 
     return *this;
   }
@@ -302,12 +308,13 @@ struct IoUringOptions {
 
   // Zero copy receive
   bool zeroCopyRx{false};
+  bool zcRxImport{false};
   std::string zcRxIfname;
   int zcRxQueueId{-1};
   int zcRxIfindex{-1};
   ResolveNapiIdCallback resolveNapiId;
   SrcPortForQueueIdCallback srcPortQueueId;
-  int zcRxNumPages{-1};
+  int zcRxNumBuffers{-1};
   int zcRxRefillEntries{-1};
 
   // Incremental Buffers

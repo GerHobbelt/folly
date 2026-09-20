@@ -39,6 +39,12 @@ class IoUringZeroCopyBufferPoolImpl {
     IoUringZeroCopyBufferPoolImpl* pool;
   };
 
+  struct SupportedFeatures {
+    bool importRing{false};
+    bool exportRing{false};
+    bool pageSize{false};
+  };
+
   explicit IoUringZeroCopyBufferPoolImpl(
       IoUringZeroCopyBufferPool::Params params, bool test);
 
@@ -79,6 +85,7 @@ class IoUringZeroCopyBufferPoolImpl {
 
  private:
   void mapMemory();
+  void checkZcRxFeatures();
   void initialRegister(uint32_t ifindex, uint16_t queueId);
   void delayedDestroy(uint32_t refs) noexcept;
   uint32_t getRingQueuedCount() const noexcept;
@@ -86,7 +93,7 @@ class IoUringZeroCopyBufferPoolImpl {
   void flushRefillQueue() noexcept;
 
   struct io_uring* ring_{nullptr};
-  size_t pageSize_{0};
+  uint32_t bufferSize_{0};
   uint32_t rqEntries_{0};
 
   void* bufArea_{nullptr};
@@ -108,6 +115,7 @@ class IoUringZeroCopyBufferPoolImpl {
   uint32_t flushThreshold_{128};
   std::atomic<uint16_t> flushFailures_{0};
   std::atomic<uint16_t> flushCount_{0};
+  SupportedFeatures supportedFeatures_{};
 };
 
 struct ImplDeleter {
@@ -136,17 +144,39 @@ constexpr uint64_t kBufferMask = (1ULL << IORING_ZCRX_AREA_SHIFT) - 1;
 
 } // namespace
 
+void IoUringZeroCopyBufferPoolImpl::checkZcRxFeatures() {
+  struct io_uring_query_zcrx zcrxQuery{};
+  struct io_uring_query_hdr hdr{};
+  hdr.query_op = IO_URING_QUERY_ZCRX;
+  hdr.query_data = reinterpret_cast<__u64>(&zcrxQuery);
+  hdr.size = sizeof(zcrxQuery);
+
+  int ret = io_uring_register(
+      static_cast<unsigned int>(-1), IORING_REGISTER_QUERY, &hdr, 0);
+  if (ret != 0 || hdr.result != 0) {
+    return;
+  }
+
+  supportedFeatures_.importRing = zcrxQuery.register_flags & ZCRX_REG_IMPORT;
+  supportedFeatures_.exportRing = zcrxQuery.nr_ctrl_opcodes > ZCRX_CTRL_EXPORT;
+  supportedFeatures_.pageSize = zcrxQuery.features & ZCRX_FEATURE_RX_PAGE_SIZE;
+}
+
 IoUringZeroCopyBufferPoolImpl::IoUringZeroCopyBufferPoolImpl(
     IoUringZeroCopyBufferPool::Params params, bool test)
     : ring_(params.ring),
-      pageSize_(params.pageSize),
+      bufferSize_(params.bufferSizeHint),
       rqEntries_(params.rqEntries),
-      bufAreaSize_(params.numPages * params.pageSize),
-      buffers_(params.numPages),
+      bufAreaSize_(params.numBuffers * params.bufferSizeHint),
+      buffers_(params.numBuffers),
       rqRingAreaSize_(getRefillRingSize(params.rqEntries)) {
-  for (auto& buf : buffers_) {
+  for (size_t i = 0; i < params.numBuffers; i++) {
+    auto& buf = buffers_[i];
     buf.pool = this;
+    buf.off = i * bufferSize_;
+    buf.len = bufferSize_;
   }
+  checkZcRxFeatures();
   mapMemory();
 
   // Calculate flush threshold to bound pending queue growth.
@@ -154,9 +184,9 @@ IoUringZeroCopyBufferPoolImpl::IoUringZeroCopyBufferPoolImpl(
   // When pending buffers reach this threshold, we flush to the kernel which
   // drains entries from the refill ring, freeing space for pending buffers.
   //
-  // Threshold = max(128, min(rqEntries/4, numPages/20)):
+  // Threshold = max(128, min(rqEntries/4, numBuffers/20)):
   // - rqEntries/4 (25% of ring): scales with kernel's drain capacity per flush
-  // - numPages/20 (5% of pool): caps memory sitting idle in pending queue
+  // - numBuffers/20 (5% of pool): caps memory sitting idle in pending queue
   // - min(): use the smaller limit to respect both constraints
   // - max(128): floor of 4 × ZCRX_FLUSH_BATCH to ensure batching efficiency
   constexpr uint32_t kKernelFlushBatch = 32;
@@ -165,7 +195,7 @@ IoUringZeroCopyBufferPoolImpl::IoUringZeroCopyBufferPoolImpl(
       kMinFlushThreshold,
       std::min(
           static_cast<uint32_t>(rqEntries_ / 4), // 25% of ring
-          static_cast<uint32_t>(params.numPages / 20))); // 5% of pool
+          static_cast<uint32_t>(params.numBuffers / 20))); // 5% of pool
 
   if (!test) {
     initialRegister(params.ifindex, params.queueId);
@@ -215,14 +245,10 @@ std::unique_ptr<IOBuf> IoUringZeroCopyBufferPoolImpl::getIoBuf(
     buffer->pool->returnBuffer(buffer);
   };
 
-  int i = offset / pageSize_;
-  auto& buf = buffers_[i];
-  buf.off = rcqe->off;
-  buf.len = cqe->res;
-
+  int i = offset / bufferSize_;
   auto ret = IOBuf::takeOwnership(
       static_cast<char*>(bufArea_) + offset,
-      pageSize_,
+      length,
       length,
       freeFn,
       &buffers_[i]);
@@ -399,6 +425,11 @@ IoUringZeroCopyBufferPool::IoUringZeroCopyBufferPool(Params params, TestTag)
 IoUringZeroCopyBufferPool::IoUringZeroCopyBufferPool(
     ExportHandle handle, struct io_uring* ring)
     : ring_(ring) {
+  if (!handle.impl_->supportedFeatures_.importRing) {
+    throw std::runtime_error(
+        "IoUringZeroCopyBufferPool import failed: kernel does not support import");
+  }
+
   struct io_uring_zcrx_ifq_reg ifqReg{};
   ifqReg.if_idx = static_cast<uint32_t>(handle.zcrxFd_);
   ifqReg.flags = ZCRX_REG_IMPORT;
@@ -428,6 +459,11 @@ IoUringZeroCopyBufferPool::exportHandle() const {
   if (impl_->ring_ != ring_) {
     throw std::runtime_error(
         "Cannot export a handle from a non-owning IoUringZeroCopyBufferPool");
+  }
+
+  if (!impl_->supportedFeatures_.exportRing) {
+    throw std::runtime_error(
+        "IoUringZeroCopyBufferPool export failed: kernel does not support export");
   }
 
   struct zcrx_ctrl ctrl{};

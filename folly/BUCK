@@ -458,11 +458,11 @@ non_fbcode_target(
     deps = [
         "fbsource//xplat/folly/portability:dirent",
         ":conv",
-        ":logging_logging",
         ":scope_guard",
         ":string",
         "//third-party/boost:boost_range",
         "//xplat/folly/lang:assume",
+        "//xplat/folly/logging:logging",
         "//xplat/folly/portability:fcntl",
         "//xplat/folly/portability:sockets",
         "//xplat/folly/portability:stdlib",
@@ -476,8 +476,6 @@ non_fbcode_target(
         ":file",
         ":file_util",
         ":function",
-        ":gen_string",
-        ":io_iobuf",
         ":map_util",
         ":optional",
         ":portability",
@@ -485,6 +483,8 @@ non_fbcode_target(
         "//third-party/boost:boost",
         "//third-party/boost:boost_container",
         "//xplat/folly/container:span",
+        "//xplat/folly/gen:string",
+        "//xplat/folly/io:iobuf",
         "//xplat/folly/portability:sys_resource",
     ],
 )
@@ -669,20 +669,6 @@ fb_dirsync_cpp_library(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_detail_checksum_detail",
-    exported_deps = ["//xplat/folly/hash/detail:checksum_detail"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_checksum",
-    exported_deps = ["//xplat/folly/hash:checksum"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "conv",
     srcs = [
@@ -771,15 +757,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "f14_hash",
-    deps = [
-        "//xplat/folly/container:f14_hash",
-    ],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "indestructible",
     compiler_flags = [
@@ -791,14 +768,6 @@ non_fbcode_target(
     exported_deps = [
         "//xplat/folly:traits",
         "//xplat/folly:utility",
-    ],
-)
-
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "io_iobuf",
-    exported_deps = [
-        "//xplat/folly/io:iobuf",
     ],
 )
 
@@ -1053,13 +1022,11 @@ fb_dirsync_cpp_library(
     srcs = ["Demangle.cpp"],
     headers = ["Demangle.h"],
     compiler_flags = selects.with_or({
-        (
-            "ovr_config//os:android"
-        ): [
+        "DEFAULT": ["-fno-omit-frame-pointer"],
+        "ovr_config//os:android": [
             "-Wno-error=deprecated-dynamic-exception-spec",
             "-fno-omit-frame-pointer",
         ],
-        "DEFAULT": ["-fno-omit-frame-pointer"],
     }) + select({
         "DEFAULT": [],
         # x86_64-conda-linux-gnu-c++ (conda-forge gcc 11.4.0-13) 11.4.0
@@ -1483,7 +1450,7 @@ non_fbcode_target(
     ],
     fbobjc_compiler_flags = FBOBJC_CXXFLAGS,
     labels = [
-        # This library "re-exports" symbols in :futures_core. Depslint doesn't
+        # This library "re-exports" symbols in futures:core. Depslint doesn't
         # support the concept of target-reexports (nor do we know the best
         # design for such a feature), so we just exclude this target from being
         # removed.
@@ -1599,10 +1566,10 @@ non_fbcode_target(
         "fbsource//xplat/folly/system:thread_id",
         "fbsource//xplat/folly/system:thread_name",
         "fbsource//xplat/third-party/linker_lib:atomic",
-        ":futures_barrier",
-        ":futures_core",
-        ":futures_future_splitter",
-        ":futures_shared_promise",
+        "//xplat/folly/futures:barrier",
+        "//xplat/folly/futures:core",
+        "//xplat/folly/futures:future_splitter",
+        "//xplat/folly/futures:shared_promise",
         "//third-party/boost:boost",
         "//third-party/boost:boost_system",
         "//xplat/folly:singleton",
@@ -1698,8 +1665,8 @@ non_fbcode_target(
         ":memory",
         "//xplat/folly/container/test:f14_test_util",
         "//xplat/folly/container/test:tracking_types",
-        "//xplat/folly/experimental/flat_combining/test:flat_combining_examples",
-        "//xplat/folly/experimental/flat_combining/test:flat_combining_test_helpers",
+        "//xplat/folly/synchronization/test:flat_combining_examples",
+        "//xplat/folly/synchronization/test:flat_combining_test_helpers",
         "//xplat/folly/tracing/test:static_tracepoint_test_module",
     ],
 )
@@ -2326,13 +2293,6 @@ non_fbcode_target(
 )
 
 non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_detail_types",
-    exported_deps = ["//xplat/folly/futures/detail:types"],
-)
-
-non_fbcode_target(
     _kind = folly_xplat_library,
     name = "timeout_queue",
     srcs = [
@@ -2403,42 +2363,6 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "gen_base",
-    apple_sdks = DEFAULT_APPLE_SDKS,
-    exported_deps = ["//xplat/folly/gen:base"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "gen_file",
-    exported_deps = ["//xplat/folly/gen:file"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "gen_string",
-    exported_deps = ["//xplat/folly/gen:string"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_spooky_hash_v1",
-    exported_deps = ["//xplat/folly/hash:spooky_hash_v1"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_murmur_hash",
-    exported_deps = ["//xplat/folly/hash:murmur_hash"],
-)
-
 fb_dirsync_cpp_library(
     name = "poly_exception",
     headers = ["PolyException.h"],
@@ -2446,22 +2370,6 @@ fb_dirsync_cpp_library(
     exported_deps = [
         "//folly:c_portability",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_init_weak",
-    exported_deps = [
-        "//xplat/folly/logging:init_weak",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_portability",
-    exported_deps = ["//xplat/folly/futures:portability"],
 )
 
 non_fbcode_target(
@@ -2480,13 +2388,6 @@ non_fbcode_target(
         "//xplat/folly/portability:time",
         "//xplat/third-party/linker_lib:dl",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_spooky_hash_v2",
-    exported_deps = ["//xplat/folly/hash:spooky_hash_v2"],
 )
 
 fb_dirsync_cpp_library(
@@ -2521,15 +2422,6 @@ fb_dirsync_cpp_library(
         ":portability",
         ":traits",
         ":utility",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_rate_limiter",
-    exported_deps = [
-        "//xplat/folly/logging:rate_limiter",
     ],
 )
 
@@ -2593,15 +2485,6 @@ fb_dirsync_cpp_library(
     ],
 )
 
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_log_name",
-    exported_deps = [
-        "//xplat/folly/logging:log_name",
-    ],
-)
-
 fb_dirsync_cpp_library(
     name = "lazy",
     headers = ["Lazy.h"],
@@ -2610,13 +2493,6 @@ fb_dirsync_cpp_library(
         ":optional",
         "//folly/functional:invoke",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "hash_hash",
-    exported_deps = ["//xplat/folly/hash:hash"],
 )
 
 fb_dirsync_cpp_library(
@@ -2675,49 +2551,6 @@ fb_dirsync_cpp_library(
     ],
     exported_deps = [
         "//folly/lang:exception",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_log_level",
-    exported_deps = [
-        "//xplat/folly/logging:log_level",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "init_init",
-    exported_deps = ["//xplat/folly/init:init"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_init",
-    exported_deps = [
-        "//xplat/folly/logging:init",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_logging",
-    exported_deps = [
-        "//xplat/folly/logging:logging",
-    ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "logging_log_handler",
-    exported_deps = [
-        "//xplat/folly/logging:log_handler",
     ],
 )
 
@@ -2860,41 +2693,6 @@ fb_dirsync_cpp_library(
         "//folly/portability:sys_mman",
         "//folly/portability:unistd",
     ],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_detail_core",
-    exported_deps = ["//xplat/folly/futures/detail:core"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_core",
-    exported_deps = ["//xplat/folly/futures:core"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_barrier",
-    exported_deps = ["//xplat/folly/futures:barrier"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_shared_promise",
-    exported_deps = ["//xplat/folly/futures:shared_promise"],
-)
-
-non_fbcode_target(
-    # @shim
-    _kind = folly_xplat_library,
-    name = "futures_future_splitter",
-    exported_deps = ["//xplat/folly/futures:future_splitter"],
 )
 
 # This adds the symbol __folly_memcpy through FollyMemcpy.h, but does not
