@@ -1,10 +1,4 @@
-load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
-load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
-load(
-    "../../defs.bzl",
-    "folly_xplat_library",
-)
 
 oncall("fbcode_entropy_wardens_folly")
 
@@ -12,7 +6,6 @@ fb_dirsync_cpp_library(
     name = "base64_common",
     headers = ["Base64Common.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         ":base64_constants",
         "//folly:utility",
@@ -23,14 +16,12 @@ fb_dirsync_cpp_library(
     name = "base64_constants",
     headers = ["Base64Constants.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
 )
 
 fb_dirsync_cpp_library(
     name = "base64_hidden_constants",
     headers = ["Base64HiddenConstants.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         ":base64_constants",
     ],
@@ -40,7 +31,6 @@ fb_dirsync_cpp_library(
     name = "base64_scalar",
     headers = ["Base64Scalar.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         ":base64_common",
         ":base64_constants",
@@ -54,7 +44,6 @@ fb_dirsync_cpp_library(
     name = "base64_simd",
     headers = ["Base64Simd.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         ":base64_common",
         ":base64_constants",
@@ -69,27 +58,28 @@ fb_dirsync_cpp_library(
     name = "base64_sse4_2_platform",
     headers = ["Base64_SSE4_2_Platform.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         ":base64_hidden_constants",
         "//folly:portability",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_library,
+fb_dirsync_cpp_library(
     name = "base64_sse4_2",
     srcs = ["Base64_SSE4_2.cpp"],
+    headers = ["Base64_SSE4_2.h"],
     compiler_flags = select({
         "DEFAULT": [],
         "ovr_config//cpu:x86_64": ["-msse4.2"],
     }),
-    raw_headers = ["Base64_SSE4_2.h"],
+    use_raw_headers = True,
     deps = [
-        "//xplat/folly:portability",
-        "//xplat/folly/detail/base64_detail:base64_common",
-        "//xplat/folly/detail/base64_detail:base64_simd",
-        "//xplat/folly/detail/base64_detail:base64_sse4_2_platform",
+        ":base64_simd",
+        ":base64_sse4_2_platform",
+    ],
+    exported_deps = [
+        ":base64_common",
+        "//folly:portability",
     ],
 )
 
@@ -98,7 +88,6 @@ fb_dirsync_cpp_library(
     srcs = ["Base64SWAR.cpp"],
     headers = ["Base64SWAR.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     deps = [
         ":base64_constants",
         ":base64_hidden_constants",
@@ -115,7 +104,6 @@ fb_dirsync_cpp_library(
     srcs = ["Base64Api.cpp"],
     headers = ["Base64Api.h"],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     deps = [
         ":base64_sse4_2",
         ":base64_swar",
@@ -126,26 +114,5 @@ fb_dirsync_cpp_library(
         ":base64_scalar",
         "//folly:portability",
         "//folly/portability:constexpr",
-    ],
-)
-
-# !!!! fbcode/folly/detail/base64_detail/TARGETS was merged into this file, see https://fburl.com/workplace/xl8l9yuo for more info !!!!
-
-fbcode_target(
-    _kind = cpp_library,
-    name = "base64_sse4_2",
-    srcs = ["Base64_SSE4_2.cpp"],
-    headers = ["Base64_SSE4_2.h"],
-    compiler_flags = select({
-        "DEFAULT": [],
-        "ovr_config//cpu:x86_64": ["-msse4.2"],
-    }),
-    deps = [
-        ":base64_simd",
-        ":base64_sse4_2_platform",
-    ],
-    exported_deps = [
-        ":base64_common",
-        "//folly:portability",
     ],
 )

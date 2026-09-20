@@ -1,8 +1,6 @@
-load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
+load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target")
 load("@fbcode_macros//build_defs:cpp_benchmark.bzl", "cpp_benchmark")
-load("@fbcode_macros//build_defs:cpp_unittest.bzl", "cpp_unittest")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_unittest.bzl", "fb_dirsync_cpp_unittest")
-load("../../../defs.bzl", "folly_xplat_cxx_test")
 
 oncall("fbcode_entropy_wardens_folly")
 
@@ -10,7 +8,6 @@ fb_dirsync_cpp_unittest(
     name = "contains_test",
     srcs = ["ContainsTest.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly/algorithm/simd:contains",
         "//folly/algorithm/simd/detail:simd_contains_impl",
@@ -19,15 +16,15 @@ fb_dirsync_cpp_unittest(
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_cxx_test,
+fb_dirsync_cpp_unittest(
     name = "find_first_of_test",
     srcs = ["find_first_of_test.cpp"],
+    supports_static_listing = False,
     deps = [
-        "fbsource//xplat/folly/portability:gtest",
-        "//xplat/folly:string",
-        "//xplat/folly/algorithm/simd:find_first_of",
-        "//xplat/folly/algorithm/simd:find_first_of_extra",
+        "//folly:string",
+        "//folly/algorithm/simd:find_first_of",
+        "//folly/algorithm/simd:find_first_of_extra",
+        "//folly/portability:gtest",
     ],
 )
 
@@ -35,7 +32,6 @@ fb_dirsync_cpp_unittest(
     name = "find_fixed_test",
     srcs = ["FindFixedTest.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "fbsource//third-party/fmt:fmt",
         "//folly:portability",
@@ -48,7 +44,6 @@ fb_dirsync_cpp_unittest(
     name = "momemask_test",
     srcs = ["MovemaskTest.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly:portability",
         "//folly/algorithm/simd:movemask",
@@ -66,19 +61,6 @@ fbcode_target(
         "//folly/algorithm/simd:find_first_of_extra",
         "//folly/init:init",
         "//folly/lang:keep",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_unittest,
-    name = "find_first_of_test",
-    srcs = ["find_first_of_test.cpp"],
-    supports_static_listing = False,
-    deps = [
-        "//folly:string",
-        "//folly/algorithm/simd:find_first_of",
-        "//folly/algorithm/simd:find_first_of_extra",
-        "//folly/portability:gtest",
     ],
 )
 

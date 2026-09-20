@@ -16,7 +16,6 @@ load(
     "FBANDROID_CXXFLAGS",
     "FBOBJC_CXXFLAGS",
     "folly_xplat_cxx_test",
-    "folly_xplat_library",
 )
 
 oncall("fbcode_entropy_wardens_folly")
@@ -436,7 +435,6 @@ fb_dirsync_cpp_unittest(
     name = "iterator_test",
     srcs = ["IteratorTest.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly/container:iterator",
         "//folly/portability:gtest",
@@ -447,7 +445,6 @@ fb_dirsync_cpp_unittest(
     name = "range_traits_test",
     srcs = ["range_traits_test.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly/container:range_traits",
         "//folly/portability:gtest",
@@ -457,7 +454,6 @@ fb_dirsync_cpp_unittest(
 fb_dirsync_cpp_unittest(
     name = "regex_match_cache_test",
     srcs = ["RegexMatchCacheTest.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "fbsource//third-party/fmt:fmt",
         "//folly:portability",
@@ -486,7 +482,6 @@ non_fbcode_target(
 fb_dirsync_cpp_unittest(
     name = "std_bitset_test",
     srcs = ["StdBitsetTest.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly/container:std_bitset",
     ],
@@ -495,7 +490,6 @@ fb_dirsync_cpp_unittest(
 fb_dirsync_cpp_unittest(
     name = "tape_test",
     srcs = ["tape_test.cpp"],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly:small_vector",
         "//folly/container:tape",
@@ -508,7 +502,6 @@ fb_dirsync_cpp_unittest(
     name = "vector_bool_test",
     srcs = ["vector_bool_test.cpp"],
     headers = [],
-    xplat_impl = folly_xplat_cxx_test,
     deps = [
         "//folly:memory",
         "//folly/container:vector_bool",
@@ -608,7 +601,6 @@ fb_dirsync_cpp_library(
     headers = [
         "F14TestUtil.h",
     ],
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/container/detail:f14_hash_detail",
     ],
@@ -894,7 +886,6 @@ fb_dirsync_cpp_library(
     headers = [
         "TrackingTypes.h",
     ],
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly:function",
         "//folly/hash:hash",

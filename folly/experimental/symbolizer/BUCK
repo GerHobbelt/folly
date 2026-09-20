@@ -1,11 +1,6 @@
-load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
-load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
 load("@fbsource//tools/build_defs/dirsync:fb_dirsync_cpp_library.bzl", "fb_dirsync_cpp_library")
-load("@fbsource//xplat/folly:defs.bzl", "folly_xplat_library")
 
 oncall("fbcode_entropy_wardens_folly")
-
-# xplat build rules
 
 fb_dirsync_cpp_library(
     name = "dwarf",
@@ -17,7 +12,6 @@ fb_dirsync_cpp_library(
         "DwarfUtil.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:dwarf",
     ],
@@ -30,7 +24,6 @@ fb_dirsync_cpp_library(
         "Elf-inl.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:elf",
     ],
@@ -42,7 +35,6 @@ fb_dirsync_cpp_library(
         "ElfCache.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:elf_cache",
     ],
@@ -54,7 +46,6 @@ fb_dirsync_cpp_library(
         "LineReader.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:line_reader",
     ],
@@ -66,7 +57,6 @@ fb_dirsync_cpp_library(
         "StackTrace.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:stack_trace",
     ],
@@ -78,54 +68,30 @@ fb_dirsync_cpp_library(
         "SymbolizedFrame.h",
     ],
     use_raw_headers = True,
-    xplat_impl = folly_xplat_library,
     exported_deps = [
         "//folly/debugging/symbolizer:symbolized_frame",
     ],
 )
 
-non_fbcode_target(
-    _kind = folly_xplat_library,
+fb_dirsync_cpp_library(
+    name = "symbolize_printer",
+    exported_deps = [":symbolizer"],
+)
+
+fb_dirsync_cpp_library(
     name = "symbolizer",
-    raw_headers = [
+    headers = [
         "SignalHandler.h",
         "SymbolizePrinter.h",
         "Symbolizer.h",
     ],
-    exported_deps = ["//xplat/folly/debugging/symbolizer:symbolizer"],
-)
-
-# fbcode build rules
-
-fbcode_target(
-    _kind = cpp_library,
-    name = "symbolize_printer",
-    headers = [
-        "SymbolizePrinter.h",
-    ],
-    exported_deps = [
-        "//folly/debugging/symbolizer:symbolize_printer",
-    ],
-)
-
-fbcode_target(
-    _kind = cpp_library,
-    name = "symbolizer",
-    headers = [
-        "Symbolizer.h",
-    ],
+    use_raw_headers = True,
     exported_deps = [
         "//folly/debugging/symbolizer:symbolizer",
     ],
 )
 
-fbcode_target(
-    _kind = cpp_library,
+fb_dirsync_cpp_library(
     name = "signal_handler",
-    headers = [
-        "SignalHandler.h",
-    ],
-    exported_deps = [
-        "//folly/debugging/symbolizer:signal_handler",
-    ],
+    exported_deps = [":symbolizer"],
 )

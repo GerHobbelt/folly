@@ -30,7 +30,7 @@ non_fbcode_target(
         "//xplat/folly:portability",
         "//xplat/folly:singleton",
         # "fbsource//xplat/folly/synchronization:hazptr_thread_pool_executor",
-        "//xplat/folly:synchronization_hazptr_thread_pool_executor",
+        "//xplat/folly/synchronization:hazptr_thread_pool_executor",
     ],
 )
 
@@ -60,5 +60,4 @@ fb_dirsync_cpp_library(
     name = "phase",
     srcs = ["Phase.cpp"],
     headers = ["Phase.h"],
-    xplat_impl = folly_xplat_library,
 )
