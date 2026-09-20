@@ -13,6 +13,7 @@ import io
 import os
 import sys
 import typing
+from typing import overload
 
 from .builder import (
     AutoconfBuilder,
@@ -347,6 +348,24 @@ class ManifestParser:
             raise Exception(
                 f"manifest name ({self.name}) must not contain the '.' character (it is incompatible with github actions)"
             )
+
+    @overload
+    def get(
+        self,
+        section: str,
+        key: str,
+        defval: str,
+        ctx: ManifestContext | dict[str, str | None] | None = ...,
+    ) -> str: ...
+
+    @overload
+    def get(
+        self,
+        section: str,
+        key: str,
+        defval: str | None = ...,
+        ctx: ManifestContext | dict[str, str | None] | None = ...,
+    ) -> str | None: ...
 
     def get(
         self,
@@ -954,7 +973,6 @@ class ManifestContext:
         "fb",
         "fbsource",
         "test",
-        "shared_libs",
     }
 
     def __init__(self, ctx_dict: dict[str, str | None]) -> None:

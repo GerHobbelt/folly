@@ -9,8 +9,8 @@ import re
 
 from .buildopts import setup_build_options
 from .cmd_base import BUILD_TYPE_ARG, ProjectCmdBase
+from .getdeps_platform import HostType
 from .load import ManifestLoader
-from .platform import HostType
 from .subcmd import cmd
 
 
@@ -61,13 +61,15 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
   schedule:
     - cron: '{args.cron}'"""
 
+        branches = args.main_branch or ["main"]
+        branch_lines = "\n".join(f"    - {b}" for b in branches)
         return f"""
   push:
     branches:
-    - {args.main_branch}
+{branch_lines}
   pull_request:
     branches:
-    - {args.main_branch}"""
+{branch_lines}"""
 
     def write_job_for_platform(self, platform, args):
         build_opts = setup_build_options(args, platform)
@@ -85,7 +87,8 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
 
         run_tests = args.enable_tests and gh("run_tests") != "off"
         rust_version = gh("rust_version") or "stable"
-        use_sccache = gh("sccache") != "off" and not build_opts.is_windows()
+        use_sccache = gh("sccache") != "off"
+        use_homebrew_llvm = build_opts.is_darwin()
         override_build_type = args.build_type or gh("build_type")
         timeout_minutes = gh("timeout_minutes") or "60"
         if run_tests:
@@ -124,6 +127,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
             run_tests=run_tests,
             rust_version=rust_version,
             use_sccache=use_sccache,
+            use_homebrew_llvm=use_homebrew_llvm,
             override_build_type=override_build_type,
             timeout_minutes=timeout_minutes,
             tests_arg=tests_arg,
@@ -148,6 +152,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         run_tests: bool,
         rust_version: str,
         use_sccache: bool,
+        use_homebrew_llvm: bool,
         override_build_type,
         timeout_minutes,
         tests_arg: str,
@@ -165,14 +170,15 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
             env_lines.append(
                 "DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer"
             )
+        if use_homebrew_llvm:
+            env_lines.append("CC: /opt/homebrew/opt/llvm/bin/clang")
+            env_lines.append("CXX: /opt/homebrew/opt/llvm/bin/clang++")
         if use_sccache:
             env_lines.append('SCCACHE_GHA_ENABLED: "on"')
 
         extra_cmake_defines = (
             json.loads(args.extra_cmake_defines) if args.extra_cmake_defines else {}
         )
-        if use_sccache:
-            extra_cmake_defines["CMAKE_CXX_COMPILER_LAUNCHER"] = "sccache"
         per_package_defines = _parse_per_package_defines(
             getattr(args, "package_extra_cmake_defines", []) or []
         )
@@ -191,8 +197,8 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         build_type_arg = ""
         if override_build_type:
             build_type_arg = f"--build-type {override_build_type} "
-        if args.shared_libs:
-            build_type_arg += "--shared-libs "
+        if args.shared_lib:
+            build_type_arg += "--shared-lib "
 
         free_up_disk_arg = "--free-up-disk " if build_opts.free_up_disk else ""
 
@@ -325,6 +331,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
             test_cmd = (
                 f"{getdepscmd}{allow_sys_arg} test {build_type_arg}{num_jobs_arg}"
                 f"--src-dir=. {manifest.name}{project_prefix}"
+                f"{cmake_arg_for(manifest.name)}"
             )
 
         return {
@@ -337,6 +344,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
             "is_darwin": build_opts.is_darwin(),
             "is_windows": build_opts.is_windows(),
             "use_sccache": use_sccache,
+            "use_homebrew_llvm": use_homebrew_llvm,
             "free_up_disk": build_opts.free_up_disk,
             "free_up_disk_before_build": args.free_up_disk_before_build,
             "system_deps": system_deps,
@@ -384,8 +392,9 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         )
         parser.add_argument(
             "--main-branch",
-            default="main",
-            help="Main branch to trigger GitHub Action on",
+            default=[],
+            action="append",
+            help="Branch to trigger GitHub Action on. May be repeated; defaults to 'main' if not given.",
         )
         parser.add_argument(
             "--os-type",
@@ -421,11 +430,11 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         )
         parser.add_argument("--build-type", **BUILD_TYPE_ARG)
         parser.add_argument(
-            "--no-build-cache",
-            action="store_false",
-            default=True,
+            "--use-build-cache",
+            action="store_true",
+            default=False,
             dest="use_build_cache",
-            help="Do not attempt to use the build cache.",
+            help="Emit a per-dep actions/cache restore/save pyramid. Disabled by default; sccache handles compile-unit caching instead.",
         )
         parser.add_argument(
             "--package-extra-cmake-defines",

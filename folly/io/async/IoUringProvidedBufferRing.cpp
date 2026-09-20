@@ -173,14 +173,6 @@ void IoUringProvidedBufferRing::destroy() noexcept {
 }
 
 void IoUringProvidedBufferRing::returnBuffer(uint16_t i) noexcept {
-  std::unique_lock lock{mutex_};
-  if (FOLLY_UNLIKELY(wantsShutdown_)) {
-    auto refs = --shutdownReferences_;
-    lock.unlock();
-    delayedDestroy(refs);
-    return;
-  }
-
   if (useIncremental_) {
     bufferStates_[i].offset = 0;
     bufferStates_[i].refCount.store(1);
@@ -199,6 +191,14 @@ void IoUringProvidedBufferRing::returnBuffer(uint16_t i) noexcept {
   }
 }
 
+void IoUringProvidedBufferRing::bufFreeFn(
+    void* /* buf */, void* userData) noexcept {
+  auto* bufferState = static_cast<BufferState*>(userData);
+  IoUringProvidedBufferRing* parent = bufferState->parent;
+  uint16_t bufId = bufferState->bufId;
+  parent->decBufferState(bufId);
+}
+
 std::unique_ptr<IOBuf> IoUringProvidedBufferRing::getIoBufSingle(
     uint16_t i, size_t length, bool hasMore) noexcept {
   std::unique_ptr<IOBuf> ret;
@@ -206,24 +206,21 @@ std::unique_ptr<IOBuf> IoUringProvidedBufferRing::getIoBufSingle(
   DCHECK_LT(i, bufferCount_)
       << "Buffer index " << i << " exceeds buffer count " << bufferCount_;
 
-  auto free_fn = [](void*, void* userData) {
-    auto* bufferState = static_cast<BufferState*>(userData);
-    IoUringProvidedBufferRing* parent = bufferState->parent;
-    uint16_t bufId = bufferState->bufId;
-    parent->decBufferState(bufId);
-  };
-
   if (useIncremental_) {
     auto* bufferStart = getData(i);
     unsigned int currentOffset = bufferStates_[i].offset;
     auto* dataPtr = bufferStart + currentOffset;
     BufferState* info = &bufferStates_[i];
     ret = IOBuf::takeOwnership(
-        static_cast<void*>(dataPtr), length, length, free_fn, info);
+        static_cast<void*>(dataPtr), length, length, bufFreeFn, info);
   } else {
     BufferState* info = &bufferStates_[i];
     ret = IOBuf::takeOwnership(
-        static_cast<void*>(getData(i)), sizePerBuffer_, length, free_fn, info);
+        static_cast<void*>(getData(i)),
+        sizePerBuffer_,
+        length,
+        bufFreeFn,
+        info);
   }
 
   ret->markExternallySharedOne();
@@ -237,13 +234,6 @@ std::unique_ptr<IOBuf> IoUringProvidedBufferRing::getIoBuf(
   if (totalLength <= sizePerBuffer_) {
     return getIoBufSingle(startBufId, totalLength, hasMore);
   }
-
-  auto free_fn = [](void*, void* userData) {
-    auto* bufferState = static_cast<BufferState*>(userData);
-    IoUringProvidedBufferRing* parent = bufferState->parent;
-    uint16_t bufId = bufferState->bufId;
-    parent->decBufferState(bufId);
-  };
 
   std::unique_ptr<IOBuf> head;
   size_t remainingLength = totalLength;
@@ -273,7 +263,7 @@ std::unique_ptr<IOBuf> IoUringProvidedBufferRing::getIoBuf(
         static_cast<void*>(dataPtr),
         useIncremental_ ? currentChunkSize : sizePerBuffer_,
         currentChunkSize,
-        free_fn,
+        bufFreeFn,
         bufferState);
 
     chunk->markExternallySharedOne();
@@ -349,9 +339,17 @@ void IoUringProvidedBufferRing::incBufferState(
 }
 
 void IoUringProvidedBufferRing::decBufferState(uint16_t bufId) noexcept {
+  std::unique_lock lock{mutex_};
   returnedBuffers_++;
 
-  if (!useIncremental_ || wantsShutdown_) {
+  if (FOLLY_UNLIKELY(wantsShutdown_)) {
+    auto refs = --shutdownReferences_;
+    lock.unlock();
+    delayedDestroy(refs);
+    return;
+  }
+
+  if (!useIncremental_) {
     returnBuffer(bufId);
     return;
   }

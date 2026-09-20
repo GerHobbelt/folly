@@ -877,6 +877,19 @@ class small_vector
     return MaxInline;
   }
 
+  // Returns the number of bytes used by the heap allocation, including any
+  // capacity prefix. Returns 0 when data is stored inline or not yet allocated.
+  size_t heap_allocation_size() const {
+    if (!this->isExtern() || !u.pdata_.heap_) {
+      return 0;
+    }
+    if (hasCapacity()) {
+      return u.getCapacity() * sizeof(value_type) +
+          u.pdata_.allocationExtraBytes();
+    }
+    return capacity() * sizeof(value_type);
+  }
+
   void shrink_to_fit() {
     if (!this->isExtern() || size() == capacity()) {
       return;
@@ -1420,8 +1433,11 @@ class small_vector
       detail::small_vector_detail::should_trivially_copy<Value> &&
       kMayCopyWholeInlineStorage;
 
+  // Store capacity inline when HeapPtrWithCapacity fits within the inline
+  // storage without increasing the union size. When the two are equal, the
+  // union is already sized by InlineStorageType, so storing capacity is free.
   static bool constexpr kHasInlineCapacity = !BaseType::kAlwaysUseHeap &&
-      sizeof(HeapPtrWithCapacity) < sizeof(InlineStorageType);
+      sizeof(HeapPtrWithCapacity) <= sizeof(InlineStorageType);
 
   // This value should we multiple of word size.
   static size_t constexpr kHeapifyCapacitySize = sizeof(
@@ -1444,9 +1460,9 @@ class small_vector
       BaseType::kAlwaysUseHeap ||
       !is_invocable_r_v<size_t, AllocationSize, void*>;
 
-  // Threshold to control capacity heapifying.
-  static size_t constexpr kHeapifyCapacityThreshold =
-      (kMustTrackHeapifiedCapacity ? 0 : 100) * kHeapifyCapacitySize;
+  // Minimum heap allocation size (in bytes) before capacity is stored in a
+  // prefix at the front of the allocation. Zero means always store capacity.
+  static size_t constexpr kHeapifyCapacityThreshold = 0;
 
   static bool constexpr kAlwaysHasCapacity =
       kHasInlineCapacity || kMustTrackHeapifiedCapacity;
@@ -1461,6 +1477,7 @@ class small_vector
 
   void freeHeap() {
     if (!this->isExtern() || !u.pdata_.heap_) {
+      assert(heap_allocation_size() == 0);
       return;
     }
 
@@ -1468,8 +1485,10 @@ class small_vector
       auto extraBytes = u.pdata_.allocationExtraBytes();
       auto vp = detail::small_vector_detail::unshiftPointer(
           u.pdata_.heap_, extraBytes);
+      auto bytes = u.getCapacity() * sizeof(value_type) + extraBytes;
+      assert(heap_allocation_size() == bytes);
       annotate_object_collected(vp);
-      sizedFree(vp, u.getCapacity() * sizeof(value_type) + extraBytes);
+      sizedFree(vp, bytes);
     } else {
       auto vp = u.pdata_.heap_;
       annotate_object_collected(vp);
