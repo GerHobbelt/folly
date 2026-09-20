@@ -40,6 +40,7 @@ fb_dirsync_cpp_library(
         ":f14_hash_fwd",
         ":iterator",
         ":view",
+        "//folly:cpp_attributes",
         "//folly:portability",
         "//folly:range",
         "//folly:traits",
@@ -229,6 +230,7 @@ fb_dirsync_cpp_library(
     use_raw_headers = True,
     exported_deps = [
         ":iterator",
+        "//folly:cpp_attributes",
         "//folly:range",
         "//folly:scope_guard",
         "//folly:small_vector",
@@ -353,6 +355,7 @@ fb_dirsync_cpp_library(
     compiler_flags = ["-fno-omit-frame-pointer"],
     use_raw_headers = True,
     exported_deps = [
+        "//folly:cpp_attributes",
         "//folly:scope_guard",
         "//folly:small_vector",
         "//folly:traits",

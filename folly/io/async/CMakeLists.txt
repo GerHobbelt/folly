@@ -80,6 +80,7 @@ folly_add_library(
     folly_portability_fcntl
     folly_portability_iovec
     folly_portability_sockets
+    folly_portability_sys_resource
     folly_portability_unistd
     folly_scope_guard
     folly_spin_lock
@@ -321,6 +322,7 @@ folly_add_library(
   NAME async_transport
   HEADERS
     AsyncTransport.h
+    WriteCallbackWithState.h
   EXPORTED_DEPS
     folly_io_async_async_base
     folly_io_async_async_socket_base
@@ -664,6 +666,7 @@ folly_add_library(
     IoUringSend.h
   DEPS
     folly_io_async_async_base
+    folly_memory_io_uring_arena
   EXPORTED_DEPS
     folly_futures_core
     folly_io_async_async_transport

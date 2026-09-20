@@ -38,6 +38,7 @@
 #include <folly/io/async/test/MockAsyncSocketObserver.h>
 #include <folly/io/async/test/TFOUtil.h>
 #include <folly/io/async/test/Util.h>
+#include <folly/memory/IoUringArena.h>
 #include <folly/net/test/MockNetOpsDispatcher.h>
 #include <folly/net/test/MockTcpInfoDispatcher.h>
 #include <folly/portability/GMock.h>
@@ -1086,6 +1087,107 @@ TEST_P(AsyncSocketTest, ConnectWriteZeroCopy) {
   server.verifyConnection(buf, kLen);
 }
 
+namespace {
+std::unique_ptr<EventBase> makeArenaIoUringEventBase() {
+  return std::make_unique<EventBase>(EventBase::Options{}.setBackendFactory(
+      []() -> std::unique_ptr<EventBaseBackendBase> {
+        IoUringBackend::Options options;
+        options.setInitialProvidedBuffers(2048, 2000);
+        options.setNativeAsyncSocketSupport(true);
+        options.setArenaRegion(
+            IoUringArena::base(),
+            IoUringArena::regionSize(),
+            IoUringArena::arenaIndex());
+        return std::make_unique<IoUringBackend>(std::move(options));
+      }));
+}
+} // namespace
+
+/**
+ * ZC write of an arena-allocated buffer over a backend with a registered arena:
+ * IoUringSend takes the IORING_RECVSEND_FIXED_BUF path. A wrong buf_index, or
+ * setting the flag on an unregistered buffer, makes the kernel reject the send,
+ * so a correct and intact delivery validates the fixed-buf branch.
+ */
+TEST(AsyncSocketIoUringArenaTest, ZeroCopyWriteFromArenaUsesFixedBuf) {
+  if (!IoUringBackend::isAvailable()) {
+    GTEST_SKIP() << "io_uring/arena registration not available";
+  }
+  constexpr size_t kArenaSize = 4 * 1024 * 1024;
+  if (!IoUringArena::init(kArenaSize)) {
+    GTEST_SKIP() << "IoUringArena not supported (needs jemalloc)";
+  }
+
+  std::unique_ptr<EventBase> evb = makeArenaIoUringEventBase();
+  TestServer server;
+  auto socket = AsyncSocket::newSocket(evb.get());
+  ASSERT_TRUE(socket->setZeroCopy(true));
+
+  ConnCallback ccb;
+  socket->connect(&ccb, server.getAddress(), 30);
+  evb->loop();
+  ASSERT_EQ(ccb.state, STATE_SUCCEEDED);
+
+  constexpr size_t kLen = 32 * 1024;
+  void* data = IoUringArena::allocate(kLen);
+  ASSERT_NE(data, nullptr);
+  ASSERT_TRUE(IoUringArena::addressInArena(data));
+  memset(data, 'z', kLen);
+  auto buf =
+      IOBuf::takeOwnership(data, kLen, [](void* p, void* /* userData */) {
+        IoUringArena::deallocate(p);
+      });
+
+  WriteCallback wcb(true /* enableReleaseIOBufCallback */);
+  socket->writeChain(&wcb, std::move(buf), WriteFlags::WRITE_MSG_ZEROCOPY);
+  evb->loop();
+  ASSERT_EQ(wcb.state, STATE_SUCCEEDED);
+
+  socket->close();
+  const std::vector<char> expected(kLen, 'z');
+  server.verifyConnection(expected.data(), kLen);
+}
+
+/**
+ * ZC write of a heap buffer over a backend with a registered arena: the buffer
+ * is not arena-resident, so the per-send gate must fall back to a plain SEND_ZC
+ * rather than hand the kernel an unregistered fixed buffer.
+ */
+TEST(AsyncSocketIoUringArenaTest, ZeroCopyWriteFromHeapFallsBack) {
+  if (!IoUringBackend::isAvailable()) {
+    GTEST_SKIP() << "io_uring/arena registration not available";
+  }
+  constexpr size_t kArenaSize = 4 * 1024 * 1024;
+  if (!IoUringArena::init(kArenaSize)) {
+    GTEST_SKIP() << "IoUringArena not supported (needs jemalloc)";
+  }
+
+  std::unique_ptr<EventBase> evb = makeArenaIoUringEventBase();
+  TestServer server;
+  auto socket = AsyncSocket::newSocket(evb.get());
+  ASSERT_TRUE(socket->setZeroCopy(true));
+
+  ConnCallback ccb;
+  socket->connect(&ccb, server.getAddress(), 30);
+  evb->loop();
+  ASSERT_EQ(ccb.state, STATE_SUCCEEDED);
+
+  constexpr size_t kLen = 32 * 1024;
+  const std::vector<char> payload(kLen, 'h');
+  ASSERT_FALSE(IoUringArena::addressInArena(const_cast<char*>(payload.data())));
+
+  WriteCallback wcb(true /* enableReleaseIOBufCallback */);
+  socket->writeChain(
+      &wcb,
+      IOBuf::copyBuffer(payload.data(), kLen),
+      WriteFlags::WRITE_MSG_ZEROCOPY);
+  evb->loop();
+  ASSERT_EQ(wcb.state, STATE_SUCCEEDED);
+
+  socket->close();
+  server.verifyConnection(payload.data(), kLen);
+}
+
 /**
  * Move AsyncSocket between EVBs while a SEND_ZC write is in
  * flight, validating IoUringSendHandle's detach/clone two-CQE path.
@@ -1125,6 +1227,78 @@ TEST_P(AsyncSocketTest, MoveEventBaseWithInflightZeroCopyWrite) {
 
   socket->close();
   server.verifyConnection(buf, kLen);
+}
+
+/**
+ * A partially-written buffer is handed to IoUringSendHandle and re-submitted to
+ * io_uring as the socket buffer drains. writeStarting() must reach the
+ * WriteCallback exactly once, not once per (re-)submission. Regression test for
+ * the double writeStarting() that aborted RocketServerConnection's DCHECK on
+ * the native AsyncSocket + io_uring send path.
+ */
+TEST_P(AsyncSocketTest, PartialWriteFiresWriteStartingOnce) {
+  if (GetParam() != BackendType::IO_URING) {
+    GTEST_SKIP() << "IoUringSendHandle send path is io_uring-only";
+  }
+
+  // Small socket buffers so a large write can't complete in one shot.
+  constexpr size_t kSockBufSize = 8 * 1024;
+  TestServer server(false, kSockBufSize);
+
+  SocketOptionMap options{
+      {{SOL_SOCKET, SO_SNDBUF}, int(kSockBufSize)},
+      {{SOL_SOCKET, SO_RCVBUF}, int(kSockBufSize)},
+      {{IPPROTO_TCP, TCP_NODELAY}, 1},
+  };
+
+  // The receiver drains on this thread; the sender gets its own EVB thread.
+  EventBase& senderEvb = getEventBase();
+  std::thread senderThread([&]() { senderEvb.loopForever(); });
+
+  ConnCallback ccb;
+  WriteCallback wcb;
+  std::shared_ptr<AsyncSocket> socket;
+
+  senderEvb.runInEventBaseThreadAndWait([&]() {
+    socket = AsyncSocket::newSocket(&senderEvb);
+    socket->connect(&ccb, server.getAddress(), 30, options);
+  });
+
+  std::shared_ptr<BlockingSocket> acceptedSocket = server.accept();
+
+  // Completion is signalled via an atomic set on the sender thread; wcb's
+  // non-atomic fields are only read after that thread is joined.
+  std::atomic<bool> writeDone{false};
+  wcb.successCallback = [&writeDone]() { writeDone = true; };
+
+  // Big enough to overflow the send+recv buffers, so the first write is partial
+  // and its remainder is re-submitted through IoUringSendHandle as we drain.
+  constexpr size_t kSendSize = 100 * 1024;
+  auto const sendBuf = std::vector<char>(kSendSize, 'a');
+
+  senderEvb.runInEventBaseThreadAndWait([&]() {
+    socket->write(&wcb, sendBuf.data(), kSendSize);
+  });
+
+  // Drain everything so the write ultimately succeeds.
+  std::vector<uint8_t> recvBuf(kSendSize);
+  auto bytesRead = acceptedSocket->readAll(recvBuf.data(), recvBuf.size());
+  ASSERT_EQ(kSendSize, bytesRead);
+  EXPECT_EQ(0, memcmp(recvBuf.data(), sendBuf.data(), bytesRead));
+
+  using clock = std::chrono::steady_clock;
+  auto const deadline = clock::now() + std::chrono::seconds(30);
+  while (!writeDone.load() && clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+
+  senderEvb.terminateLoopSoon();
+  senderThread.join();
+  socket.reset();
+
+  EXPECT_EQ(STATE_SUCCEEDED, wcb.state);
+  // The core assertion: exactly one writeStarting despite multiple submits.
+  EXPECT_EQ(1, wcb.writeStartingInvocations);
 }
 
 /**

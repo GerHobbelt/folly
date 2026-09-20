@@ -36,8 +36,8 @@ class IoUringProvidedBufferRingTestHelper {
   explicit IoUringProvidedBufferRingTestHelper(IoUringProvidedBufferRing& ring)
       : ring(ring) {}
 
-  uint32_t getRingCount() { return ring.ringCount_; }
-  uint32_t getReturnedBuffers() { return ring.returnedBuffers_; }
+  uint32_t ringCount() { return ring.ringCount_; }
+  uint32_t returnedBuffers() { return ring.returnedBuffers_; }
 
   IoUringProvidedBufferRing& ring;
 };
@@ -57,7 +57,7 @@ TEST_F(IoUringProvidedBufferRingTest, Create) {
   EXPECT_TRUE(bufRing->available());
   EXPECT_EQ(bufRing->sizePerBuffer(), 4096);
   IoUringProvidedBufferRingTestHelper helper(*bufRing);
-  EXPECT_EQ(helper.getRingCount(), 1024);
+  EXPECT_EQ(helper.ringCount(), 1024);
 }
 
 TEST_F(IoUringProvidedBufferRingTest, CreateNoHugepages) {
@@ -74,7 +74,7 @@ TEST_F(IoUringProvidedBufferRingTest, CreateNoHugepages) {
   EXPECT_TRUE(bufRing->available());
   EXPECT_EQ(bufRing->sizePerBuffer(), 4096);
   IoUringProvidedBufferRingTestHelper helper(*bufRing);
-  EXPECT_EQ(helper.getRingCount(), 2048);
+  EXPECT_EQ(helper.ringCount(), 2048);
 }
 
 TEST_F(IoUringProvidedBufferRingTest, BufferMinSize) {
@@ -92,7 +92,7 @@ TEST_F(IoUringProvidedBufferRingTest, BufferMinSize) {
   // constexpr size_t kMinBufferSize = 32;
   EXPECT_EQ(bufRing->sizePerBuffer(), 32);
   IoUringProvidedBufferRingTestHelper helper(*bufRing);
-  EXPECT_EQ(helper.getRingCount(), 16);
+  EXPECT_EQ(helper.ringCount(), 16);
 }
 
 TEST_F(IoUringProvidedBufferRingTest, DelayedDestruction) {
@@ -161,7 +161,30 @@ TEST_F(IoUringProvidedBufferRingTest, ConcurrentDecBufferState) {
   }
 
   IoUringProvidedBufferRingTestHelper helper(*bufRing);
-  EXPECT_EQ(helper.getReturnedBuffers(), kBufferCount);
+  EXPECT_EQ(helper.returnedBuffers(), kBufferCount);
+}
+
+TEST_F(
+    IoUringProvidedBufferRingTest, IncrementalPartiallyConsumedSingleBuffer) {
+  io_uring ring{};
+  io_uring_queue_init(512, &ring, 0);
+  IoUringProvidedBufferRing::Options options = {
+      .gid = 1,
+      .bufferCount = 4,
+      .bufferSize = 64,
+      .useHugePages = false,
+      .useIncrementalBuffers = true,
+  };
+  auto bufRing = IoUringProvidedBufferRing::create(&ring, options);
+
+  auto first = bufRing->getIoBuf(0, 30, true);
+  EXPECT_EQ(first->length(), 30);
+
+  auto second = bufRing->getIoBuf(0, 40, false);
+  EXPECT_TRUE(second->isChained());
+  EXPECT_EQ(second->computeChainDataLength(), 40);
+  EXPECT_EQ(second->length(), 34);
+  EXPECT_EQ(second->next()->length(), 6);
 }
 
 #endif

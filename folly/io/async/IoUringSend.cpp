@@ -18,6 +18,7 @@
 
 #include <folly/io/async/EventHandler.h>
 #include <folly/io/async/IoUringBackend.h>
+#include <folly/memory/IoUringArena.h>
 
 namespace folly {
 
@@ -39,7 +40,7 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
   }
 
   explicit SendRequest(
-      AsyncWriter::WriteCallback* callback,
+      WriteCallbackWithState callback,
       const struct iovec* iov,
       size_t iovCount,
       size_t partialWritten,
@@ -48,8 +49,11 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
       WriteFlags flags,
       NetworkSocket fd)
       : IoSqeBase(IoSqeBase::Type::Write),
-        callback_(callback),
-        releaseCb_(callback ? callback->getReleaseIOBufCallback() : nullptr),
+        callbackWithState_(callback),
+        releaseCb_(
+            callback.getCallback()
+                ? callback.getCallback()->getReleaseIOBufCallback()
+                : nullptr),
         iovRemaining_(iovCount),
         bytesWritten_(bytesWritten),
         data_(std::move(data)),
@@ -81,7 +85,10 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
   }
   SendRequest* getNext() { return next_; }
   void append(SendRequest* request) { next_ = request; }
-  AsyncWriter::WriteCallback* getCallback() { return callback_; }
+  AsyncWriter::WriteCallback* getCallback() {
+    return callbackWithState_.getCallback();
+  }
+  void notifyOnWrite() { callbackWithState_.notifyOnWrite(); }
   size_t getTotalBytesWritten() { return bytesWritten_; }
   folly::IOBuf* getData() const { return data_.get(); }
   bool notifPending() const { return refs_ > 1; }
@@ -107,7 +114,7 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
     CHECK(handle_ == nullptr);
     void* buf = alloc(msg_.msg_iovlen);
     auto clone = new (buf) SendRequest(
-        callback_,
+        callbackWithState_,
         msg_.msg_iov,
         msg_.msg_iovlen,
         0,
@@ -130,6 +137,10 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
   void processSubmit(struct io_uring_sqe* sqe) noexcept override {
     if (folly::isSet(flags_, WriteFlags::WRITE_MSG_ZEROCOPY)) {
       ::io_uring_prep_sendmsg_zc(sqe, fd_.toFd(), &msg_, flags() | MSG_WAITALL);
+      if (handle_->backend_->getArenaIndex() > 0 && allIovInArena()) {
+        sqe->ioprio |= IORING_RECVSEND_FIXED_BUF;
+        sqe->buf_index = 0;
+      }
     } else {
       ::io_uring_prep_sendmsg(sqe, fd_.toFd(), &msg_, flags());
     }
@@ -197,6 +208,15 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
     return msg_flags;
   }
 
+  bool allIovInArena() const {
+    for (size_t i = 0; i < msg_.msg_iovlen; ++i) {
+      if (!IoUringArena::addressInArena(msg_.msg_iov[i].iov_base)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void consumeBytes(size_t bytes) {
     bytesWritten_ += bytes;
 
@@ -222,7 +242,7 @@ class IoUringSendHandle::SendRequest : public IoSqeBase {
     msg_.msg_iovlen = std::min<size_t>(iovRemaining_, kIovMax);
   }
 
-  AsyncWriter::WriteCallback* callback_;
+  WriteCallbackWithState callbackWithState_;
   AsyncWriter::ReleaseIOBufCallback* releaseCb_;
   size_t iovRemaining_;
   size_t bytesWritten_;
@@ -295,23 +315,24 @@ IoUringSendHandle::IoUringSendHandle(
     if (other->detachedFuture_.has_value()) {
       CHECK(oldReq->inFlight());
       CHECK(newReq->inFlight());
-      std::move(*other->detachedFuture_)
-          .via(evb)
-          .thenValue([oldReq, newReq, evb](const VecResFlags& results) {
-            // The result res is from detachSignal_ in the previous request
-            oldReq->destroy();
-            for (auto& [res, flags] : results) {
-              struct io_uring_cqe cqe{};
-              cqe.res = res;
-              cqe.flags = flags;
-              evb->bumpHandlingTime();
-              if (newReq->cancelled()) {
-                newReq->callbackCancelled(&cqe);
-              } else {
-                newReq->callback(&cqe);
-              }
-            }
-          });
+      folly::futures::detachOn(
+          evb,
+          std::move(*other->detachedFuture_)
+              .deferValue([oldReq, newReq, evb](const VecResFlags& results) {
+                // The result res is from detachSignal_ in the previous request
+                oldReq->destroy();
+                for (auto& [res, flags] : results) {
+                  struct io_uring_cqe cqe{};
+                  cqe.res = res;
+                  cqe.flags = flags;
+                  evb->bumpHandlingTime();
+                  if (newReq->cancelled()) {
+                    newReq->callbackCancelled(&cqe);
+                  } else {
+                    newReq->callback(&cqe);
+                  }
+                }
+              }));
     }
   }
 }
@@ -338,7 +359,7 @@ bool IoUringSendHandle::update(uint16_t eventFlags) {
 }
 
 void IoUringSendHandle::write(
-    AsyncWriter::WriteCallback* callback,
+    WriteCallbackWithState callback,
     const struct iovec* iov,
     size_t iovCount,
     size_t partialWritten,
@@ -412,9 +433,7 @@ void IoUringSendHandle::trySubmit() {
 }
 
 void IoUringSendHandle::onSendStarted() {
-  if (auto* cb = requestHead_->getCallback()) {
-    cb->writeStarting();
-  }
+  requestHead_->notifyOnWrite();
 }
 
 void IoUringSendHandle::onSendPartial(size_t bytesWritten) {
@@ -516,7 +535,7 @@ bool IoUringSendHandle::update(uint16_t /*eventFlags*/) {
 }
 
 void IoUringSendHandle::write(
-    AsyncWriter::WriteCallback* /*callback*/,
+    WriteCallbackWithState /*callback*/,
     const struct iovec* /*iov*/,
     size_t /*iovCount*/,
     size_t /*partialWritten*/,

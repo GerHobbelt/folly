@@ -83,6 +83,7 @@ fb_dirsync_cpp_library(
         "//folly/portability:fcntl",
         "//folly/portability:iovec",
         "//folly/portability:sockets",
+        "//folly/portability:sys_resource",
         "//folly/portability:unistd",
         "//folly/synchronization:baton",
         "//folly/synchronization:call_once",
@@ -234,6 +235,7 @@ fb_dirsync_cpp_library(
     use_raw_headers = True,
     deps = [
         ":async_base",
+        "//folly/memory:io_uring_arena",
     ],
     exported_deps = [
         ":async_transport",
@@ -295,7 +297,10 @@ fb_dirsync_cpp_library(
 
 fb_dirsync_cpp_library(
     name = "async_transport",
-    headers = ["AsyncTransport.h"],
+    headers = [
+        "AsyncTransport.h",
+        "WriteCallbackWithState.h",
+    ],
     use_raw_headers = True,
     exported_deps = [
         ":async_base",
