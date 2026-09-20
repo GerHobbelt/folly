@@ -4732,6 +4732,11 @@ void AsyncSocket::doClose() {
   if (!idZeroCopyBufPtrMap_.empty()) {
     zeroCopyDrainDeadline_ = std::chrono::steady_clock::now() +
         zeroCopyDrainConfig_.maxDrainDuration;
+    errMessageCallback_ = nullptr;
+    auto lifecycleObservers = std::exchange(lifecycleObservers_, {});
+    for (const auto& cb : lifecycleObservers) {
+      cb->destroy(this);
+    }
     scheduleZeroCopyDrain();
     return;
   }
@@ -4984,6 +4989,13 @@ void AsyncSocket::recvErr(
   AsyncSocketException ex(
       AsyncSocketException::INTERNAL_ERROR, withAddr("recv() failed"), err);
   failRead(__func__, ex);
+}
+
+void AsyncSocket::recvBuffersScarce(bool scarce) noexcept {
+  DestructorGuard dg(this);
+  if (readCallback_) {
+    readCallback_->readBuffersScarce(scarce);
+  }
 }
 
 std::ostream& operator<<(

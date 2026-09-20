@@ -1422,11 +1422,15 @@ class AsyncSocket
     virtual void observerDetach(AsyncSocket* /* socket */) noexcept = 0;
 
     /**
-     * destroy() will be invoked when the socket's destructor is invoked.
+     * destroy() is the terminal callback for this observer attachment.
      *
-     * No further events will be invoked after destroy().
+     * It is invoked when the socket is logically destroyed. This may happen
+     * before the AsyncSocket destructor runs when the socket and its file
+     * descriptor must remain alive to drain zero-copy completions.
      *
-     * @param socket   Socket being destroyed.
+     * No further observer callbacks will be invoked after destroy().
+     *
+     * @param socket   Socket being logically destroyed.
      */
     virtual void destroy(AsyncSocket* /* socket */) noexcept = 0;
 
@@ -1939,6 +1943,7 @@ class AsyncSocket
   void recvErr(
       int err,
       std::unique_ptr<const AsyncSocketException> exception) noexcept override;
+  void recvBuffersScarce(bool scarce) noexcept override;
 
   using ZeroCopyEnablePolicy =
       std::variant<std::monostate, AsyncWriter::ZeroCopyEnableFunc, size_t>;

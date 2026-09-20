@@ -30,7 +30,9 @@ fb_dirsync_cpp_unittest(
         "//folly/coro:baton",
         "//folly/coro:blocking_wait",
         "//folly/coro:collect",
+        "//folly/coro:gtest_helpers",
         "//folly/coro:task",
+        "//folly/coro:with_metadata",
         "//folly/portability:gtest",
         "//folly/tracing:async_stack",
     ],
@@ -101,12 +103,13 @@ fb_dirsync_cpp_benchmark(
     headers = [],
     deps = [
         "//folly:benchmark",
-        "//folly:cancellation_token",
-        "//folly:exception_wrapper",
         "//folly:try",
         "//folly/coro:blocking_wait",
         "//folly/coro:collect",
+        "//folly/coro:detail_barrier",
+        "//folly/coro:detail_barrier_task",
         "//folly/coro:detail_current_async_frame",
+        "//folly/coro:detail_helpers",
         "//folly/coro:task",
         "//folly/coro:via_if_async",
         "//folly/io/async:request_context",
@@ -332,6 +335,19 @@ fb_dirsync_cpp_unittest(
         "//folly/coro:traits",
         "//folly/coro:with_async_stack",
         "//folly/coro/safe:now_task",
+    ],
+)
+
+fb_dirsync_cpp_unittest(
+    name = "with_metadata_test",
+    srcs = ["WithMetadataTest.cpp"],
+    deps = [
+        "//folly/coro:detail_current_async_frame",
+        "//folly/coro:gtest_helpers",
+        "//folly/coro:task",
+        "//folly/coro:with_metadata",
+        "//folly/portability:gtest",
+        "//folly/tracing:async_stack",
     ],
 )
 

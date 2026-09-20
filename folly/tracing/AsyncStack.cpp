@@ -54,10 +54,21 @@ inline pthread_key_t folly_async_stack_root_tls_key = 0xFFFF'FFFFu;
 
 #if FOLLY_HAS_ASYNC_STACK_METADATA
 extern "C" {
+// `retain` is best-effort: assemblers predating SHF_GNU_RETAIN (e.g. the conda
+// aarch64 toolchain) ignore it with -Wattributes, breaking -Werror builds.
+// `used` alone still emits the symbol, so just silence the warning there.
+FOLLY_PUSH_WARNING
+FOLLY_GNU_DISABLE_WARNING("-Wattributes")
 [[FOLLY_ATTR_GNU_USED, FOLLY_ATTR_GNU_RETAIN]]
 FOLLY_EXPORT extern const std::uintptr_t
     folly_async_stack_metadata_frame_cookie = 0xDEADBEEFDEADBEEFULL;
+FOLLY_POP_WARNING
 }
+
+// An out-of-process reader reports 0 when it cannot resolve the symbol, so 0
+// must never be a valid cookie. Search for `read_folly_async_metadata_cookie`
+// (Meta-internal).
+static_assert(folly_async_stack_metadata_frame_cookie != 0);
 #endif
 
 namespace {
