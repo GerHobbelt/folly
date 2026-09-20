@@ -645,13 +645,6 @@ constexpr auto kCpplibVer = 0;
 #define FOLLY_CXX23_CONSTEXPR
 #endif
 
-// C++20 constinit
-#if defined(__cpp_constinit) && __cpp_constinit >= 201907L
-#define FOLLY_CONSTINIT constinit
-#else
-#define FOLLY_CONSTINIT
-#endif
-
 #if defined(FOLLY_CFG_NO_COROUTINES)
 #define FOLLY_HAS_COROUTINES 0
 #define FOLLY_HAS_IMMOVABLE_COROUTINES 0
@@ -726,11 +719,4 @@ constexpr auto kCpplibVer = 0;
 #define FOLLY_HAS_RESULT 1
 #else
 #define FOLLY_HAS_RESULT 0
-#endif
-
-// C++20 consteval
-#if FOLLY_CPLUSPLUS >= 202002L
-#define FOLLY_CONSTEVAL consteval
-#else
-#define FOLLY_CONSTEVAL constexpr
 #endif
