@@ -54,7 +54,6 @@ class IoUringProvidedBufferRing {
     uint16_t gid{0};
     uint32_t bufferCount{0};
     uint32_t bufferSize{0};
-    bool useHugePages{false};
     bool useIncrementalBuffers{false};
   };
 
@@ -70,7 +69,7 @@ class IoUringProvidedBufferRing {
       uint16_t startBufId, size_t totalLength, bool hasMore) noexcept;
   std::unique_ptr<IOBuf> getIoBuf(const struct io_uring_cqe* cqe) noexcept;
 
-  uint32_t count() const noexcept { return bufferCount_; }
+  uint32_t count() const noexcept { return ringBufferCount_; }
   bool available() const noexcept {
     return !enobuf_.load(std::memory_order_relaxed);
   }
@@ -101,7 +100,7 @@ class IoUringProvidedBufferRing {
   IoUringProvidedBufferRing& operator=(IoUringProvidedBufferRing const&) =
       delete;
 
-  void mapMemory(bool useHugePages);
+  void mapMemory();
   void initialRegister();
 
   void returnBuffer(uint16_t i) noexcept;
@@ -127,8 +126,12 @@ class IoUringProvidedBufferRing {
     return bufferBuffer_ + offset;
   }
 
-  struct io_uring_buf* ringBuf(int idx) const noexcept {
-    return &ringPtr_->bufs[idx & ringMask_];
+  struct io_uring_buf* ringBuf(uint32_t idx) const noexcept {
+    return &ringPtr_->bufs[ringIndex(idx)];
+  }
+
+  uint32_t ringIndex(uint32_t id) const noexcept {
+    return id & (ringBufferCount_ - 1);
   }
 
   struct BufferState {
@@ -150,25 +153,21 @@ class IoUringProvidedBufferRing {
   char* bufferBuffer_{nullptr};
   folly::DistributedMutex mutex_;
   uint32_t sizePerBuffer_{0};
-  int ringMask_{0};
-  uint32_t gottenBuffers_{0};
+  uint32_t bufferGetCount_{0};
   uint32_t ringReturnedBuffers_{0};
-  uint32_t returnedBuffers_{0};
-  uint32_t bufferCount_{0};
+  uint32_t bufferReturnedCount{0};
+  uint32_t ringBufferCount_{0};
   bool useIncremental_{false};
   std::atomic<bool> enobuf_{false};
   std::atomic<bool> wantsShutdown_{false};
   std::atomic<uint32_t> enobufCount_{0};
 
   // Cold fields
-  alignas(folly::hardware_constructive_interference_size) io_uring* ioRingPtr_;
+  alignas(folly::hardware_constructive_interference_size) io_uring* ringIoPtr;
   uint32_t shutdownReferences_{0};
   uint16_t const gid_{0};
-  uint32_t ringCount_{0};
   uint32_t allSize_{0};
   void* buffer_{nullptr};
-  uint32_t ringMemSize_{0};
-  uint32_t bufferSize_{0};
 };
 
 } // namespace folly

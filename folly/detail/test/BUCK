@@ -39,7 +39,6 @@ fb_dirsync_cpp_unittest(
     srcs = [
         "FileUtilDetailTest.cpp",
     ],
-    modifiers = ["ovr_config//project/folly:mobile[disabled]"],
     deps = [
         "//folly/detail:file_util_detail",
         "//folly/portability:gtest",
@@ -110,6 +109,14 @@ fb_dirsync_cpp_benchmark(
     ],
 )
 
+fb_dirsync_cpp_benchmark(
+    name = "benchmark_adaptive_near_zero_benchmark",
+    srcs = ["BenchmarkAdaptiveNearZeroBenchmark.cpp"],
+    deps = [
+        "//folly:benchmark",
+    ],
+)
+
 fb_dirsync_cpp_unittest(
     name = "traponavx512_test_negative",
     srcs = ["TrapOnAvx512TestNegative.cpp"],
@@ -142,6 +149,7 @@ fb_dirsync_cpp_unittest(
 fb_dirsync_cpp_unittest(
     name = "benchmark_adaptive_test",
     srcs = ["BenchmarkAdaptiveTest.cpp"],
+    labels = ["not_a_folly_benchmark"],
     deps = [
         "//folly:benchmark",
         "//folly/portability:gtest",

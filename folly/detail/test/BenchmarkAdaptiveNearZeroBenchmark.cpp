@@ -14,22 +14,26 @@
  * limitations under the License.
  */
 
-#if FOLLY_HAS_COROUTINES
+#include <folly/Benchmark.h>
 
-namespace folly {
-namespace coro {
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 
-template <typename FilterFn, typename Reference, typename Value>
-AsyncGenerator<Reference, Value> filter(
-    AsyncGenerator<Reference, Value> source, FilterFn filterFn) {
-  while (auto item = co_await source.next()) {
-    if (std::invoke(filterFn, item.value())) {
-      co_yield std::move(item).value();
-    }
+BENCHMARK(near_zero_cost, iters) {
+  while (iters--) {
+    // Match the global benchmark baseline so adaptive mode exercises the
+    // baseline-subtracted near-zero case directly.
+#ifdef _MSC_VER
+    _ReadWriteBarrier();
+#else
+    asm volatile("");
+#endif
   }
 }
 
-} // namespace coro
-} // namespace folly
-
-#endif // FOLLY_HAS_COROUTINES
+int main(int argc, char* argv[]) {
+  folly::gflags::ParseCommandLineFlags(&argc, &argv, true);
+  folly::runBenchmarks();
+  return 0;
+}

@@ -17,6 +17,7 @@
 #include <folly/lang/Bits.h>
 
 #include <algorithm>
+#include <bit>
 #include <random>
 #include <vector>
 
@@ -168,29 +169,6 @@ TEST(Bits, strictNextPowTwoClz) {
   EXPECT_EQ(1ull << 63, strictNextPowTwo((1ull << 62) + 1));
 }
 
-TEST(Bits, prevPowTwoClz) {
-  EXPECT_EQ(0, prevPowTwo(0u));
-  EXPECT_EQ(1, prevPowTwo(1u));
-  EXPECT_EQ(2, prevPowTwo(2u));
-  EXPECT_EQ(2, prevPowTwo(3u));
-  EXPECT_EQ(4, prevPowTwo(4u));
-  EXPECT_EQ(4, prevPowTwo(5u));
-  EXPECT_EQ(4, prevPowTwo(6u));
-  EXPECT_EQ(4, prevPowTwo(7u));
-  EXPECT_EQ(8, prevPowTwo(8u));
-  EXPECT_EQ(8, prevPowTwo(9u));
-  EXPECT_EQ(8, prevPowTwo(13u));
-  EXPECT_EQ(16, prevPowTwo(16u));
-  EXPECT_EQ(256, prevPowTwo(510u));
-  EXPECT_EQ(256, prevPowTwo(511u));
-  EXPECT_EQ(512, prevPowTwo(512u));
-  EXPECT_EQ(512, prevPowTwo(513u));
-  EXPECT_EQ(512, prevPowTwo(777u));
-  EXPECT_EQ(1ul << 30, prevPowTwo((1ul << 31) - 1));
-  EXPECT_EQ(1ull << 31, prevPowTwo((1ull << 32) - 1));
-  EXPECT_EQ(1ull << 62, prevPowTwo((1ull << 62) + 1));
-}
-
 TEST(Bits, strictPrevPowTwoClz) {
   EXPECT_EQ(0, strictPrevPowTwo(0u));
   EXPECT_EQ(0, strictPrevPowTwo(1u));
@@ -326,8 +304,8 @@ TEST(Bits, PartialLoadUnaligned) {
 
 TEST(Bits, BitCastBasic) {
   auto one = std::make_unique<int>();
-  auto two = folly::bit_cast<std::uintptr_t>(one.get());
-  EXPECT_EQ(folly::bit_cast<int*>(two), one.get());
+  auto two = std::bit_cast<std::uintptr_t>(one.get());
+  EXPECT_EQ(std::bit_cast<int*>(two), one.get());
 
   struct FancyInt {
     FancyInt() {
@@ -338,15 +316,15 @@ TEST(Bits, BitCastBasic) {
   };
 
   int x = 5;
-  auto bi = folly::bit_cast<FancyInt>(x);
+  auto bi = std::bit_cast<FancyInt>(x);
   EXPECT_EQ(x, bi.value);
 }
 
 TEST(Bits, BitCastCompatibilityTest) {
   static_assert(sizeof(double) == sizeof(std::uint64_t));
   auto one = folly::Random::rand64();
-  auto dbl = folly::bit_cast<double>(one);
-  auto two = folly::bit_cast<std::uint64_t>(dbl);
+  auto dbl = std::bit_cast<double>(one);
+  auto two = std::bit_cast<std::uint64_t>(dbl);
   EXPECT_EQ(one, two);
 }
 

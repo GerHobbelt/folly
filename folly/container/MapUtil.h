@@ -27,6 +27,7 @@
 
 #include <fmt/format.h>
 
+#include <folly/CppAttributes.h>
 #include <folly/Optional.h>
 #include <folly/Range.h>
 #include <folly/functional/Invoke.h>
@@ -76,6 +77,17 @@ typename Map::mapped_type get_default(
  * Given a map and a key, return the value corresponding to the key in the map,
  * or throw an exception of the specified type.
  */
+template <
+    class E = std::out_of_range,
+    class Map,
+    typename Key = typename Map::key_type>
+const typename Map::mapped_type& get_or_throw(
+    Map&& map,
+    const Key& key,
+    const StringPiece& exceptionStrPrefix = StringPiece())
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling reference
+
 template <
     class E = std::out_of_range,
     class Map,
@@ -145,7 +157,15 @@ OptionalValue get_optional(const Map& map, const Key& key) {
  */
 template <class Map, typename Key = typename Map::key_type>
 const typename Map::mapped_type& get_ref_default(
-    const Map& map, const Key& key, const typename Map::mapped_type& dflt) {
+    Map&& map, const Key& key, const typename Map::mapped_type& dflt)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling reference
+
+template <class Map, typename Key = typename Map::key_type>
+const typename Map::mapped_type& get_ref_default(
+    const Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key& key,
+    const typename Map::mapped_type& dflt [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]]) {
   auto pos = map.find(key);
   return (pos != map.end() ? pos->second : dflt);
 }
@@ -179,7 +199,22 @@ template <
     typename = typename std::enable_if<
         std::is_reference<invoke_result_t<Func>>::value>::type>
 const typename Map::mapped_type& get_ref_default(
-    const Map& map, const Key& key, Func&& dflt) {
+    Map&& map, const Key& key, Func&& dflt)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling reference
+
+template <
+    class Map,
+    typename Key = typename Map::key_type,
+    typename Func,
+    typename = typename std::enable_if<
+        is_invocable_r_v<const typename Map::mapped_type&, Func>>::type,
+    typename = typename std::enable_if<
+        std::is_reference<invoke_result_t<Func>>::value>::type>
+const typename Map::mapped_type& get_ref_default(
+    const Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key& key,
+    Func&& dflt) {
   auto pos = map.find(key);
   return (pos != map.end() ? pos->second : dflt());
 }
@@ -189,13 +224,20 @@ const typename Map::mapped_type& get_ref_default(
  * the key in the map, or nullptr if the key doesn't exist in the map.
  */
 template <class Map, typename Key = typename Map::key_type>
-auto get_ptr(const Map& map, const Key& key) {
+auto get_ptr(Map&& map, const Key& key)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling pointer
+
+template <class Map, typename Key = typename Map::key_type>
+auto get_ptr(
+    const Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]], const Key& key) {
   auto pos = map.find(key);
   return (pos != map.end() ? &pos->second : nullptr);
 }
 template <class Map, typename Key = typename Map::key_type>
-const typename Map::mapped_type* FOLLY_NULLABLE
-get_ptr(const Map* FOLLY_NULLABLE map, const Key& key) {
+const typename Map::mapped_type* FOLLY_NULLABLE get_ptr(
+    const Map* FOLLY_NULLABLE map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key& key) {
   return map ? get_ptr(*map, key) : nullptr;
 }
 
@@ -203,20 +245,27 @@ get_ptr(const Map* FOLLY_NULLABLE map, const Key& key) {
  * Non-const overload of the above.
  */
 template <class Map, typename Key = typename Map::key_type>
-auto get_ptr(Map& map, const Key& key) {
+auto get_ptr(Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]], const Key& key) {
   auto pos = map.find(key);
   return (pos != map.end() ? &pos->second : nullptr);
 }
 
 template <class Map, typename Key = typename Map::key_type>
-typename Map::mapped_type* FOLLY_NULLABLE
-get_ptr(Map* FOLLY_NULLABLE map, const Key& key) {
+typename Map::mapped_type* FOLLY_NULLABLE get_ptr(
+    Map* FOLLY_NULLABLE map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key& key) {
   return map ? get_ptr(*map, key) : nullptr;
 }
 
 /**
  * Same as `get_ptr` but for `find` variants that search for two keys at once.
  */
+template <class Map, typename Key = typename Map::key_type>
+std::pair<const typename Map::mapped_type*, const typename Map::mapped_type*>
+get_ptr2(Map&& map, const Key& key0, const Key& key1)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling pointer
+
 template <class Map, typename Key = typename Map::key_type>
 std::pair<const typename Map::mapped_type*, const typename Map::mapped_type*>
 get_ptr2(const Map& map, const Key& key0, const Key& key1) {
@@ -309,8 +358,16 @@ auto get_optional(
  * or nullptr if the key doesn't exist in the map.
  */
 template <class Map, class Key1, class Key2, class... Keys>
+auto get_ptr(Map&& map, const Key1& key1, const Key2& key2, const Keys&... keys)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling pointer
+
+template <class Map, class Key1, class Key2, class... Keys>
 auto get_ptr(
-    const Map& map, const Key1& key1, const Key2& key2, const Keys&... keys) ->
+    const Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key1& key1,
+    const Key2& key2,
+    const Keys&... keys) ->
     typename detail::NestedMapType<Map, 2 + sizeof...(Keys)>::type
     const* FOLLY_NULLABLE {
   auto pos = map.find(key1);
@@ -319,7 +376,7 @@ auto get_ptr(
 
 template <class Map, class Key1, class Key2, class... Keys>
 auto get_ptr(
-    const Map* FOLLY_NULLABLE map,
+    const Map* FOLLY_NULLABLE map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
     const Key1& key1,
     const Key2& key2,
     const Keys&... keys) ->
@@ -329,16 +386,19 @@ auto get_ptr(
 }
 
 template <class Map, class Key1, class Key2, class... Keys>
-auto get_ptr(Map& map, const Key1& key1, const Key2& key2, const Keys&... keys)
-    -> typename detail::NestedMapType<Map, 2 + sizeof...(Keys)>::
-        type* FOLLY_NULLABLE {
+auto get_ptr(
+    Map& map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
+    const Key1& key1,
+    const Key2& key2,
+    const Keys&... keys) -> typename detail::
+    NestedMapType<Map, 2 + sizeof...(Keys)>::type* FOLLY_NULLABLE {
   auto pos = map.find(key1);
   return pos != map.end() ? get_ptr(pos->second, key2, keys...) : nullptr;
 }
 
 template <class Map, class Key1, class Key2, class... Keys>
 auto get_ptr(
-    Map* FOLLY_NULLABLE map,
+    Map* FOLLY_NULLABLE map [[FOLLY_ATTR_CLANG_LIFETIMEBOUND]],
     const Key1& key1,
     const Key2& key2,
     const Keys&... keys) -> typename detail::
@@ -375,6 +435,19 @@ auto get_default(
  * in the map.
  * The default value is the last parameter, and must be a lvalue reference.
  */
+template <
+    class Map,
+    class Key1,
+    class Key2,
+    class... KeysDefault,
+    typename = typename std::enable_if<sizeof...(KeysDefault) != 0>::type,
+    typename = typename std::enable_if<std::is_lvalue_reference<
+        typename detail::DefaultType<KeysDefault...>::type>::value>::type>
+auto get_ref_default(
+    Map&& map, const Key1& key1, const Key2& key2, KeysDefault&&... keysDefault)
+  requires(!std::is_lvalue_reference_v<Map>)
+= delete; // disallow on temporary map to prevent dangling reference
+
 template <
     class Map,
     class Key1,

@@ -77,28 +77,6 @@
 
 namespace folly {
 
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-
-using std::bit_cast;
-
-#else
-
-//  mimic: std::bit_cast, C++20
-template <
-    typename To,
-    typename From,
-    std::enable_if_t<
-        sizeof(From) == sizeof(To) && std::is_trivially_copyable<To>::value &&
-            std::is_trivially_copyable<From>::value,
-        int> = 0>
-To bit_cast(const From& src) noexcept {
-  aligned_storage_for_t<To> storage;
-  std::memcpy(&storage, &src, sizeof(From));
-  return reinterpret_cast<To&>(storage);
-}
-
-#endif
-
 namespace detail {
 template <typename Dst, typename Src>
 constexpr std::make_signed_t<Dst> bits_to_signed(Src const s) {
@@ -207,12 +185,6 @@ FOLLY_ALWAYS_INLINE constexpr T nextPowTwo(T const v) {
 }
 
 template <class T>
-inline constexpr T prevPowTwo(T const v) {
-  static_assert(std::is_unsigned<T>::value, "signed type");
-  return v ? (T(1) << (findLastSet(v) - 1)) : T(0);
-}
-
-template <class T>
 inline constexpr bool isPowTwo(T const v) {
   static_assert(std::is_integral<T>::value, "non-integral type");
   static_assert(std::is_unsigned<T>::value, "signed type");
@@ -229,7 +201,7 @@ inline constexpr T strictNextPowTwo(T const v) {
 template <class T>
 inline constexpr T strictPrevPowTwo(T const v) {
   static_assert(std::is_unsigned<T>::value, "signed type");
-  return v > 1 ? prevPowTwo(T(v - 1)) : T(0);
+  return v > 1 ? std::bit_floor(T(v - 1)) : T(0);
 }
 
 /// n_least_significant_bits
@@ -415,7 +387,7 @@ struct EndianInt {
     // we rely on compilers to optimize away the bit_cast calls
     constexpr auto s = sizeof(T);
     using B = typename uint_types_by_size<s>::type;
-    return bit_cast<T>(byteswap_gen(bit_cast<B>(x)));
+    return std::bit_cast<T>(byteswap_gen(std::bit_cast<B>(x)));
   }
   static T big(T x) { return kIsLittleEndian ? EndianInt::swap(x) : x; }
   static T little(T x) { return kIsBigEndian ? EndianInt::swap(x) : x; }

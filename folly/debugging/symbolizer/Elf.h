@@ -20,8 +20,10 @@
 
 #include <fcntl.h>
 #include <sys/types.h>
+#include <algorithm>
 #include <cstdio>
 #include <initializer_list>
+#include <span>
 #include <stdexcept>
 #include <system_error>
 #include <unordered_map>
@@ -227,11 +229,9 @@ class ElfFile {
   const ElfSym* iterateSymbolsWithType(
       const ElfShdr& section, uint32_t type, Fn fn) const
       noexcept(is_nothrow_invocable_v<Fn&, ElfSym const&>);
-  template <class Fn>
-  const ElfSym* iterateSymbolsWithTypes(
-      const ElfShdr& section,
-      std::initializer_list<uint32_t> types,
-      Fn fn) const noexcept(is_nothrow_invocable_v<Fn&, ElfSym const&>);
+  template <uint32_t... Types, class Fn>
+  const ElfSym* iterateSymbolsWithTypes(const ElfShdr& section, Fn fn) const
+      noexcept(is_nothrow_invocable_v<Fn&, ElfSym const&>);
 
   /**
    * Iterate over entries within a given section.
@@ -309,8 +309,10 @@ class ElfFile {
     };
 
     auto iterSection = [&](const folly::symbolizer::ElfShdr& section) -> bool {
-      iterateSymbolsWithTypes(section, types, [&](const auto& sym) -> bool {
-        return findSymbol(section, sym);
+      iterateSymbols(section, [&](const auto& sym) -> bool {
+        auto const elfType = ELF32_ST_TYPE(sym.st_info);
+        auto const it = std::find(types.begin(), types.end(), elfType);
+        return it != types.end() && findSymbol(section, sym);
       });
       return false;
     };
@@ -406,14 +408,14 @@ class ElfFile {
 
   /** Structure containing a note header and it's body */
   struct Note {
-    folly::span<const uint8_t> note;
-    explicit Note(folly::span<const uint8_t> note_) : note(note_) {}
+    std::span<const uint8_t> note;
+    explicit Note(std::span<const uint8_t> note_) : note(note_) {}
 
     const ElfNhdr* header() const {
       return reinterpret_cast<const ElfNhdr*>(note.data());
     }
 
-    folly::span<const uint8_t> body() const {
+    std::span<const uint8_t> body() const {
       return note.subspan(sizeof(*header()));
     }
 
@@ -434,7 +436,7 @@ class ElfFile {
           reinterpret_cast<const char*>(body().data()), header()->n_namesz - 1);
     }
 
-    folly::span<const uint8_t> getDesc() const {
+    std::span<const uint8_t> getDesc() const {
       if (!header()) {
         return span<const uint8_t>{};
       }
@@ -464,7 +466,7 @@ class ElfFile {
      * be returned.
      */
     static folly::Expected<Note, FindNoteError> parse(
-        folly::span<const uint8_t> noteBody) {
+        std::span<const uint8_t> noteBody) {
       if (noteBody.size() < sizeof(ElfNhdr)) {
         return Unexpected(FindNoteError(FindNoteFailureCode::NoteUndersized));
       }

@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <span>
+
 namespace folly {
 namespace symbolizer {
 
@@ -157,15 +159,13 @@ const ElfSym* ElfFile::iterateSymbolsWithType(
   });
 }
 
-template <class Fn>
-const ElfSym* ElfFile::iterateSymbolsWithTypes(
-    const ElfShdr& section, std::initializer_list<uint32_t> types, Fn fn) const
-    noexcept(is_nothrow_invocable_v<Fn&, ElfSym const&>) {
+template <uint32_t... Types, class Fn>
+const ElfSym* ElfFile::iterateSymbolsWithTypes(const ElfShdr& section, Fn fn)
+    const noexcept(is_nothrow_invocable_v<Fn&, ElfSym const&>) {
   // N.B. st_info has the same representation on 32- and 64-bit platforms
   return iterateSymbols(section, [&](const ElfSym& sym) -> bool {
     auto const elfType = ELF32_ST_TYPE(sym.st_info);
-    auto const it = std::find(types.begin(), types.end(), elfType);
-    return it != types.end() && fn(sym);
+    return ((elfType == Types) || ...) && fn(sym);
   });
 }
 
@@ -179,7 +179,7 @@ ElfFile::iterateNotesInBodyHelper(folly::StringPiece body, Fn& fn) const
   }
 
   while (body.size() > 0) {
-    folly::span<const uint8_t> noteBody =
+    std::span<const uint8_t> noteBody =
         span(reinterpret_cast<const uint8_t*>(body.data()), body.size());
     auto noteMaybe = Note::parse(noteBody);
     if (!noteMaybe) {
