@@ -1,7 +1,6 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@fbcode_macros//build_defs:auto_headers.bzl", "AutoHeaders")
-load("@fbcode_macros//build_defs:build_file_migration.bzl", "fbcode_target", "non_fbcode_target")
-load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library")
+load("@fbcode_macros//build_defs:build_file_migration.bzl", "non_fbcode_target")
 load("@fbsource//tools/build_defs:fb_native_wrapper.bzl", "fb_native")
 load("@fbsource//tools/build_defs:fb_xplat_cxx_library.bzl", "fb_xplat_cxx_library")
 load("@fbsource//tools/build_defs:fb_xplat_cxx_test.bzl", "fb_xplat_cxx_test")
@@ -47,7 +46,6 @@ fb_dirsync_cpp_library(
         "//folly/lang:align",
         "//folly/lang:exception",
         "//folly/lang:thunk",
-        "//folly/memory:malloc",
         "//folly/portability:config",
         "//folly/portability:constexpr",
         "//folly/portability:malloc",
@@ -2312,6 +2310,28 @@ fb_dirsync_cpp_library(
 )
 
 fb_dirsync_cpp_library(
+    name = "concurrent_b_skip_list",
+    headers = [
+        "ConcurrentBSkipList.h",
+        "ConcurrentBSkipList-detail.h",
+    ],
+    use_raw_headers = True,
+    exported_deps = [
+        "fbsource//third-party/glog:glog",
+        ":c_portability",
+        ":micro_lock",
+        ":portability",
+        ":small_vector",
+        ":utility",
+        "//folly/lang:align",
+        "//folly/lang:assume",
+        "//folly/synchronization:relaxed_atomic",
+        "//folly/synchronization:rw_spin_lock",
+        "//folly/synchronization:sanitize_thread",
+    ],
+)
+
+fb_dirsync_cpp_library(
     name = "default_keep_alive_executor",
     headers = [
         "DefaultKeepAliveExecutor.h",
@@ -2369,20 +2389,6 @@ fb_dirsync_cpp_library(
         "//folly/portability:sys_mman",
         "//folly/portability:unistd",
     ],
-)
-
-# This adds the symbol __folly_memcpy through FollyMemcpy.h, but does not
-# replace the default memcpy.
-# NOTE: for mobile, this is a no-op. we have this here for symmetry with fbcode
-non_fbcode_target(
-    _kind = folly_xplat_library,
-    name = "memcpy",
-    srcs = [
-        "FollyMemcpy.cpp",
-        "memcpy.S",
-    ],
-    fbcode_compiler_flags_override = [],
-    raw_headers = ["FollyMemcpy.h"],
 )
 
 fb_dirsync_cpp_library(
@@ -2585,13 +2591,21 @@ fb_dirsync_cpp_library(
 )
 
 # This exports the symbol __folly_memcpy to C++ via a header.
-fbcode_target(
-    _kind = cpp_library,
+fb_dirsync_cpp_library(
     name = "memcpy",
+    srcs = select({
+        "DEFAULT": [
+            "FollyMemcpy.cpp",
+            "memcpy.S",
+        ],
+        "ovr_config//runtime:fbcode": [],
+    }),
     headers = ["FollyMemcpy.h"],
-    exported_deps = [
-        ":memcpy-impl",  # @manual
-    ],
+    use_raw_headers = True,
+    exported_deps = select({
+        "DEFAULT": [],
+        "ovr_config//runtime:fbcode": [":memcpy-impl"],  # @manual
+    }),
 )
 
 # This overrides the libc memcpy with __folly_memcpy.

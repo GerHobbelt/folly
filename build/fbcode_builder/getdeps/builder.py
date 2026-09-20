@@ -782,8 +782,6 @@ if __name__ == "__main__":
             final_install_prefix=final_install_prefix,
         )
         self.defines: dict[str, str] = defines or {}
-        if extra_cmake_defines:
-            self.defines.update(extra_cmake_defines)
         self.cmake_targets: list[str] = cmake_targets or ["install"]
 
         if build_opts.is_windows():
@@ -798,6 +796,14 @@ if __name__ == "__main__":
         if build_opts.shared_libs:
             self.defines["BUILD_SHARED_LIBS"] = "ON"
             self.defines["BOOST_LINK_STATIC"] = "OFF"
+
+        # Apply caller-supplied extra defines last so a per-package
+        # --extra-cmake-defines can override defaults (notably
+        # BUILD_SHARED_LIBS=ON set by --shared-libs above), letting a
+        # single workflow build most projects shared while pinning a
+        # specific dependency to static.
+        if extra_cmake_defines:
+            self.defines.update(extra_cmake_defines)
 
     def _invalidate_cache(self) -> None:
         for name in [
@@ -1002,6 +1008,12 @@ if __name__ == "__main__":
                 self.build_opts.build_type,
                 "-j",
                 str(self.num_jobs),
+                "--",
+                # Continue building even if we see an error
+                # Increases dev velocity by surfacing all errors
+                # `-k 0` is understood by ninja - the only build system we use
+                "-k",
+                "0",
             ],
             env=env,
             preexec_fn=self.memory_limit_preexec_fn,
@@ -1041,6 +1053,12 @@ if __name__ == "__main__":
                 self.build_opts.build_type,
                 "-j",
                 str(self.num_jobs),
+                "--",
+                # Continue building even if we see an error
+                # Increases dev velocity by surfacing all errors
+                # `-k 0` is understood by ninja - the only build system we use
+                "-k",
+                "0",
             ]
         )
 
@@ -1330,10 +1348,9 @@ if __name__ == "__main__":
                 args += ["--timeout", str(timeout)]
 
             count: int = 0
-            retcode: int | None = -1
+            retcode: int = -1
             while count <= retry:
-                # FIXME: What is this trying to accomplish? Should it fail on first or >=1 errors?
-                retcode = self._check_cmd(
+                retcode = self._run_cmd(
                     args, env=env, use_cmd_prefix=use_cmd_prefix, allow_fail=True
                 )
 
@@ -1343,7 +1360,7 @@ if __name__ == "__main__":
                     # Only add this option in the second run.
                     args += ["--rerun-failed"]
                 count += 1
-            if retcode is not None and retcode != 0:
+            if retcode != 0:
                 # Allow except clause in getdeps.main to catch and exit gracefully
                 # This allows non-testpilot runs to fail through the same logic as failed testpilot runs, which may become handy in case if post test processing is needed in the future
                 raise subprocess.CalledProcessError(retcode, args)

@@ -36,24 +36,18 @@ void pinProcessToCurrentCPU() {
   ASSERT_EQ(ret, 0);
 }
 
-} // namespace
-
-// StripedEDFThreadPoolExecutor is a CPUThreadPoolExecutor, so all the thread
-// pool functionality is covered by its test. We just need to verify the
-// ordering by deadline, which is only guaranteed for tasks submitted from the
-// same LLC, so we pin the process to a processor and verify the order in a SPSC
-// scenario.
-TEST(StripedEDFThreadPoolExecutor, Basic) {
-  // Start with an empty pool, we'll start a single thread after all the tasks
-  // have been submitted.
-  folly::StripedEDFThreadPoolExecutor executor(std::pair<size_t, size_t>{0, 0});
-
-  pinProcessToCurrentCPU();
-  std::vector<uint64_t> order;
-  constexpr size_t kNumTasks = 100;
+// Submits tasks with deadlines drawn from a small range (so there are many
+// ties), then asserts that they are executed in (deadline, submission order)
+// lexicographic order. The executor must start with no threads, so all tasks
+// are queued before a single worker is spawned to drain them.
+void submitAndVerifyOrdering(folly::StripedEDFThreadPoolExecutor& executor) {
+  std::vector<std::pair<uint64_t, size_t>> order;
+  constexpr size_t kNumTasks = 1000;
+  constexpr uint64_t kNumDistinctDeadlines = 100;
   for (size_t i = 0; i < kNumTasks; ++i) {
-    auto deadline = folly::Random::rand64();
-    executor.add([deadline, &order] { order.push_back(deadline); }, deadline);
+    auto deadline = folly::Random::rand64(kNumDistinctDeadlines);
+    executor.add(
+        [deadline, i, &order] { order.emplace_back(deadline, i); }, deadline);
   }
 
   ASSERT_EQ(executor.numThreads(), 0);
@@ -63,6 +57,31 @@ TEST(StripedEDFThreadPoolExecutor, Basic) {
   executor.join();
   EXPECT_EQ(order.size(), kNumTasks);
   EXPECT_TRUE(std::is_sorted(order.begin(), order.end()));
+}
+
+} // namespace
+
+// StripedEDFThreadPoolExecutor is a CPUThreadPoolExecutor, so all the thread
+// pool functionality is covered by its test. We just need to verify the
+// ordering by deadline (and submission order on tie), which is only guaranteed
+// for tasks submitted from the same LLC, so we pin the process to a processor
+// and verify the order in a SPSC scenario.
+TEST(StripedEDFThreadPoolExecutor, Basic) {
+  folly::StripedEDFThreadPoolExecutor executor(
+      {0, 0}, std::make_shared<folly::NamedThreadFactory>("StripedEDFTP"));
+  pinProcessToCurrentCPU();
+  submitAndVerifyOrdering(executor);
+}
+
+// In strict mode, a single global queue is used regardless of CPU topology, so
+// EDF + submission-order ordering holds without pinning.
+TEST(StripedEDFThreadPoolExecutor, StrictMode) {
+  folly::StripedEDFThreadPoolExecutor::Options options{.strictOrdering = true};
+  folly::StripedEDFThreadPoolExecutor executor(
+      {0, 0},
+      std::make_shared<folly::NamedThreadFactory>("StripedEDFTP"),
+      options);
+  submitAndVerifyOrdering(executor);
 }
 
 TEST(StripedEDFThreadPoolExecutor, Stop) {

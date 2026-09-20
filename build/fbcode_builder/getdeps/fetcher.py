@@ -254,8 +254,16 @@ class SystemPackageFetcher:
 
     def hash(self) -> str:
         if self.packages_are_installed():
-            # pyrefly: ignore [bad-argument-type]
-            return hashlib.sha256(self.installed).hexdigest()
+            # SystemPackageFetcher stashes the package-manager query output
+            # (bytes including versions) in self.installed so upgrades change
+            # the hash. PreinstalledNopFetcher just sets self.installed=True
+            # and has no .packages, so fall back to an empty package list.
+            if isinstance(self.installed, (bytes, bytearray)):
+                payload = bytes(self.installed)
+            else:
+                packages = getattr(self, "packages", None) or []
+                payload = ",".join(sorted(packages)).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
         else:
             return "0" * 40
 
@@ -468,7 +476,7 @@ def filter_strip_marker(dest_name: str, marker: str) -> None:
 
 
 def list_files_under_dir_newer_than_timestamp(
-    dir_to_scan: str, ts: int
+    dir_to_scan: str, ts: float
 ) -> Iterator[str]:
     for root, _dirs, files in os.walk(dir_to_scan):
         for src_file in files:
