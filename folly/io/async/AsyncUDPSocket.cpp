@@ -116,7 +116,12 @@ static constexpr bool msgErrQueueSupported =
 #endif // FOLLY_HAVE_MSG_ERRQUEUE
 
 AsyncUDPSocket::AsyncUDPSocket(EventBase* evb)
-    : EventHandler(evb), readCallback_(nullptr), eventBase_(evb), fd_() {
+    : EventHandler(evb),
+      readCallback_(nullptr),
+      eventBase_(evb),
+      fd_(),
+      zeroCopyBookkeeping_(std::make_shared<ZeroCopyFdBookkeeping>()),
+      ioBufFreeFuncReleaseCb_(this) {
   if (eventBase_) {
     eventBase_->dcheckIsInEventBaseThread();
   }
@@ -507,6 +512,16 @@ void AsyncUDPSocket::setFD(NetworkSocket fd, FDOwnership ownership) {
   localAddress_.setFromLocalAddress(fd_);
 }
 
+std::unique_ptr<AsyncUDPSocket> AsyncUDPSocket::createPeerOnSameFd() {
+  CHECK_NE(NetworkSocket(), fd_)
+      << "createPeerOnSameFd called before this socket is bound";
+  auto peer = std::make_unique<AsyncUDPSocket>(eventBase_);
+  peer->zeroCopyBookkeeping_ = zeroCopyBookkeeping_;
+  peer->setFD(fd_, FDOwnership::SHARED);
+  peer->setZeroCopy(true);
+  return peer;
+}
+
 bool AsyncUDPSocket::setZeroCopy(bool enable) {
   if (msgErrQueueSupported) {
     zeroCopyVal_ = enable;
@@ -587,13 +602,43 @@ int AsyncUDPSocket::getZeroCopyFlags() {
   return MSG_ZEROCOPY;
 }
 
-void AsyncUDPSocket::addZeroCopyBuf(std::unique_ptr<folly::IOBuf>&& buf) {
-  uint32_t id = getNextZeroCopyBufId();
+void AsyncUDPSocket::ZeroCopyFdBookkeeping::registerBuf(
+    std::unique_ptr<folly::IOBuf>&& buf, ReleaseIOBufCallback* cb) noexcept {
+  bufs_.emplace(nextId_, Entry{std::move(buf), cb});
+  ++nextId_;
+}
 
-  idZeroCopyBufMap_[id] = std::move(buf);
+void AsyncUDPSocket::ZeroCopyFdBookkeeping::onCompletion(
+    uint32_t lo, uint32_t hi) noexcept {
+  // Walk [lo, hi] inclusive; check terminator before ++id to avoid uint32_t
+  // overflow when hi == UINT32_MAX.
+  for (uint32_t id = lo;; ++id) {
+    auto it = bufs_.find(id);
+    if (it != bufs_.end()) {
+      auto entry = std::move(it->second);
+      bufs_.erase(it);
+      if (entry.cb) {
+        entry.cb->releaseIOBuf(std::move(entry.buf));
+      }
+      // If no callback, entry.buf is dropped here.
+    }
+    // else: another bookkeeping on the same fd registered this id, or it
+    // predates this bookkeeping's installation.
+    if (id == hi) {
+      break;
+    }
+  }
 }
 
 ssize_t AsyncUDPSocket::writeChain(
+    const folly::SocketAddress& address,
+    std::unique_ptr<folly::IOBuf>&& buf,
+    WriteOptions options) {
+  return writeChain(nullptr, address, std::move(buf), options);
+}
+
+ssize_t AsyncUDPSocket::writeChain(
+    WriteCallback* wcb,
     const folly::SocketAddress& address,
     std::unique_ptr<folly::IOBuf>&& buf,
     WriteOptions options) {
@@ -684,7 +729,16 @@ ssize_t AsyncUDPSocket::writeChain(
         ret = sendmsg(fd_, &msg, 0);
       }
     } else {
-      addZeroCopyBuf(std::move(buf));
+      // Successful zerocopy send: register the buf so it stays alive until
+      // the kernel emits a completion. Pick the release callback in this
+      // order: the per-write WriteCallback (if any), then ioBufFreeFunc_
+      // (if set) via the per-socket adapter, then nullptr (buf is dropped
+      // on completion).
+      auto* releaseCb = wcb ? wcb->getReleaseIOBufCallback() : nullptr;
+      if (!releaseCb && ioBufFreeFunc_) {
+        releaseCb = &ioBufFreeFuncReleaseCb_;
+      }
+      zeroCopyBookkeeping_->registerBuf(std::move(buf), releaseCb);
     }
   }
 
@@ -772,7 +826,7 @@ ssize_t AsyncUDPSocket::writev(
 }
 
 ssize_t AsyncUDPSocket::writevImpl(
-    netops::Msgheader* msg, [[maybe_unused]] WriteOptions options) {
+    netops::Msgheader* msg, WriteOptions options) {
 #if defined(FOLLY_HAVE_MSG_ERRQUEUE) || defined(_WIN32)
   XPLAT_CMSGHDR* cm = nullptr;
 
@@ -833,7 +887,18 @@ ssize_t AsyncUDPSocket::writevImpl(
 #ifdef _WIN32
   return netops::wsaSendMsgDirect(fd_, msg->getMsg());
 #else
-  return sendmsg(fd_, msg->getMsg(), 0);
+  int msg_flags = options.zerocopy ? getZeroCopyFlags() : 0;
+  auto ret = sendmsg(fd_, msg->getMsg(), msg_flags);
+  if (msg_flags && ret < 0 && errno == ENOBUFS) {
+    LOG(INFO) << "ENOBUFS...";
+    // workaround for running with zerocopy enabled but without a big enough
+    // memlock value - see ulimit -l
+    // Also see /proc/sys/net/core/optmem_max
+    zeroCopyEnabled_ = false;
+    zeroCopyReenableCounter_ = zeroCopyReenableThreshold_;
+    ret = sendmsg(fd_, msg->getMsg(), 0);
+  }
+  return ret;
 #endif
 }
 
@@ -1216,15 +1281,6 @@ void AsyncUDPSocket::handlerReady(uint16_t events) noexcept {
   }
 }
 
-void AsyncUDPSocket::releaseZeroCopyBuf(uint32_t id) {
-  auto iter = idZeroCopyBufMap_.find(id);
-  CHECK(iter != idZeroCopyBufMap_.end());
-  if (ioBufFreeFunc_) {
-    ioBufFreeFunc_(std::move(iter->second));
-  }
-  idZeroCopyBufMap_.erase(iter);
-}
-
 bool AsyncUDPSocket::isZeroCopyMsg([[maybe_unused]] const cmsghdr& cmsg) {
 #ifdef FOLLY_HAVE_MSG_ERRQUEUE
   if ((cmsg.cmsg_level == SOL_IP && cmsg.cmsg_type == IP_RECVERR) ||
@@ -1252,15 +1308,13 @@ void AsyncUDPSocket::processZeroCopyMsg([[maybe_unused]] const cmsghdr& cmsg) {
     zeroCopyEnabled_ = false;
   }
 
-  for (uint32_t i = lo; i <= hi; i++) {
-    releaseZeroCopyBuf(i);
-  }
+  zeroCopyBookkeeping_->onCompletion(lo, hi);
 #endif
 }
 
 size_t AsyncUDPSocket::handleErrMessages() noexcept {
 #ifdef FOLLY_HAVE_MSG_ERRQUEUE
-  if (errMessageCallback_ == nullptr && idZeroCopyBufMap_.empty()) {
+  if (errMessageCallback_ == nullptr && !zeroCopyBookkeeping_->hasPending()) {
     return 0;
   }
   uint8_t ctrl[1024];
@@ -1304,7 +1358,7 @@ size_t AsyncUDPSocket::handleErrMessages() noexcept {
       ++num;
       if (isZeroCopyMsg(*cmsg)) {
         processZeroCopyMsg(*cmsg);
-      } else {
+      } else if (errMessageCallback_) {
         errMessageCallback_->errMessage(*cmsg);
       }
       if (fd_ == NetworkSocket()) {

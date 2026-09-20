@@ -83,6 +83,10 @@ class IoUringBackend : public EventBaseBackendBase {
     return options_.timeout.count() > 0 && options_.batchSize > 0;
   }
   bool supportAsyncSocket() { return options_.nativeAsyncSocketSupport; }
+  bool useBundles() const {
+    return options_.providedBufUseBundles &&
+        (params_.features & IORING_FEAT_RECVSEND_BUNDLE);
+  }
 
   int computeSrcPortForQueueId(
       const folly::IPAddress& destAddr,
@@ -219,6 +223,28 @@ class IoUringBackend : public EventBaseBackendBase {
   bool createZcBufferPool();
   bool importZcBufferPool(IoUringZeroCopyBufferPool::ExportHandle handle);
   IoUringZeroCopyBufferPool::ExportHandle exportZcBufferPool();
+
+  struct IoUringStats {
+    IoUringZeroCopyBufferPool::Stats zcrx;
+    IoUringProvidedBufferRing::Stats providedBuffer;
+
+    auto operator<=>(const IoUringStats&) const = default;
+  };
+
+  IoUringStats getStats() {
+    IoUringStats stats;
+    if (zcBufferPool_) {
+      zcBufferPool_->getStats(stats.zcrx);
+    }
+
+    if (hasBufferProvider()) {
+      IoUringProvidedBufferRing* bufProvider =
+          bufferProviders_[bufferProviderIdx_ & (bufferProviders_.size() - 1)]
+              .get();
+      bufProvider->getStats(stats.providedBuffer);
+    }
+    return stats;
+  }
 
  protected:
   enum class WaitForEventsMode { WAIT, DONT_WAIT };
