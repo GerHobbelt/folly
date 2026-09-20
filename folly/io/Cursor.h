@@ -69,6 +69,23 @@ class ThinCursor;
 #define FOLLY_IO_CURSOR_BORROW_DCHECK(ignored)
 #endif
 
+/**
+ * Whether a clone may point at buffers that IOBuf does not own.
+ *
+ * Cloning shares the underlying buffers, which keeps the data alive only if
+ * those buffers are managed (that is, reference counted by IOBuf).
+ *
+ * Requesting Managed instead yields a clone that owns its data: managed
+ * buffers are still shared, and data backed by user-owned memory is copied out
+ * into buffers sized to hold just the cloned range.
+ */
+enum class CloneOwnership {
+  /// Share the buffers. The clone is valid only while unmanaged data lives.
+  Shared,
+  /// Copy out unmanaged data, so that the clone owns everything it points at.
+  Managed,
+};
+
 template <class Derived, class BufType>
 class CursorBase {
   // Make all the templated classes friends for copy constructor.
@@ -694,16 +711,24 @@ class CursorBase {
    * @methodset Accessors
    *
    * @param[out] buf The IOBuf into which to place the cloned data.
+   * @param ownership Whether the clone may point at data that IOBuf does not
+   *                  own. @see CloneOwnership.
    * @throws out_of_range if there aren't enough bytes in this cursor.
    */
-  void clone(std::unique_ptr<folly::IOBuf>& buf, size_t len) {
-    if (FOLLY_UNLIKELY(cloneAtMost(buf, len) != len)) {
+  void clone(
+      std::unique_ptr<folly::IOBuf>& buf,
+      size_t len,
+      CloneOwnership ownership = CloneOwnership::Shared) {
+    if (FOLLY_UNLIKELY(cloneAtMost(buf, len, ownership) != len)) {
       throw_exception<std::out_of_range>("underflow");
     }
   }
 
-  void clone(folly::IOBuf& buf, size_t len) {
-    if (FOLLY_UNLIKELY(cloneAtMost(buf, len) != len)) {
+  void clone(
+      folly::IOBuf& buf,
+      size_t len,
+      CloneOwnership ownership = CloneOwnership::Shared) {
+    if (FOLLY_UNLIKELY(cloneAtMost(buf, len, ownership) != len)) {
       throw_exception<std::out_of_range>("underflow");
     }
   }
@@ -714,56 +739,27 @@ class CursorBase {
    * @methodset Accessors
    *
    * @param[out] buf The IOBuf into which to place the cloned data.
+   * @param ownership Whether the clone may point at data that IOBuf does not
+   *                  own. @see CloneOwnership.
    * @return The number of bytes actually cloned.
    */
-  size_t cloneAtMost(folly::IOBuf& buf, size_t len) {
-    // We might be at the end of buffer.
-    advanceBufferIfEmpty();
-
-    std::unique_ptr<folly::IOBuf> tmp;
-    size_t copied = 0;
-    for (int loopCount = 0; true; ++loopCount) {
-      // Fast path: it all fits in one buffer.
-      size_t available = length();
-      if (FOLLY_LIKELY(available >= len)) {
-        if (loopCount == 0) {
-          crtBuf_->cloneOneInto(buf);
-          buf.trimStart(crtPos_ - crtBegin_);
-          buf.trimEnd(buf.length() - len);
-        } else {
-          tmp = crtBuf_->cloneOne();
-          tmp->trimStart(crtPos_ - crtBegin_);
-          tmp->trimEnd(tmp->length() - len);
-          buf.prependChain(std::move(tmp));
-        }
-
-        crtPos_ += len;
-        advanceBufferIfEmpty();
-        return copied + len;
-      }
-
-      if (loopCount == 0) {
-        crtBuf_->cloneOneInto(buf);
-        buf.trimStart(crtPos_ - crtBegin_);
-      } else {
-        tmp = crtBuf_->cloneOne();
-        tmp->trimStart(crtPos_ - crtBegin_);
-        buf.prependChain(std::move(tmp));
-      }
-
-      copied += available;
-      if (FOLLY_UNLIKELY(!tryAdvanceBuffer())) {
-        return copied;
-      }
-      len -= available;
-    }
+  size_t cloneAtMost(
+      folly::IOBuf& buf,
+      size_t len,
+      CloneOwnership ownership = CloneOwnership::Shared) {
+    return ownership == CloneOwnership::Managed
+        ? cloneManagedAtMost(buf, len)
+        : cloneSharedAtMost(buf, len);
   }
 
-  size_t cloneAtMost(std::unique_ptr<folly::IOBuf>& buf, size_t len) {
+  size_t cloneAtMost(
+      std::unique_ptr<folly::IOBuf>& buf,
+      size_t len,
+      CloneOwnership ownership = CloneOwnership::Shared) {
     if (!buf) {
       buf = std::make_unique<folly::IOBuf>();
     }
-    return cloneAtMost(*buf, len);
+    return cloneAtMost(*buf, len, ownership);
   }
 
   /**
@@ -1017,6 +1013,128 @@ class CursorBase {
       available = length();
     }
     return available;
+  }
+
+  // Places one piece of a clone: the first piece becomes the destination
+  // itself, later ones are chained onto it.
+  //
+  // shareCurrent() points the piece at the n bytes under the cursor, which
+  // keeps them alive only while the buffer holding them does. copyOut() copies
+  // n bytes out of the cursor instead, into a buffer sized to hold just them,
+  // and returns how many it got.
+  void shareCurrent(folly::IOBuf& buf, size_t n, bool first) {
+    if (first) {
+      crtBuf_->cloneOneInto(buf);
+      buf.trimStart(crtPos_ - crtBegin_);
+      buf.trimEnd(buf.length() - n);
+    } else {
+      auto piece = crtBuf_->cloneOne();
+      piece->trimStart(crtPos_ - crtBegin_);
+      piece->trimEnd(piece->length() - n);
+      buf.prependChain(std::move(piece));
+    }
+    crtPos_ += n;
+  }
+
+  size_t copyOut(folly::IOBuf& buf, size_t n, bool first) {
+    size_t copied;
+    if (first) {
+      buf = folly::IOBuf(folly::IOBuf::CREATE, n);
+      copied = pullAtMost(buf.writableTail(), n);
+      buf.append(copied);
+    } else {
+      auto piece = folly::IOBuf::create(n);
+      copied = pullAtMost(piece->writableTail(), n);
+      piece->append(copied);
+      buf.prependChain(std::move(piece));
+    }
+    return copied;
+  }
+
+  size_t cloneSharedAtMost(folly::IOBuf& buf, size_t len) {
+    // We might be at the end of buffer.
+    advanceBufferIfEmpty();
+
+    size_t copied = 0;
+    for (bool first = true;; first = false) {
+      // Fast path: it all fits in one buffer.
+      const size_t available = length();
+      if (FOLLY_LIKELY(available >= len)) {
+        shareCurrent(buf, len, first);
+        advanceBufferIfEmpty();
+        return copied + len;
+      }
+
+      // A bounded cursor can stop short of the end of the buffer, in which
+      // case the clone must stop there too.
+      shareCurrent(buf, available, first);
+      copied += available;
+      if (FOLLY_UNLIKELY(!tryAdvanceBuffer())) {
+        return copied;
+      }
+      len -= available;
+    }
+  }
+
+  // Same as cloneSharedAtMost(), except that data the clone would not keep
+  // alive is copied out instead of shared. Sizing each copy by the whole run
+  // of adjacent unmanaged buffers keeps an all-unmanaged range down to one
+  // allocation.
+  size_t cloneManagedAtMost(folly::IOBuf& buf, size_t len) {
+    // We might be at the end of buffer.
+    advanceBufferIfEmpty();
+
+    // The destination can be the very buffer being read, so build the clone
+    // beside it and hand it over once there is nothing left to read.
+    folly::IOBuf result;
+    size_t copied = 0;
+    for (bool first = true;; first = false) {
+      // Step over empty buffers: only past them does a zero length mean that
+      // the chain is exhausted, and that the buffer under the cursor is the
+      // one whose ownership decides between sharing and copying.
+      const size_t available = peekBytes().size();
+      if (available == 0 && !first) {
+        break; // The chain is exhausted.
+      }
+
+      size_t n;
+      if (crtBuf_->isManagedOne()) {
+        n = std::min(available, len);
+        shareCurrent(result, n, first);
+      } else {
+        n = copyOut(result, unmanagedRunLength(len), first);
+      }
+      advanceBufferIfEmpty();
+
+      copied += n;
+      len -= n;
+      if (len == 0) {
+        break;
+      }
+    }
+
+    buf = std::move(result);
+    return copied;
+  }
+
+  // The number of bytes, at most len, held by the run of unmanaged buffers
+  // starting at the current position.
+  size_t unmanagedRunLength(size_t len) const {
+    size_t run = std::min(length(), len);
+    // remainingLen_ is the max of size_t unless the cursor is bounded, so it
+    // caps the walk without a special case.
+    size_t remaining = remainingLen_;
+    for (const BufType* buf = crtBuf_->next(); run < len && remaining > 0;
+         buf = buf->next()) {
+      if (buf == buffer_ || buf->isManagedOne()) {
+        break;
+      }
+      const size_t take =
+          std::min(std::min(buf->length(), len - run), remaining);
+      run += take;
+      remaining -= take;
+    }
+    return run;
   }
 };
 

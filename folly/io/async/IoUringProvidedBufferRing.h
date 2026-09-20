@@ -80,9 +80,12 @@ class IoUringProvidedBufferRing {
   // Returns the buffer utilization as an integer percentage (0-100).
   int getUtilPct() const noexcept;
 
+  uint16_t areaCount() const noexcept { return areaCount_; }
+
   struct Stats {
     uint32_t enobufCount{0};
     int utilPct{-1};
+    uint16_t areaCount{0};
 
     auto operator<=>(const Stats&) const = default;
   };
@@ -90,6 +93,7 @@ class IoUringProvidedBufferRing {
   void getStats(Stats& stats) noexcept {
     stats.enobufCount = getAndResetEnobufCount();
     stats.utilPct = getUtilPct();
+    stats.areaCount = areaCount_;
   }
 
  private:
@@ -103,6 +107,9 @@ class IoUringProvidedBufferRing {
 
   void mapRing();
   void initialRegister();
+  size_t ringMemSize() const noexcept {
+    return sizeof(struct io_uring_buf_ring) * ringBufferCount_;
+  }
 
   struct BufferArea;
 
@@ -117,6 +124,7 @@ class IoUringProvidedBufferRing {
   void decBufferState(BufferArea& area, uint16_t bid) noexcept;
 
   void ringRefill() noexcept;
+  void ringMaybeRefill() noexcept;
   bool getNewRefillArea() noexcept;
   void tryReclaimArea() noexcept;
   std::unique_ptr<IOBuf> getIoBufSingle(
@@ -202,14 +210,13 @@ class IoUringProvidedBufferRing {
 
   // Hot fields (cacheline 2)
   alignas(folly::hardware_constructive_interference_size) io_uring* ringIoPtr;
-  void* ringMem_{nullptr};
-  size_t ringMemSize_{0};
   uint32_t shutdownReferences_{0};
   uint32_t enobufCount_{0};
   BufferArea* bufferActiveArea_{nullptr};
   BufferArea* bufferRefillArea_{nullptr};
   bool useIncremental_{false};
   bool enobuf_{false};
+  uint16_t ringRefillThreshold_{1};
   std::atomic<bool> wantsShutdown_{false};
 };
 

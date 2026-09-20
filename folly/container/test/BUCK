@@ -560,6 +560,16 @@ fb_dirsync_cpp_unittest(
     ],
 )
 
+fb_dirsync_cpp_unittest(
+    name = "generational_cache_map_test",
+    srcs = ["GenerationalCacheMapTest.cpp"],
+    deps = [
+        "//folly:conv",
+        "//folly/container:generational_cache_map",
+        "//folly/portability:gtest",
+    ],
+)
+
 fb_dirsync_cpp_library(
     name = "f14_test_util",
     headers = [
@@ -696,15 +706,13 @@ fb_dirsync_cpp_unittest(
         "F14InterprocessTest.cpp",
     ],
     deps = [
+        "fbsource//third-party/boost:boost_interprocess",
         "fbsource//third-party/fmt:fmt",
+        "fbsource//third-party/glibc:rt",  # @manual
         "//folly:random",
         "//folly:traits",
         "//folly/container:f14_hash",
         "//folly/portability:gtest",
-    ],
-    external_deps = [
-        ("boost", None, "boost_interprocess"),
-        ("glibc", None, "rt"),  # @manual
     ],
 )
 
@@ -946,6 +954,7 @@ fb_dirsync_cpp_unittest(
     modifiers = ["ovr_config//build_mode:asan_ubsan_dev_sanitizer_flags[enabled]"],
     supports_static_listing = False,
     deps = [
+        "fbsource//third-party/boost:boost_algorithm",
         "fbsource//third-party/fmt:fmt",
         "//folly:conv",
         "//folly:small_vector",
@@ -954,9 +963,6 @@ fb_dirsync_cpp_unittest(
         "//folly/container:iterator",
         "//folly/memory:uninitialized_memory_hacks",
         "//folly/portability:gtest",
-    ],
-    external_deps = [
-        ("boost", None, "boost_algorithm"),
     ],
 )
 

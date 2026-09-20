@@ -151,8 +151,7 @@ using ZeroCopyMMapMemStore = ZeroCopyMMapMemStoreFallback;
 
 #if FOLLY_HAS_LIBURING
 bool checkIoUringBackend(folly::EventBase* evb) {
-  auto backend = dynamic_cast<folly::IoUringBackend*>(evb->getBackend());
-  return backend != nullptr && backend->supportAsyncSocket();
+  return dynamic_cast<folly::IoUringBackend*>(evb->getBackend()) != nullptr;
 }
 #else
 bool checkIoUringBackend(folly::EventBase*) {
@@ -1361,6 +1360,8 @@ void AsyncSocket::setReadCB(ReadCallback* callback) {
     immediateReadHandler_.cancelLoopCallback();
   }
 
+  DestructorGuard dg(this);
+
   if (shutdownFlags_ & SHUT_READ) {
     // Reads have already been shut down on this socket.
     //
@@ -1379,7 +1380,6 @@ void AsyncSocket::setReadCB(ReadCallback* callback) {
     return;
   }
 
-  DestructorGuard dg(this);
   eventBase_->dcheckIsInEventBaseThread();
   // This new callback might support zero copy reads, so reset the
   // zerocopyReadDisabled_ flag to its default value so we will

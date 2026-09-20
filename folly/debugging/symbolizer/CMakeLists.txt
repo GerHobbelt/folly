@@ -76,14 +76,13 @@ folly_add_library(
     folly_portability_sys_mman
     folly_scope_guard
   EXPORTED_DEPS
+    Boost::headers
     folly_debugging_symbolizer_elf
     folly_hash_hash
     folly_memory_reentrant_allocator
     folly_optional
     folly_portability_config
     folly_range
-  EXTERNAL_DEPS
-    Boost::headers
 )
 
 folly_add_library(
@@ -121,6 +120,20 @@ folly_add_library(
 )
 
 folly_add_library(
+  NAME symbol_cache
+  SRCS
+    SymbolCache.cpp
+  HEADERS
+    SymbolCache.h
+  DEPS
+    folly_container_evicting_cache_map
+    folly_synchronized
+  EXPORTED_DEPS
+    folly_debugging_symbolizer_symbolized_frame
+    folly_small_vector
+)
+
+folly_add_library(
   NAME symbolize_printer
   EXPORTED_DEPS
     folly_debugging_symbolizer_symbolizer
@@ -149,7 +162,6 @@ folly_add_library(
     Symbolizer.h
   DEPS
     ${GLOG_LIBRARIES}
-    folly_container_evicting_cache_map
     folly_debugging_symbolizer_detail_debug
     folly_debugging_symbolizer_elf
     folly_demangle
@@ -164,12 +176,12 @@ folly_add_library(
     folly_portability_sys_syscall
     folly_scope_guard
     folly_small_vector
-    folly_synchronized
     folly_tracing_async_stack
   EXPORTED_DEPS
     folly_debugging_symbolizer_dwarf
     folly_debugging_symbolizer_elf_cache
     folly_debugging_symbolizer_stack_trace
+    folly_debugging_symbolizer_symbol_cache
     folly_debugging_symbolizer_symbolized_frame
     folly_fbstring
     folly_io_iobuf

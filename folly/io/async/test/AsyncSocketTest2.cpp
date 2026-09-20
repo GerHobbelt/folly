@@ -249,7 +249,6 @@ class AsyncSocketTest : public ::testing::TestWithParam<BackendType> {
                 []() -> std::unique_ptr<EventBaseBackendBase> {
                   IoUringBackend::Options options;
                   options.setInitialProvidedBuffers(2048, 2000);
-                  options.setNativeAsyncSocketSupport(true);
                   return std::make_unique<IoUringBackend>(std::move(options));
                 }));
       } catch (IoUringBackend::NotAvailable const&) {
@@ -268,7 +267,6 @@ class AsyncSocketTest : public ::testing::TestWithParam<BackendType> {
           []() -> std::unique_ptr<EventBaseBackendBase> {
             IoUringBackend::Options options;
             options.setInitialProvidedBuffers(2048, 2000);
-            options.setNativeAsyncSocketSupport(true);
             return std::make_unique<IoUringBackend>(std::move(options));
           }));
     } else {
@@ -455,7 +453,6 @@ class AsyncSocketConnectTFOTest
                 []() -> std::unique_ptr<EventBaseBackendBase> {
                   IoUringBackend::Options options;
                   options.setInitialProvidedBuffers(2048, 2000);
-                  options.setNativeAsyncSocketSupport(true);
                   return std::make_unique<IoUringBackend>(std::move(options));
                 }));
       } catch (IoUringBackend::NotAvailable const&) {
@@ -781,7 +778,6 @@ class AsyncSocketToSTest : public ::testing::TestWithParam<BackendType> {
             std::make_unique<EventBase>(EventBase::Options{}.setBackendFactory(
                 []() -> std::unique_ptr<EventBaseBackendBase> {
                   IoUringBackend::Options options;
-                  options.setNativeAsyncSocketSupport(true);
                   return std::make_unique<IoUringBackend>(std::move(options));
                 }));
       } catch (IoUringBackend::NotAvailable const&) {
@@ -1614,6 +1610,42 @@ TEST_P(AsyncSocketConnectTFOTest, ConnectWriteAndRead) {
 
   ASSERT_FALSE(socket->isClosedBySelf());
   ASSERT_TRUE(socket->isClosedByPeer());
+}
+
+/**
+ * Installing a read callback after the peer has shut down its write side must
+ * be reported through readErr(), not by aborting. invalidState() runs the
+ * failure path, which can destroy the socket via its callbacks, so setReadCB()
+ * has to hold a DestructorGuard before it -- including on the early-return
+ * path taken when SHUT_READ is already set.
+ */
+TEST_P(AsyncSocketTest, SetReadCallbackAfterEOFReportsError) {
+  TestServer server;
+
+  EventBase& evb = getEventBase();
+  std::shared_ptr<AsyncSocket> socket = AsyncSocket::newSocket(&evb);
+  ConnCallback ccb;
+  socket->connect(&ccb, server.getAddress(), 30);
+
+  ReadCallback rcb;
+  socket->setReadCB(&rcb);
+
+  // Send a FIN so the socket sees EOF and marks reads shut down while it is
+  // otherwise still established.
+  std::shared_ptr<BlockingSocket> acceptedSocket = server.accept();
+  netops::shutdown(acceptedSocket->getNetworkSocket(), SHUT_WR);
+
+  evb.loop();
+
+  ASSERT_EQ(ccb.state, STATE_SUCCEEDED);
+  ASSERT_EQ(rcb.state, STATE_SUCCEEDED); // readEOF()
+
+  ReadCallback rcb2;
+  socket->setReadCB(&rcb2);
+  EXPECT_EQ(rcb2.state, STATE_FAILED);
+  EXPECT_EQ(rcb2.exception.getType(), AsyncSocketException::NOT_OPEN);
+
+  socket->close();
 }
 
 /**
@@ -4790,7 +4822,6 @@ TEST(
     evb = std::make_unique<EventBase>(EventBase::Options{}.setBackendFactory(
         []() -> std::unique_ptr<EventBaseBackendBase> {
           IoUringBackend::Options options;
-          options.setNativeAsyncSocketSupport(true);
           return std::make_unique<IoUringBackend>(std::move(options));
         }));
   } catch (IoUringBackend::NotAvailable const&) {
@@ -8691,7 +8722,6 @@ TEST_F(AsyncSocketByteEventTest, EnableByteEventsThrowsWithIoUringBackend) {
     evb = std::make_unique<EventBase>(EventBase::Options{}.setBackendFactory(
         []() -> std::unique_ptr<EventBaseBackendBase> {
           IoUringBackend::Options options;
-          options.setNativeAsyncSocketSupport(true);
           return std::make_unique<IoUringBackend>(std::move(options));
         }));
   } catch (IoUringBackend::NotAvailable const&) {
@@ -11444,5 +11474,100 @@ TEST_P(AsyncSocketTest, MoveSocketWithActiveRead) {
   EXPECT_EQ(secondBytes, data.size());
 
   movedSock->close();
+  socket->close();
+}
+
+TEST_P(AsyncSocketTest, PreReceivedDataOrderedBeforeRecvAcrossMove) {
+  TestServer server;
+  EventBase& evb = getEventBase();
+
+  auto socket = AsyncSocket::newSocket(&evb);
+  ConnCallback connCb;
+  socket->connect(&connCb, server.getAddress(), 30);
+  evb.loop();
+  ASSERT_EQ(connCb.state, STATE_SUCCEEDED);
+
+  auto acceptedFd = server.acceptFD();
+  auto serverSock = AsyncSocket::UniquePtr(new AsyncSocket(&evb, acceptedFd));
+
+  const std::string pre = "PRE";
+  serverSock->setPreReceivedData(IOBuf::copyBuffer(pre.data(), pre.size()));
+
+  auto movedSock = AsyncSocket::UniquePtr(new AsyncSocket(serverSock.get()));
+  serverSock.reset();
+
+  const std::string wire = "WIRE";
+  ReadCallback readCb;
+  readCb.dataAvailableCallback = [&] {
+    if (readCb.dataRead() >= pre.size() + wire.size()) {
+      evb.terminateLoopSoon();
+    }
+  };
+  movedSock->setReadCB(&readCb);
+
+  WriteCallback writeCb;
+  socket->write(&writeCb, wire.data(), wire.size());
+  evb.loop();
+
+  readCb.verifyData((pre + wire).data(), pre.size() + wire.size());
+
+  movedSock->close();
+  socket->close();
+}
+
+TEST_P(AsyncSocketTest, MoveEventBaseWithActiveRead) {
+  if (GetParam() != BackendType::IO_URING) {
+    GTEST_SKIP() << "io_uring recv-handle detach/clone across EventBases";
+  }
+
+  TestServer server;
+  EventBase& evb = getEventBase();
+  auto evb2 = makeEventBase();
+
+  auto socket = AsyncSocket::newSocket(&evb);
+  ConnCallback connCb;
+  socket->connect(&connCb, server.getAddress(), 30);
+  evb.loop();
+  ASSERT_EQ(connCb.state, STATE_SUCCEEDED);
+
+  auto acceptedFd = server.acceptFD();
+  auto serverSock = AsyncSocket::UniquePtr(new AsyncSocket(&evb, acceptedFd));
+
+  ReadCallback readCb;
+  readCb.dataAvailableCallback = [&] { evb.terminateLoopSoon(); };
+  serverSock->setReadCB(&readCb);
+
+  const std::string first = "first";
+  WriteCallback writeCb;
+  socket->write(&writeCb, first.data(), first.size());
+  evb.loop();
+  ASSERT_EQ(readCb.dataRead(), first.size());
+
+  const std::string second = "second";
+  const size_t want = first.size() + second.size();
+  readCb.dataAvailableCallback = [&] {
+    if (readCb.dataRead() >= want) {
+      evb2->terminateLoopSoon();
+    }
+  };
+
+  ASSERT_TRUE(serverSock->isDetachable());
+  serverSock->detachEventBase();
+  serverSock->attachEventBase(evb2.get());
+
+  socket->write(&writeCb, second.data(), second.size());
+
+  for (int i = 0; i < 50 && readCb.dataRead() < want; ++i) {
+    evb.runAfterDelay([&] { evb.terminateLoopSoon(); }, 20);
+    evb.loop();
+    evb2->runAfterDelay([&] { evb2->terminateLoopSoon(); }, 20);
+    evb2->loop();
+  }
+
+  readCb.verifyData((first + second).data(), want);
+
+  serverSock->detachEventBase();
+  serverSock->attachEventBase(&evb);
+  serverSock->close();
   socket->close();
 }
