@@ -235,28 +235,35 @@ def folly_xplat_cxx_test(
         name,
         srcs,
         raw_headers = [],
+        headers = [],
         deps = [],
         oncall = None,
         **kwargs):
-    # resources is cherry picked because some of the other kwargs
+    # resources and env are cherry picked because some of the other kwargs
     # have issues that need to be investigated.
     # e.g., Some args are duplicated. Some args cause TSAN errors.
     # TODO(T188948036): Fix xplat/folly:folly-futures-test and folly_xplat_cxx_test
     resources = kwargs.get("resources", [])
+    env = kwargs.get("env", None)
 
-    oncall_kwargs = {"oncall": oncall} if oncall != None else {}
+    extra_kwargs = {}
+    if oncall != None:
+        extra_kwargs["oncall"] = oncall
+    if env != None:
+        extra_kwargs["env"] = env
 
     fb_xplat_cxx_test(
         name = name,
         srcs = srcs,
         raw_headers = raw_headers,
+        headers = headers,
         resources = resources,
         include_directories = _compute_include_directories(),
         deps = deps + [
             "//xplat/folly/test/common:test_main",
         ],
         platforms = (CXX,),
-        **oncall_kwargs
+        **extra_kwargs
     )
 
 def folly_xplat_cxx_binary(
