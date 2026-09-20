@@ -25,11 +25,22 @@ or push an agent toward the wrong work.
   agent tool, or filesystem. Put Meta-only rules under `facebook/`; Folly's
   open-source export omits that directory.
 
+## Reader-effort objective
+
+Changes to the writing, code, or critic-iteration rule families must preserve
+one shared objective: give the target audience exactly the facts and
+relationships needed for the artifact's purpose, correctly and with the least
+reading effort. If two forms do that equally well, the shorter one wins.
+
+Do not turn the objective into a word-count target or a blanket preference for
+or against abstraction.
+
 ## Before you edit
 
-Read the nearest `CONTRIB.md` first. When editing `<name>.md`, also read
-`<name>.contrib.md` if it exists. These files explain why the rule exists and
-what a change must preserve.
+Read the nearest `CONTRIB.md` first. When editing a rule package identified by
+`<name>.entrypoint.md`, also read `<name>/CONTRIB.md` and `<name>.contrib.md`
+when present. These files explain why the rule exists and what a change must
+preserve.
 
 To see what triggers a top-level rule, read its `<name>.entrypoint.md`. Then
 follow explicit filenames in operational rules to see what else loads. A nearby

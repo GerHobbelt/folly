@@ -71,7 +71,7 @@ class ObserverManager {
     std::shared_lock rh(instance.versionMutex_);
 
     instance.scheduleCurrent(
-        [coreWeak = folly::to_weak_ptr(std::move(core)),
+        [coreWeak = folly::to_weak_ptr(core),
          &instance,
          rh_2 = std::move(rh)]() {
           if (auto coreShared = coreWeak.lock()) {
@@ -237,7 +237,14 @@ class ObserverManager {
 
   static ObserverManager& getInstance();
   static std::shared_ptr<UpdatesManager> getUpdatesManager();
+  // constinit requires C++20 and must stay off on Mach-O targets, where
+  // ld64.lld incorrectly rejects direct TLVP relocations to this symbol from
+  // stripped objects.
+#if defined(__cpp_constinit) && !defined(__MACH__)
+  static thread_local constinit bool inManagerThread_;
+#else
   static thread_local bool inManagerThread_;
+#endif
 
   /**
    * Version mutex is used to make sure all updates are processed from the

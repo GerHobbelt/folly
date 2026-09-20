@@ -21,15 +21,18 @@ convergence" below. The maxims here apply to all prose (docs, posts, comments).
   is intended before drafting. Name a secondary audience only when it has a
   distinct required task.
 
-- **Re-read cold before shipping prose.** After substantive edits, re-read the
-  changed section and fix any friction. Before closing the pass, read the whole
-  artifact; `critic-iterate.md` governs this default-on prose cycle.
+- **Optimize for the needed understanding, then length.** Give the target
+  audience exactly the facts and relationships it needs for the artifact's
+  purpose — no more and no less. First minimize the effort needed to understand
+  them correctly. If two versions do that equally well, choose the shorter one.
+
 - **Rework, don't append.** When fixing prose, default to rewriting the line
   rather than adding to it. Append-style patches ("See X for Y", "Note: Z") are
   almost always barnacles.
-- **Do not edit for motion.** In review mode, leave text alone unless the edit
-  makes it clearer, more accurate, or materially shorter. Plain language beats
-  abstract process labels.
+- **Do not edit for motion.** In review mode, change text only to improve
+  clarity or accuracy, or to make it materially shorter without losing needed
+  content or increasing reader effort. Replace an abstract process label when
+  the target audience would have to unpack it.
 - **Pick the right shape.** Lifecycle/procedure → numbered list. Parallel states
   / parallel facts (N≥2) / inline enumeration (3+ items) → bullets, with lead
   labels where they aid scanning. Reserve semicolon/em-dash glue for tight
@@ -37,36 +40,34 @@ convergence" below. The maxims here apply to all prose (docs, posts, comments).
   of punctuation. An enumeration or parallel-states comparison hiding in prose
   is a shape miss — rewrite the container, not just the sentences. (The Iterate
   loop's Shape pass applies this for commit messages specifically.)
-- **Lead with the why; the artifact carries the what.** Prose about code (commit
-  message, docblock, inline comment, design doc) earns its slot by giving its
-  reader needed framing: situation, constraint, rejected alternative, preserved
-  invariant. Lead with whichever most moves the reader, within the genre's
-  opening rules. Narrating mechanism the code already shows is bloat; padding
-  thin code with manufactured motivation is the same bloat reversed. Trivial
-  cases take brief mode (one sentence or nothing) and stop.
+- **Lead with why.** For prose about code, start with the problem or goal. Add a
+  constraint, rejected alternative, or invariant when it explains the choice.
+  Include enough of what the code does to make that reason clear, then leave
+  routine mechanics to the code. If one sentence is enough, stop.
 
 ## Author disposition
 
 The author must adopt a persona free from cognitive biases like rationalization
 & sunk-cost. Channel these traits as you revise:
 
-- **Reader-first.** Every extra word taxes every reader.
-- **Essentialist.** Hates stamp-collecting completionism. Keep only facts whose
-  absence changes reader action.
-- **No ego, no attachment to prior words.**
+- **Reader-first.** Every unnecessary word taxes every reader.
+- **Essentialist.** Keep only facts the target reader needs; truth or relevance
+  alone is not enough.
+- **You are not your draft.** Existing wording gets no preference. Rewrite or
+  delete it when that better serves the reader.
 - **Rationalization-hostile.** "Load-bearing," "critical," and "archaeologist
   needs it" must name the concrete failure caused by cutting.
-- **Subtractive.** A shorter shape is the default winner; add back only what
-  changes reader action.
+- **Subtractive.** After selecting the necessary facts, remove excess wording.
+  Among versions that are equally easy to understand, the shorter one wins.
 
 ## Substance
 
 **Select facts, then compress wording.** Use sources to get the facts right, not
-to decide that every fact belongs. Being non-obvious is not enough. Keep a fact
-only when leaving it out would prevent the primary reader from understanding the
-point or completing the task the writing is meant to support. For a fact that
-stays, keep the concrete detail that makes it useful to that reader. Replacing
-that detail with a broad label is not concision.
+to decide that every fact belongs. Keep only the facts the primary reader needs
+to do the job the artifact exists to support. Being true, related, or
+non-obvious is not enough. For a fact that stays, keep the concrete detail that
+makes it useful to that reader. Replacing that detail with a broad label is not
+concision.
 
 - Assume the intended reader's normal background, but not this artifact or its
   drafting history. State the question or problem and enough framing and
@@ -76,11 +77,14 @@ that detail with a broad label is not concision.
   naturally.
 - Avoid wordiness: cut filler, hedging, and restatement (don't say the same
   thing twice in different words — merge sentences that make the same point).
-- State simple points simply — don't explain the how/why when the what suffices.
+- State simple points simply. Add how or why only when the reader needs it.
 - Prefer common words and concrete verbs when they are equally precise. If a
   sentence says a change "enables," "supports," or "provides" something vague,
   rewrite it around the concrete outcome.
-- Prefer concrete examples over abstract explanation.
+- Prefer a concrete example when it makes a needed point clearer than abstract
+  prose.
+- Use identifiers to point readers to relevant code, not in place of a plain
+  explanation.
 - When shortening rules/guidelines, preserve the decision function: enough
   detail to apply the rule, not just know it exists.
 
@@ -132,11 +136,10 @@ that detail with a broad label is not concision.
 
 ## Code comments
 
-The general maxim "Lead with the why; the artifact carries the what." applies:
-give future readers needed framing without narrating the code.
+Code comments are read beside the code. Explain the outside fact, invariant, or
+reason that the code alone does not show; do not narrate what the code already
+shows.
 
-- Edit comments for clear, efficient communication — but never discard
-  meaningful content.
 - State the condition the reader should rely on, not the mechanism that checks
   or produces it. For a side-effecting call or ignored return, "Check that every
   X resolves" beats "Fetch every X"; name the mechanism only when the mechanism
@@ -158,22 +161,26 @@ depends on the genre:
 
 | Genre                  | Audience                                                       |
 | ---------------------- | -------------------------------------------------------------- |
-| Commit / diff messages | Reviewer first; future archaeologist only after cruft is cut   |
+| Commit / diff messages | Reviewer first; future maintainer second                       |
 | Code comments          | Future code reader (next to touch this code)                   |
 | Design proposals       | Design reviewers first; future implementers after the decision |
 | Code-review comments   | The author of the diff being reviewed                          |
 
-Every rule below reduces that audience's work. The general maxim "Lead with the
-why; the artifact carries the what." applies here: the future reader sees only
-the message and the code. As few words as reasonable for the change; the author
-iterates.
+**Commit messages are read before the code.** The reviewer first forms a mental
+model from the message, then reads the code through that framing. The message
+must make sense before the diff is opened and include the facts and
+relationships needed to review the change. Once that model is clear, leave the
+remaining implementation detail to the diff. A fact's presence in the diff
+neither earns nor disqualifies it; keep it here only when the reviewer needs it
+before reading the code.
 
 **State the goal early.** Commit / diff messages and design docs must say what
 the artifact is trying to accomplish for intended readers. Lead with the goal,
 or with a concise account of the concrete problem it solves followed immediately
-by the goal. A self-explanatory invariant that changes review behavior may
-instead precede the goal. Put context-dependent invariants after the goal. Omit
-invariants that do not change review behavior. Stack context may briefly
+by the goal. A self-explanatory invariant (for example, that a refactor is a
+no-op) may come first when the reviewer needs it to interpret the goal. Put
+context-dependent invariants after the goal. Omit invariants the reviewer does
+not need to understand or verify the change. Stack context may briefly
 cross-reference a prior `D<num>` for detail or evidence; include all framing the
 current reader needs inline.
 
@@ -191,27 +198,6 @@ Example: Prefer `check job migration state vs that of its reservation` over
 body is suspect — "paired" in the bad title above fails this test (paired how,
 with what?). Swap context-dependent jargon for plainer language.
 
-## Craft principles (Hemingway-flavored)
-
-- **Iceberg.** "If a writer of prose knows enough of what he is writing about he
-  may omit things that he knows and the reader, if the writer is writing truly
-  enough, will have a feeling of those things..." (Death in the Afternoon) →
-  keep the framing and evergreen context the intended reader needs (see "## What
-  evergreen context means"); omit detail or evidence already in the diff, code,
-  or comments.
-- **One true sentence.** "Write the truest sentence that you know." → The
-  general maxim "Lead with the why; the artifact carries the what." is the
-  Hemingway distillation: pick the load-bearing fact and let the rest fall away.
-  Concrete contrast: "I want refactors that don't touch the JSON" before "this
-  commit reorders the JSON."
-- **First draft is shit.** → Read it critically before trusting it.
-- **Built-in shock-proof shit detector.** (Paris Review) → develop the critic
-  reflex below. Read your draft cold. Cut what doesn't belong.
-- **Prose is architecture, not interior decoration.** → For substantial
-  messages, structure with `#`/`##` sections beats long paragraphs.
-- **Short first paragraphs. Vigorous English. Positive not negative.** (Star
-  copy style) → operational; use verbs, not throat-clearing.
-
 ## Two modes — brief or essay
 
 Match the message shape to the change:
@@ -219,16 +205,15 @@ Match the message shape to the change:
 In either mode, state framing in the prose; rely on external links only for
 detail or evidence.
 
-**Trivial change → brief.** A typo, version bump, small bug fix, config tweak.
-Default to one sentence — the fix or invariant. Add a second sentence only when
-a non-obvious WHY or rejected alternative would change reviewer action.
+**Simple explanation → brief.** Use one or two sentences when they carry the
+complete mental model the audience needs. A large diff of self-explanatory test
+cases may need only the reason they were added.
 
-**When in doubt, prefer brief.** Essay mode is justified only when the change
-touches multiple independent reader concerns (motivation + privacy + rollback,
-or parser-spec + alternatives + killswitch strategy) — each one a different
-question the reader would otherwise have to ask. Complexity alone is not enough.
-A single design choice plus an implementation note is brief, with the note
-appended.
+**Use the shortest form that carries the needed model.** Essay mode is justified
+by several independent reader concerns or by one causal chain that cannot be
+understood correctly in one or two sentences. Diff size does not decide message
+length: a one-line race fix may need how the bug was detected, what caused it,
+why the fix works, and how that was checked.
 
 Example (D104870443, ~70 words):
 
@@ -241,10 +226,10 @@ Example (D104870443, ~70 words):
 > `InternWikiTransclusion::genRenderTransclusion`, not through any React
 > component on this path.
 
-**Substantial change → structured essay.** A new data flow, a privacy-class
-change, a killswitch rollout, a design with rejected alternatives, a performance
-change. Use `#`/`##` to chunk distinct concerns; each section short. Sections
-that typically earn their keep:
+**Substantial explanation → structured essay.** A new data flow, a privacy-class
+change, a killswitch rollout, a design with rejected alternatives, or a
+non-obvious failure chain may need sections. Use `#`/`##` to chunk distinct
+concerns; keep each section short. Sections that typically earn their keep:
 
 - Motivation / situation / problem.
 - Mechanism — only when the choice is non-obvious.
@@ -259,8 +244,8 @@ like `Drive-by: drop some dead code.` is enough.
 
 ## What evergreen context means
 
-Each include below is a default-keep candidate, but each is subject to the Cut
-test in "## Iterate" — defaults don't override the local test.
+These are common kinds of useful context, not a checklist. Keep one only when
+the artifact's audience and purpose require it.
 
 - The situation that made the change necessary, named as reviewer-facing pain
   ("untenable to review", "can't ship without manual diff inspection"), not the
@@ -298,25 +283,22 @@ the wrong container are wasted motion.
    noun chain ("the X's Y whose Z affects W") or reach for the dictionary, split
    or rewrite. Jargon stacks fail even when each term is correct.
 
-### Cut test — per sentence (Iceberg in operation)
+### Cut test — per sentence
 
-Ask: **"what is IRREPLACEABLY lost if I cut this sentence?"** Not "what was my
-reason." Not "what does the rubric allow." What does the future reader lose.
+Ask: **"Which required part of this audience's mental model or task becomes
+wrong, missing, or materially harder if I cut this sentence?"** A fact does not
+earn its place merely by being true, related, or mildly helpful. If no required
+part is lost, cut it.
 
 Cut on (locality first, style second):
 
-- **Nothing material lost** — the message reads cleanly without it.
-- **Detail or evidence lives elsewhere.** Do not repeat it, but keep the framing
-  needed here. A passing mention that just gestures at a construct defined
-  elsewhere is still bloat — cut entirely or move the load-bearing fact in, no
-  half-include.
+- **Nothing material lost** — the artifact reads cleanly without it.
 - **Restates the title or an earlier sentence.** (Includes wrap-ups, especially
   invariant restatements after a goal-led lead.)
-- **Names the mechanism when stating the outcome would be tighter.** E.g., "X is
-  keyed by res_id, so any shared res_id must merge into one unit" → "Every X now
-  lives inside a single Y."
-- **Causal chain spelled out where one claim would carry it.** "X has Y, so Z"
-  with each step elaborated → state Z.
+- **Unneeded intermediate detail.** State the result the reader needs. Keep
+  mechanics or causal steps only when the result would otherwise be hard to
+  understand: “Requests are keyed by account ID, so requests with the same ID
+  enter one batch” → “Requests from one account now share a batch.”
 - **Opaque-identifier enumeration.** Lists of hex hashes / auto-generated IDs
   the reader can't act on — name the SET or the COUNT instead. "Three res_ids
   (`5f6bcc932c826`, `6196aa3142bcf`, `67056151d29d2`)" → "the three res_ids".
@@ -324,23 +306,25 @@ Cut on (locality first, style second):
   gotcha.
 - **Structure is not motivation.** Phrases like "co-locating the two", "instead
   of repeating X", or "the goal is to group..." are bloat when they re-label the
-  diff's mechanics as a why. If the structure changes reviewer action, name the
-  consequence or invariant; otherwise cut the sentence.
+  diff's mechanics as a why. If cutting the sentence would make the reviewer
+  misunderstand the change or do something wrong, name the concrete consequence
+  or invariant; otherwise cut it.
 - **Reflexive reassurance** — preempting an objection the reader didn't raise.
   Surface forms: "Fine because…", "no risk of…", "to keep this focused on…",
-  "you don't need to worry that…". Test: if you cut the sentence, what action
-  does the reader take wrong? If nothing — cut. A real warning names the wrong
-  action and how the change prevents it ("if X is called twice, Y now dedups
-  instead of erroring") — keep, leading with the action.
+  "you don't need to worry that…". Test: if you cut the sentence, what does the
+  reader misunderstand or do wrong? If nothing, cut it. A real warning names the
+  concrete risk and how the change prevents it ("if X is called twice, Y now
+  dedups instead of erroring") — keep, leading with the risk.
 
-When "tighter" is rationalizable, ask: can you rewrite shorter without losing
-reader-actionable content? If yes, it wasn't earning its length.
+When "tighter" is rationalizable, ask whether a shorter version preserves the
+needed structure without increasing reader effort. If yes, use it.
 
 ### Cut test — per section
 
 Before defending individual sentences, test the section itself: **would deleting
-this section remove reader-actionable context?** Sentence-level cuts protect
-sections that shouldn't exist — every sentence looks defensible when read alone.
+this section remove context the target audience needs?** Sentence-level cuts
+protect sections that shouldn't exist — every sentence looks defensible when
+read alone.
 
 Commit messages usually don't need these sections:
 
@@ -351,9 +335,9 @@ Commit messages usually don't need these sections:
 
 ### Test plan — cut tests
 
-Per item: coverage over a cheaper check above? Rigor matches the verb? Readable
-from `sl status` / `sl diff`? Over-explaining CI? Cut on any yes — see "## Test
-plans" below for the full rules. Test-plan theatre is bloat.
+Cut an item if a cheaper check provides the same coverage or it only narrates
+the diff without saying what was checked. Match each verb to the rigor used, and
+reduce routine checks to `CI`. See "## Test plans" below.
 
 ### Cold re-read and loop
 
@@ -372,15 +356,8 @@ passes the sentence Cut test, and lead with the content that earns it.
 - Empirical checks in Summary prose: "we verified that …", "tested that …", "no
   production caller actually depends on …". These are Test Plan bullets, not
   Summary prose.
-- Labels the example already shows: "this is a latent bug fix", "this is a
-  refactor", "this is a no-op".
 - Shape-of-diff: "Source diff is N lines per file", "this extracts ... into a
   helper", "renamed parameter X to Y", "the 13k-line diff is mechanical".
-- Code-structure / source-doc restatements: don't narrate implementation
-  mechanics the diff already shows, or fields, constants, file names, and API
-  detail the design docs already carry. State the reader-facing decision or
-  invariant instead. The commit message orients the reviewer; the diff and docs
-  carry the mechanics.
 - Jargon that hides the actor, action, or outcome: "enables analysis of",
   "supports future extensibility", "provides a robust foundation". State the
   concrete outcome instead.
@@ -455,9 +432,11 @@ mind. Capture ✅ (clean) or ❌ (offending — quote + location).
    sentence earn its slot? If not, cut. If yes, restructure.
 4. **Any 2+ parallel facts in prose that should be bullets?**
 5. **Any 3+ inline items in prose that should be bullets?**
-6. **Can a cold member of the intended audience understand the framing without
-   reconstructing it from supporting material?** Flag private jargon or missing
-   bridges; do not require repeated mechanics or evidence.
+6. **Does the draft give the intended audience exactly the facts and
+   relationships needed for its purpose?** Flag true but unnecessary detail,
+   abstractions the reader must unpack, and missing relationships the reader
+   must guess. When two versions require the same effort and convey the same
+   needed structure, prefer the shorter one.
 
 Cut-test patterns (mechanism narration, scope defense, predecessor
 re-explanation, verb-as-label, wrap-ups) are NOT in the rubric — the inner loop

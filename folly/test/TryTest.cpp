@@ -391,11 +391,13 @@ TEST(Try, MoveConstRvalue) {
   // and you want to fetch the value from the Try and move it into a member
   {
     const Try<MutableContainer> t{std::in_place};
+    // NOLINTNEXTLINE(performance-move-const-arg)
     auto val = MoveConstructOnly(std::move(t).value().val);
     static_cast<void>(val);
   }
   {
     const Try<MutableContainer> t{std::in_place};
+    // NOLINTNEXTLINE(performance-move-const-arg)
     auto val = (*(std::move(t))).val;
     static_cast<void>(val);
   }
@@ -412,6 +414,7 @@ TEST(Try, ValueOverloads) {
     using ActualML = decltype(obj.value());
     using ActualMR = decltype(std::move(obj).value());
     using ActualCL = decltype(std::as_const(obj).value());
+    // NOLINTNEXTLINE(performance-move-const-arg)
     using ActualCR = decltype(std::move(std::as_const(obj)).value());
     EXPECT_TRUE((std::is_same<ML, ActualML>::value));
     EXPECT_TRUE((std::is_same<MR, ActualMR>::value));
@@ -424,16 +427,18 @@ TEST(Try, ValueOverloads) {
     EXPECT_EQ(obj.value(), 3);
     EXPECT_EQ(std::move(obj).value(), 3);
     EXPECT_EQ(std::as_const(obj).value(), 3);
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_EQ(std::move(std::as_const(obj)).value(), 3);
   }
 
   {
     auto obj = Try<int>{make_exception_wrapper<std::range_error>("oops")};
-    EXPECT_THROW(obj.value(), std::range_error);
-    EXPECT_THROW(std::ignore = std::move(obj.value()), std::range_error);
-    EXPECT_THROW(std::ignore = std::as_const(obj.value()), std::range_error);
+    EXPECT_THROW(std::ignore = obj.value(), std::range_error);
+    EXPECT_THROW(std::ignore = std::move(obj).value(), std::range_error);
+    EXPECT_THROW(std::ignore = std::as_const(obj).value(), std::range_error);
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_THROW(
-        std::ignore = std::move(std::as_const(obj.value())), std::range_error);
+        std::ignore = std::move(std::as_const(obj)).value(), std::range_error);
   }
 }
 
@@ -533,6 +538,7 @@ TEST(Try, exception) {
     using ActualML = decltype(obj.exception());
     using ActualMR = decltype(std::move(obj).exception());
     using ActualCL = decltype(std::as_const(obj).exception());
+    // NOLINTNEXTLINE(performance-move-const-arg)
     using ActualCR = decltype(std::move(std::as_const(obj)).exception());
     EXPECT_TRUE((std::is_same<ML, ActualML>::value));
     EXPECT_TRUE((std::is_same<MR, ActualMR>::value));
@@ -545,6 +551,7 @@ TEST(Try, exception) {
     EXPECT_THROW(obj.exception(), TryException);
     EXPECT_THROW(std::move(obj).exception(), TryException);
     EXPECT_THROW(std::as_const(obj).exception(), TryException);
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_THROW(std::move(std::as_const(obj)).exception(), TryException);
   }
 
@@ -553,6 +560,7 @@ TEST(Try, exception) {
     EXPECT_EQ(-3, *obj.exception().get_exception<int>());
     EXPECT_EQ(-3, *std::move(obj).exception().get_exception<int>());
     EXPECT_EQ(-3, *std::as_const(obj).exception().get_exception<int>());
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_EQ(
         -3, *std::move(std::as_const(obj)).exception().get_exception<int>());
   }
@@ -562,6 +570,7 @@ TEST(Try, exception) {
     using ActualML = decltype(obj.exception());
     using ActualMR = decltype(std::move(obj).exception());
     using ActualCL = decltype(std::as_const(obj).exception());
+    // NOLINTNEXTLINE(performance-move-const-arg)
     using ActualCR = decltype(std::move(std::as_const(obj)).exception());
     EXPECT_TRUE((std::is_same<ML, ActualML>::value));
     EXPECT_TRUE((std::is_same<MR, ActualMR>::value));
@@ -574,6 +583,7 @@ TEST(Try, exception) {
     EXPECT_THROW(obj.exception(), TryException);
     EXPECT_THROW(std::move(obj).exception(), TryException);
     EXPECT_THROW(std::as_const(obj).exception(), TryException);
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_THROW(std::move(std::as_const(obj)).exception(), TryException);
   }
 
@@ -582,6 +592,7 @@ TEST(Try, exception) {
     EXPECT_EQ(-3, *obj.exception().get_exception<int>());
     EXPECT_EQ(-3, *std::move(obj).exception().get_exception<int>());
     EXPECT_EQ(-3, *std::as_const(obj).exception().get_exception<int>());
+    // NOLINTNEXTLINE(performance-move-const-arg)
     EXPECT_EQ(
         -3, *std::move(std::as_const(obj)).exception().get_exception<int>());
   }

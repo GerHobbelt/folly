@@ -33,24 +33,40 @@ Resolve these once from `PATH`; use the fallback if absent:
 
 Default-on for:
 
-- Durable prose — see "Writing specialization" for full scope, including commit
-  messages, docs, guidelines, posts, code comments, edits to the rules package
-  containing this file, and other personal or project rule documents.
+- Prose meant for human use outside the current conversation: commit messages,
+  docs, guidelines, posts, code comments, and personal or project rule
+  documents.
 - Code changes intended to persist. Draft first if useful, but run the critic
   loop, apply fixes, and emit each pass's accountability artifact promptly
   before continuing with material work.
-- Investigations and recommendations where a false claim could change the
-  answer.
-- Substantive design or correctness choices.
+- Investigations or recommendations where the answer is not a direct lookup and
+  will guide a costly, risky, or hard-to-reverse decision.
+- Other artifacts kept for later human use that record substantive design or
+  correctness choices.
 - Code reviews.
 
-Do not trigger on disposable working scaffolds: dumps, evidence ledgers, scratch
-plans, and similar intermediate notes. If the user is expected to read the
-material or it is intended for future reuse, the material is durable and the
-loop applies.
+Routine conversation, status updates, debriefs, working notes, and context dumps
+trigger only through another condition above.
+
+Purely mechanical changes do not trigger by default, regardless of line count.
+Examples are typos, broken links, formatting, and repeating an already-approved
+rename or rephrase.
 
 Accountability artifacts and delegated-review reports produced by this workflow
 do not themselves trigger another critic-iterate cycle.
+
+## Explicit user controls
+
+Apply these only when the user explicitly requests them:
+
+- `no c-i`: skip critic-iterate without stopping the task.
+- `draft-only` or `initial draft`: stop after the first complete artifact,
+  before author critique.
+- `c-i-0`: run the General Cycle to convergence, with no external review.
+- `c-i-K` or `critic-iterate-K` (`K > 0`): set the task's external-review budget
+  to `K` rounds.
+- `c-i+K` (`K > 0`): if the previous turn ended because the review budget was
+  exhausted, extend review by `K` rounds.
 
 ## Evidence
 
@@ -72,10 +88,15 @@ Run until a full pass makes no edit.
 A **pass** = critique → fix every in-scope flag → cold re-read. Adversarial
 throughout: critic is the skeptic, not the cheerleader.
 
-Before calling a pass clean, record in its accountability artifact the strongest
-nearby alternative for the most suspect sentence, line, or decision. If it is
-materially clearer or better satisfies the active critic dimension, take it.
-"Accurate" or "defensible" is not convergence.
+Before calling a pass clean, record in its accountability artifact the most
+suspect sentence, line, or decision and its strongest credible alternative. If
+no alternative is credible, record the concrete fact, check, or constraint that
+settles the choice. Take the better choice. Do not invent a weak option merely
+to fill the artifact. One comparison may satisfy a specialization's evidence
+requirement when it covers the same choice. "Accurate" or "defensible" is not
+convergence. For prose, apply this comparison to the needed sentence that is
+hardest to read. Try one plainer version without changing its meaning or the
+surrounding argument, then keep the clearer version.
 
 Every pass includes a new-reader dimension. For prose, use the primary reader
 established before drafting and verify that choice against the artifact's final
@@ -100,8 +121,8 @@ Per pass:
    - Test refactoring: apply `code/testing.md`. Distinct material risks survive?
      Near-copy structure is compressed without hiding differences? Failures
      still localize the cause?
-   - Code changes: invariants preserved? Reader can still trace the control
-     flow? Unnecessary structure collapsed or deliberately kept per `code.md`?
+   - Code: preserved invariants, traceable control flow, and `code.md`
+     "Compression and locality".
 2. **Apply each dimension.** Flag what fails.
 3. **Author pass.** Fix every in-scope flag immediately.
 4. **Cold re-read.** Read the whole artifact as if written by someone else. Fix
@@ -154,10 +175,10 @@ Quoted findings, not narrative paraphrases, are the anti-Goodhart guard: they
 cannot be produced without actually reading the artifact.
 
 For writing passes, the artifact must show cut-test evidence. Quote at least one
-sentence considered for cutting or compression, answer what is irreplaceably
-lost if it is cut, and state the action taken. On a zero-flag pass, quote the
-hardest sentence to justify and why it stays. A pass that only says "cut test
-applied" is invalid.
+sentence considered for cutting or compression, state whether it is necessary to
+the artifact's goal, and name the reader task or required relationship lost if
+it is cut. Otherwise cut it. On a zero-flag pass, quote the hardest sentence to
+justify and why it stays. A pass that only says "cut test applied" is invalid.
 
 **Prompt emission gate.** Emit the artifact for each pass immediately after that
 pass's author / cold-read step. Do this before starting the next substantive
@@ -270,8 +291,10 @@ returns an alternative or findings.
 
 Mark each source path as required to read or merely permitted.
 
-For non-exhaustive prose, a requested addition must name what the primary reader
-could not understand or do without it.
+For prose, a requested addition must name the reader task or required
+relationship it serves. A requested cut must show that the artifact's purpose
+does not need that fact. Truth, relatedness, or hypothetical usefulness is not
+enough to keep it; "shorter" alone is not enough to cut it.
 
 **Integration and closure.** The General Cycle's no-edit rule governs
 author-side passes. For external prose review, classify every fresh-reviewer
@@ -285,7 +308,8 @@ finding before editing; its response already integrates the cold report:
 
 A material error, missed requirement, wrong action, or reader blocker is
 `MUST_TAKE`. Escalate if the allowed evidence cannot repair a material finding.
-Treat the independent reviews as evidence, not a vote.
+Before applying a reviewer finding that would change the artifact, verify its
+factual claims.
 
 If a `MUST_TAKE` finding changes a proposed fix's behavior, invalidates a
 fallback, or exposes a deciding correctness assumption, reapply
@@ -294,8 +318,7 @@ trigger this.
 
 A successful fresh review and its cold read count as 1 review round. The review
 budget defaults to 1 round. A personal rule can set a different default with
-`critic-iterate-N`; a task can set its budget with that form or `c-i-N`. After
-the budget is exhausted, each `c-i+N` adds N rounds.
+`critic-iterate-K`.
 
 After each review round:
 
@@ -320,12 +343,13 @@ After each review round:
      Tell the user before re-reviewing. When the round finishes, return to step
      1. Mention any extra rounds in the final debrief.
 
-     Otherwise, finish with this notice:
+     Otherwise, finish with a notice that starts with the exact text
+     `OutOfBudget:`:
 
-     > This output may have easy-to-spot gaps because I ran out of review
-     > budget. Reply `c-i+K` to allow up to K more review rounds; later rounds
-     > usually yield smaller gains. The default is 1 round; personal rules may
-     > override it with `critic-iterate-N`.
+     > OutOfBudget: This output may have easy-to-spot gaps because I ran out of
+     > review budget. Reply `c-i+K` to allow up to K more review rounds; later
+     > rounds usually yield smaller gains. The default is 1 round; personal
+     > rules may override it with `critic-iterate-N`.
 
 Record the dispositions only in the accountability artifact. For other
 artifacts, take the better version, merge, or apply its findings.
@@ -391,9 +415,9 @@ Before accepting a prose review, confirm that its only cold-review launch
 precedes any source read or statement about the artifact, that `REVIEW FRAME:`
 appears before any embargoed input is read, and that `ARTIFACT CHECK:` appears
 before the cold-result file is read. Confirm that the cold trace reads no
-undeclared source and launches no reviewer. If either check fails, discard the
-round, fix its prompt if needed, and start a new outer fresh-review command
-before editing.
+undeclared source and launches no reviewer. If a check fails, discard the round,
+fix its prompt if needed, and start a new outer fresh-review command before
+editing.
 
 Missing `codex`, auth / sandbox failure, non-zero exit, or timeout means the CLI
 path cannot run; stop and report the infra/setup failure. For a Guardian
@@ -430,9 +454,11 @@ closure rules.
 
 **Structural best-of-both.** Treat the regenerated draft as a diagnostic and
 idea source, not a second draft to blend. Borrow changes that reduce reader
-cost: shorter structure, clearer ordering, or plainer language. Reject changes
-that mainly add coverage, copy the reviewer wholesale, or make the message feel
-more complete.
+effort: clearer ordering, plainer language, or less unnecessary text. First
+preserve exactly the structure the target audience needs; when two versions do
+that with equal effort, prefer the shorter one. Reject changes that mainly add
+coverage, copy the reviewer wholesale, or replace a concrete relationship with
+an abstraction the reader must unpack.
 
 **Context packet discipline (commit messages).** The author or orchestrator
 still builds a context packet for commit messages. For fresh review, pass only
@@ -447,7 +473,7 @@ trail, including the recovered goal and unsuperseded requirements or decisions.
 Before the author uses or dispatches the packet, treat every input as a claim or
 requirement, not approved wording. Apply "Evidence" when a false claim could
 change the message, then check each input against the intended reader's starting
-knowledge. Keep only code identifiers that help verify a fact or find the
+knowledge. Keep code identifiers when they anchor a fact or help find the
 relevant code. Explain the concrete actor, condition, action, or outcome hidden
 by unfamiliar shorthand, and define unavoidable technical terms on first use.
 Raw input may be overcomplete, but not opaque.
@@ -456,35 +482,28 @@ Never pass breadcrumb paths or raw history to the fresh-review task note.
 
 - **Stack context** — for diffs in a stack: what predecessors covered and what
   follow-ons will do. Include review-affecting predecessor framing or follow-on
-  plans in the task note; omit mechanics visible in the current code.
+  plans in the task note; omit mechanics not needed to understand the current
+  diff.
 - **Reader must know** — the few facts whose absence would make a reader act
-  wrongly, plus the artifact goal and intended readers. Past three or four
-  facts, consolidate — keep each one only if its absence predicts a distinct
-  wrong action. The final message may compress its detail and wording unless
-  that changes reader action. Put a fact in the fresh-review task note only when
-  the reviewer needs it to verify correctness and cannot derive it from the
-  sources it may read.
-- **Decision trail** — required when the change embodies any design choice not
-  mechanically forced by the spec or bug (typo, version bump, mechanical rename,
-  and pure-config-value tweaks are exempt regardless of line count). The raw
-  development-process surface the chat went through:
-  - Alternatives considered and why rejected (named, not "we discussed
-    options").
-  - Decisions that changed mid-design and the trigger for the change.
-  - Constraints that pinned the final shape (compat, privacy, perf, deadline,
-    invariant being preserved).
-  - Recursive realizations — moments where the problem reframed itself.
-  - For commits that are themselves checkpoints in a named iterative design
-    (meta-project, RFC series, sequenced refactor): the iteration trail (what
-    iter-N exposed, what iter-N+1 added, why).
+  wrongly or misunderstand the change, plus the artifact goal and intended
+  readers. Past three or four facts, reapply that test to each; do not merge
+  distinct causal facts into an abstract label. The final message may compress
+  detail and wording only while preserving the reader's needed model. Put a fact
+  in the fresh-review task note only when the reviewer needs it to verify
+  correctness and cannot derive it from the sources it may read.
+- **Decision trail** — for a design choice not mechanically forced by the spec
+  or bug, collect only the choices, constraints, or reversals needed to explain
+  the final shape. Typical candidates are a rejected alternative whose trade-off
+  is not clear from the diff, a constraint that pinned the choice, or a reversal
+  that explains a surprising result. Do not inventory the rest of the
+  discussion.
 
-The Decision trail is RAW input — the inner loop compresses aggressively from
-it, keeping whichever items survive the cut test (typically the load-bearing
+The Decision trail is RAW input — the inner loop selects only the facts needed
+for the reader's task, then applies the cut test (typically the load-bearing
 constraint or rejected alternative; see `writing.md` "## What evergreen context
 means"). The packet-vs-final-message split is input-vs-keep, not a different
-taxonomy. Omitting Decision trail on a non-trivial change starves the loop;
-forcing it on a trivial change manufactures motivation — per `writing.md` "##
-General maxims", the same bloat reversed.
+taxonomy. Omitting a decision the reader needs starves the loop; forcing process
+history the reader does not need invents motivation and adds noise.
 
 **Debrief tail.** End multi-step debriefs with
 `Delegated checks: T required, A attempts, F failed`; count each required
@@ -537,7 +556,8 @@ model is Opus 5+ or GPT-5.5+ (resolve it with
 
 - Do NOT skim on later passes. Each pass must be as careful as the first.
 - Avoid confirmation bias — critic is adversary, not cheerleader.
-- Do NOT defer an in-scope issue as "pre-existing."
+- Do NOT defer an in-scope issue to a later pass or reviewer.
+- Do NOT dismiss an in-scope issue as "pre-existing."
 - Do NOT narrate completion before pasting the accountability artifact.
 - Do NOT pick critic dimensions after inspecting the draft.
 - Do NOT use reviewer failure as an escape hatch. Codex CLI infra failure
@@ -552,9 +572,8 @@ model is Opus 5+ or GPT-5.5+ (resolve it with
   covers the final revision; follow "Integration and closure" to choose another
   pair or close after author review.
 - Critic-iterate runs the full process on every trigger. Do not label material
-  as scratch when the user is expected to read it or it is intended for future
-  reuse. Beyond the explicit exemptions in this file, the sole process exemption
-  is an explicit user ask for "one inner loop".
+  intended for future reuse as scratch. Beyond the explicit exemptions in this
+  file, the sole process exemption is an explicit user ask for "one inner loop".
 - Do NOT invoke "context bottleneck" to skip the Codex CLI reviewer. Real
   exhaustion means token count within the window limit's warning band or tools
   returning truncation errors — otherwise, run it.
@@ -562,8 +581,9 @@ model is Opus 5+ or GPT-5.5+ (resolve it with
 ## Code Specialization
 
 For every nontrivial code change, run a code critic pass before lint, format,
-tests, or commit. Nontrivial means more than an isolated typo, rename, literal
-or config value, formatter-only change, or generated-output update.
+tests, or commit. Skip this code-specific pass for a typo, mechanical rename,
+formatter-only change, generated-output update, or isolated literal or config
+value.
 
 For code critic passes and fresh-context reviewers, user nits are inputs, not
 scope. Reconstruct the changed artifact's intended contract, then review the
@@ -574,11 +594,10 @@ Use `code.md`'s "Compression and locality" section when the pass reaches
 compression decisions. This `Code Specialization` section defines when the pass
 runs and what evidence it must leave.
 
-The code-pass artifact must include correctness and compression evidence: quote
-at least one correctness candidate taken or rejected; quote at least one
-simplification taken, or quote a concrete candidate rejected with the reason.
-"No correctness or compression opportunities" without quoted candidates is
-invalid.
+The code-pass artifact must quote one correctness candidate taken or rejected
+and the changed structure most likely to simplify. Record the simplification
+taken, or why the relevant options in `code.md` "Compression and locality" would
+not improve it. Do not change code merely to produce evidence.
 
 ## Writing Specialization
 
@@ -591,9 +610,9 @@ Identify these critic dimensions before inspecting the current draft:
 
 - **Explanation critic** — For durable explanatory prose, apply `writing.md`
   "Substance". For a durable document, also apply "Document". Flag a missing
-  question or problem, the facts and reasoning needed to follow the conclusion,
-  or any applicable proposal or investigation requirement before narrower style
-  issues.
+  question or problem, missing facts or reasoning needed to follow the
+  conclusion, and facts the reader does not need. Check applicable proposal and
+  investigation requirements before narrower style issues.
 - **Shape critic** — For prose with multiple sections or that answers more than
   one independent question, set the draft's structure aside and sketch the
   simplest outline that serves its primary reader and purpose. Compare it with
@@ -604,26 +623,15 @@ Identify these critic dimensions before inspecting the current draft:
   canonical.
 - **Plain-language critic** — per `writing.md` "## Substance". A necessary
   sentence can still be jargon-heavy. Replace noun chains and abstract process
-  labels with concrete actors, actions, conditions, or outcomes. Remove
+  labels with concrete actors, actions, conditions, or outcomes. Restore any
+  needed cause, condition, or sequence, and state how the parts connect. Remove
   qualifiers that do not change the instruction.
 
 Then cold re-read per the general cycle.
 
-### Scope and Exemptions
+### Scope
 
-The accountability artifact is required for:
-
-- Prose blocks ≥3 sentences.
-- Any edit to the rules package containing this file or to another personal or
-  project rule document, including additions made during the turn that encodes a
-  new rule. The writing exemptions below do not apply.
-
-Writing exemptions:
-
-- Typo fixes: single-character corrections, no semantic shift.
-- Single-line edits with no semantic shift: variable rename, comment rephrase.
-- Disposable working scaffolds as defined under "Trigger".
-- If unsure: artifact required.
+Every prose edit that triggers this rule requires an accountability artifact.
 
 ### Dual-Revision Thresholds
 
@@ -631,16 +639,14 @@ The general "high-stakes" definition applies to all writing. Concrete thresholds
 for cases that need them:
 
 - **Commit messages:** dual revision required when the change affects ≥1
-  sentence of substantive content. Typo, broken-link, and format fixes are
-  exempt. So are mechanically forced version bumps, renames, and pure
-  config-value changes when one sentence says everything the reader needs, the
-  context packet adds no other `Reader must know` fact, and the author checks
-  the message against the diff. A design choice or known comprehension failure
-  restores dual revision.
+  sentence of substantive content. Mechanically forced version bumps, renames,
+  and pure config-value changes are exempt when one sentence says everything the
+  reader needs, the context packet adds no other `Reader must know` fact, and
+  the author checks the message against the diff. A design choice or known
+  comprehension failure restores dual revision.
 - **Rule-doc edits** in the rules package containing this file or another
   personal or project rule document: dual revision required for every semantic
-  or readability change. Pure typo, broken-link, and format fixes are exempt;
-  there is no size threshold otherwise.
+  or readability change; there is no size threshold.
 - **Posts seeking input:** dual revision required by default, with no threshold.
 
 ### Self-Dog-Fooding Gate

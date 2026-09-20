@@ -1,0 +1,39 @@
+load("@fbcode_macros//build_defs:python_unittest.bzl", "python_unittest")
+load("@fbsource//tools/build_defs/testinfra:network_access_utils.bzl", "network_access_utils")
+
+oncall("fbcode_entropy_wardens_folly")
+
+python_unittest(
+    name = "checkpoint_test",
+    srcs = ["test_checkpoint.py"],
+    network_access = network_access_utils.none(),
+    deps = ["fbcode//folly/agents/backtest:run_scenario_lib"],
+)
+
+python_unittest(
+    name = "checkpoint_accounting_test",
+    srcs = ["test_checkpoint_accounting.py"],
+    network_access = network_access_utils.none(),
+    deps = ["fbcode//folly/agents/backtest:run_scenario_lib"],
+)
+
+python_unittest(
+    name = "compress_checkpoint_outputs_test",
+    srcs = ["test_compress_checkpoint_outputs.py"],
+    network_access = network_access_utils.none(),
+    deps = ["fbcode//folly/agents/backtest:run_scenario_lib"],
+)
+
+python_unittest(
+    name = "debrief_tables_test",
+    srcs = ["test_debrief_tables.py"],
+    network_access = network_access_utils.none(),
+    deps = ["fbcode//folly/agents/backtest:run_scenario_lib"],
+)
+
+python_unittest(
+    name = "run_scenario_test",
+    srcs = ["test_run_scenario.py"],
+    network_access = network_access_utils.none(),
+    deps = ["fbcode//folly/agents/backtest:run_scenario_lib"],
+)
