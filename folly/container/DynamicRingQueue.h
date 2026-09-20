@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -25,40 +26,42 @@
 #include <folly/Likely.h>
 #include <folly/lang/Bits.h>
 
+template <typename T>
+class DynamicRingQueueTestHelper;
+
 namespace folly {
 
 /**
- * A simple fixed-capacity ring buffer queue backed by a power-of-two sized
- * array. Not thread-safe.
+ * A ring buffer queue backed by a power-of-two sized array that grows
+ * on overflow. Not thread-safe.
  */
 template <typename T>
-class FixedCapacityRingQueue {
+class DynamicRingQueue {
  public:
   static constexpr uint32_t kMaxCapacity = 1u << 31;
 
-  FixedCapacityRingQueue() = default;
+  DynamicRingQueue() = default;
 
-  explicit FixedCapacityRingQueue(uint32_t capacity) {
+  explicit DynamicRingQueue(uint32_t capacity) {
     if (capacity > kMaxCapacity) {
-      throw std::length_error(
-          "FixedCapacityRingQueue capacity exceeds maximum");
+      throw std::length_error("DynamicRingQueue capacity exceeds maximum");
     }
     mask_ = folly::nextPowTwo(capacity) - 1;
     buf_ = std::make_unique<T[]>(mask_ + 1);
   }
 
-  ~FixedCapacityRingQueue() = default;
+  ~DynamicRingQueue() = default;
 
-  FixedCapacityRingQueue(const FixedCapacityRingQueue&) = delete;
-  FixedCapacityRingQueue& operator=(const FixedCapacityRingQueue&) = delete;
+  DynamicRingQueue(const DynamicRingQueue&) = delete;
+  DynamicRingQueue& operator=(const DynamicRingQueue&) = delete;
 
-  FixedCapacityRingQueue(FixedCapacityRingQueue&& other) noexcept
+  DynamicRingQueue(DynamicRingQueue&& other) noexcept
       : mask_(std::exchange(other.mask_, ~0u)),
         buf_(std::move(other.buf_)),
         head_(std::exchange(other.head_, 0)),
         tail_(std::exchange(other.tail_, 0)) {}
 
-  FixedCapacityRingQueue& operator=(FixedCapacityRingQueue&& other) noexcept {
+  DynamicRingQueue& operator=(DynamicRingQueue&& other) noexcept {
     mask_ = std::exchange(other.mask_, ~0u);
     buf_ = std::move(other.buf_);
     head_ = std::exchange(other.head_, 0);
@@ -66,12 +69,11 @@ class FixedCapacityRingQueue {
     return *this;
   }
 
-  bool push(T val) {
+  void push(T val) {
     if (FOLLY_UNLIKELY(size() >= capacity())) {
-      return false;
+      grow();
     }
     buf_[tail_++ & mask_] = val;
-    return true;
   }
 
   T pop() {
@@ -85,6 +87,31 @@ class FixedCapacityRingQueue {
   bool empty() const { return head_ == tail_; }
 
  private:
+  void grow() {
+    uint32_t oldCap = capacity();
+    if (oldCap >= kMaxCapacity) {
+      throw std::length_error("DynamicRingQueue capacity exceeds maximum");
+    }
+    uint32_t newCap = oldCap == 0 ? 1 : oldCap * 2;
+    auto newBuf = std::make_unique<T[]>(newCap);
+
+    uint32_t n = size();
+    uint32_t head = head_ & mask_;
+    uint32_t headLen = std::min(n, oldCap - head);
+    auto* src = buf_.get();
+    auto* dst = newBuf.get();
+    std::copy(src + head, src + head + headLen, dst);
+    std::copy(src, src + (n - headLen), dst + headLen);
+
+    buf_ = std::move(newBuf);
+    mask_ = newCap - 1;
+    head_ = 0;
+    tail_ = n;
+  }
+
+  template <typename U>
+  friend class ::DynamicRingQueueTestHelper;
+
   uint32_t mask_{~0u};
   std::unique_ptr<T[]> buf_{nullptr};
   uint32_t head_{0};
