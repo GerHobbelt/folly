@@ -59,7 +59,7 @@
 ///   - Only add them in your wrapper.
 ///   - Add them via `UnsafeTaskWrapperCrtp` deriving from `TaskWrapperCrtp`.
 ///   - Add boolean flags to the configuration struct, and gate the methods via
-///     `enable_if`.  NB: You probably cannot gate these on `Derived` **not**
+///     `requires`.  NB: You probably cannot gate these on `Derived` **not**
 ///     being must-use-immediately, since CRTP bases see an incomplete type.
 ///
 /// ### WARNING: Beware of object slicing in "unwrapping" APIs
@@ -187,24 +187,38 @@ class TaskPromiseWrapperBase {
   auto initial_suspend() noexcept { return promise_.initial_suspend(); }
   auto final_suspend() noexcept { return promise_.final_suspend(); }
 
-  template <
-      typename Awaitable,
-      std::enable_if_t<!folly::ext::must_use_immediately_v<Awaitable>, int> = 0>
+  template <typename Awaitable>
+    requires(!folly::ext::must_use_immediately_v<Awaitable>)
   auto await_transform(Awaitable&& what) {
     return promise_.await_transform(std::forward<Awaitable>(what));
   }
-  template <
-      typename Awaitable,
-      std::enable_if_t<folly::ext::must_use_immediately_v<Awaitable>, int> = 0>
+  template <typename Awaitable>
+    requires folly::ext::must_use_immediately_v<Awaitable>
   auto await_transform(Awaitable what) {
     return promise_.await_transform(
         folly::ext::must_use_immediately_unsafe_mover(std::move(what))());
   }
 
-  auto yield_value(auto&& v)
-    requires requires { promise_.yield_value(std::forward<decltype(v)>(v)); }
+  template <typename Value>
+  auto yield_value(Value&& v)
+    requires(
+        !folly::ext::must_use_immediately_v<Value> &&
+        requires { promise_.yield_value(std::forward<Value>(v)); })
   {
-    return promise_.yield_value(std::forward<decltype(v)>(v));
+    return promise_.yield_value(std::forward<Value>(v));
+  }
+
+  template <typename Value>
+  auto yield_value(Value v)
+    requires(
+        folly::ext::must_use_immediately_v<Value> &&
+        requires {
+          promise_.yield_value(
+              folly::ext::must_use_immediately_unsafe_mover(std::move(v))());
+        })
+  {
+    return promise_.yield_value(
+        folly::ext::must_use_immediately_unsafe_mover(std::move(v))());
   }
 
   void unhandled_exception() noexcept { promise_.unhandled_exception(); }
@@ -359,11 +373,11 @@ class TaskWrapperCrtp {
           FOLLY_DECLVAL(Inner)))>;
 
  public:
-  template <
-      typename Me, // not a forwarding ref, see SFINAE
-      // This check guards against misuse (+ fails on lvalue refs)
-      // See `wrap_must_use_immediately_t::unsafe_mover` for more context
-      std::enable_if_t<std::is_base_of_v<TaskWrapperCrtp, Me>, int> = 0>
+  template <typename Me> // not a forwarding ref, see requires clause
+    requires(
+        // This check guards against misuse (+ fails on lvalue refs)
+        // See `wrap_must_use_immediately_t::unsafe_mover` for more context
+        std::is_base_of_v<TaskWrapperCrtp, Me>)
   static my_curried_mover<Me> unsafe_mover(
       folly::ext::must_use_immediately_private_t /*unused*/, Me&& me) noexcept {
     return folly::ext::curried_unsafe_mover_from_bases_and_members<
@@ -372,11 +386,10 @@ class TaskWrapperCrtp {
         folly::vtag<&TaskWrapperCrtp::inner_>,
         static_cast<Me&&>(me));
   }
-  template <
-      typename DerivedFromMe,
-      // Matches the SFINAE logic in our `unsafe_mover`
-      std::enable_if_t<std::is_base_of_v<TaskWrapperCrtp, DerivedFromMe>, int> =
-          0>
+  template <typename DerivedFromMe>
+    requires(
+        // Matches the SFINAE logic in our `unsafe_mover`
+        std::is_base_of_v<TaskWrapperCrtp, DerivedFromMe>)
   explicit TaskWrapperCrtp(
       folly::ext::curried_unsafe_mover_private_t /*unused*/,
       my_curried_mover<DerivedFromMe>&& mover)
@@ -489,13 +502,12 @@ class TaskWithExecutorWrapperCrtp {
           FOLLY_DECLVAL(Inner)))>;
 
  public:
-  template <
-      typename Me, // not a forwarding ref, see SFINAE
-      // This check guards against misuse (+ fails on lvalue refs)
-      // See `wrap_must_use_immediately_t::unsafe_mover` for more context
-      std::enable_if_t<
-          std::is_base_of_v<TaskWithExecutorWrapperCrtp, Me>,
-          int> = 0>
+  template <typename Me> // not a forwarding ref, see requires clause
+                         // This check guards against misuse (+ fails on lvalue
+                         // refs) See
+                         // `wrap_must_use_immediately_t::unsafe_mover` for more
+                         // context
+    requires std::is_base_of_v<TaskWithExecutorWrapperCrtp, Me>
   static my_curried_mover<Me> unsafe_mover(
       folly::ext::must_use_immediately_private_t /*unused*/, Me&& me) noexcept {
     return folly::ext::curried_unsafe_mover_from_bases_and_members<
@@ -504,12 +516,9 @@ class TaskWithExecutorWrapperCrtp {
         folly::vtag<&TaskWithExecutorWrapperCrtp::inner_>,
         static_cast<Me&&>(me));
   }
-  template <
-      typename DerivedFromMe,
-      // Matches the SFINAE logic in our `unsafe_mover`
-      std::enable_if_t<
-          std::is_base_of_v<TaskWithExecutorWrapperCrtp, DerivedFromMe>,
-          int> = 0>
+  template <typename DerivedFromMe>
+  // Matches the requires clause in our `unsafe_mover`
+    requires std::is_base_of_v<TaskWithExecutorWrapperCrtp, DerivedFromMe>
   explicit TaskWithExecutorWrapperCrtp(
       folly::ext::curried_unsafe_mover_private_t /*unused*/,
       my_curried_mover<DerivedFromMe>&& mover)

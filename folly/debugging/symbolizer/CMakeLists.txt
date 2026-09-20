@@ -140,6 +140,7 @@ folly_add_library(
   NAME symbolizer
   SRCS
     SignalHandler.cpp
+    SignalHandlerWindows.cpp
     SymbolizePrinter.cpp
     Symbolizer.cpp
   HEADERS
@@ -153,6 +154,7 @@ folly_add_library(
     folly_debugging_symbolizer_elf
     folly_demangle
     folly_file_util
+    folly_indestructible
     folly_lang_safe_assert
     folly_lang_to_ascii
     folly_memory
@@ -161,6 +163,7 @@ folly_add_library(
     folly_portability_sys_mman
     folly_portability_sys_syscall
     folly_scope_guard
+    folly_small_vector
     folly_synchronized
     folly_tracing_async_stack
   EXPORTED_DEPS

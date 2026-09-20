@@ -204,6 +204,8 @@ folly_add_library(
   HEADERS
     ConcurrentBSkipList-detail.h
     ConcurrentBSkipList.h
+  DEPS
+    folly_portability_asm
   EXPORTED_DEPS
     ${GLOG_LIBRARIES}
     folly_c_portability
@@ -240,6 +242,9 @@ folly_add_library(
   HEADERS
     ConcurrentSkipList-inl.h
     ConcurrentSkipList.h
+  DEPS
+    folly_cpp_attributes
+    folly_memory_allocator
   EXPORTED_DEPS
     ${GLOG_LIBRARIES}
     folly_constexpr_math
@@ -287,6 +292,7 @@ folly_add_library(
   HEADERS
     Conv.h
   DEPS
+    fmt::fmt
     folly_lang_safe_assert
   EXPORTED_DEPS
     folly_c_portability
@@ -607,6 +613,7 @@ folly_add_library(
     Format.h
     FormatArg.h
   DEPS
+    fmt::fmt
     folly_constexpr_math
     folly_container_array
   EXPORTED_DEPS
@@ -905,6 +912,8 @@ folly_add_library(
   NAME mpmc_queue
   HEADERS
     MPMCQueue.h
+  DEPS
+    folly_portability
   EXPORTED_DEPS
     folly_concurrency_cache_locality
     folly_detail_turn_sequencer
