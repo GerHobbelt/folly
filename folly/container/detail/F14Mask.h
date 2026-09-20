@@ -176,16 +176,17 @@ class SparseMaskIter {
 // a bound instead of the bitvector itself.
 template <unsigned BitCount>
 class BoundedMaskIter {
+  static_assert(BitCount < sizeof(MaskType) * 8);
+
   MaskType mask_;
 
  public:
   explicit BoundedMaskIter(MaskType mask) : mask_{mask} {}
 
   bool hasNext() {
-    // ternary encourages tzcnt (x86-64/bmi1) where possible
-    unsigned firstSet =
-        mask_ == 0 ? (sizeof(MaskType) * 8) : findFirstSetNonZero(mask_);
-    return firstSet < BitCount;
+    // true iff mask_ has a set bit below BitCount, so next() will return
+    // an in-bounds index
+    return (mask_ & FullMask<BitCount>::value) != 0;
   }
 
   unsigned next() {
