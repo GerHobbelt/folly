@@ -13,21 +13,13 @@ Author and orchestrator sessions load these package files:
 - `task-ledger.md`: when `task-ledger.loader.md` applies. Before drafting a
   durable explanation, reread the active workstream ledger.
 - `rule-conflicts.md`: before deciding whether a broader rule or skill applies.
-- `writing.md`: before drafting or revising prose.
-- `writing/concise-rules.md`: before editing a rule document.
+- `write.md`: before drafting or revising prose.
+- `write/concise-rules.md`: before editing a rule document.
 - `design-vetting.md`: before choosing a substantive design or correctness fix.
 
 If a required file is unavailable, stop and report the missing dependency.
 Runtime reviewer roles instead load only the inputs their task permits; their
 preamble defines the role-specific rules.
-
-Resolve these once from `PATH`; use the fallback if absent:
-
-- `codex-reviewer.py`: `critic-iterate/codex-reviewer.py`.
-- `session_current_model_id.py`: `critic-iterate/session_current_model_id.py`.
-- `reformat-md`: `scripts/reformat-md`.
-
-`.../name` means the resolved absolute path. Stop if unavailable.
 
 ## Trigger
 
@@ -141,7 +133,7 @@ edit unless the change is an isolated typo or formatting fix.
 When critic findings, reviewer findings, or loaded rules appear to conflict,
 apply `rule-conflicts.md` before triage.
 
-Before drafting durable prose, apply `writing.md` "Set the reader before the
+Before drafting durable prose, apply `write.md` "Set the reader before the
 outline".
 
 When user critique names a concrete issue, do not rely on memory: fix it as the
@@ -366,80 +358,10 @@ Do not edit the candidate while either reviewer runs. If it changes after a
 round starts, that round no longer covers the revision. After the reviewers
 finish, resume above at step 2.
 
-**Codex reviewer mechanism.** Use this fixed command:
-
-```bash
-package_dir="$(dirname "$(readlink -f "/path/to/critic-iterate.md")")"
-review_tmp=$(mktemp -d)
-# Write cold-prompt.md and fresh-prompt.md under "$review_tmp" before this call.
-.../codex-reviewer.py \
-  --preamble-dir="$package_dir/critic-iterate" \
-  --preamble=fresh-review-preamble \
-  "$review_tmp/fresh-prompt.md"
-```
-
-When writing `fresh-prompt.md`, replace each variable below with its current
-absolute value; the child shell will not inherit them:
-
-```bash
-.../codex-reviewer.py \
-  --preamble-dir="$package_dir/critic-iterate" \
-  --preamble=cold-review-preamble \
-  "$review_tmp/cold-prompt.md" >"$review_tmp/cold-result.txt"
-```
-
-Do not prefix either wrapper call with an environment assignment. Hermetic runs
-use the copied rule's sibling preambles.
-
-`cold-result.txt` contains `REVIEW_OUTPUT_DIR=<path>` followed by the report.
-The top-level author or orchestrator may poll the outer fresh-review command
-normally. If polling loses later stdout from that command after recording its
-`REVIEW_OUTPUT_DIR`, use that directory's `review.md` only if it is nonempty,
-`run.jsonl` reaches `turn.completed`, and the trace checks below pass.
-Otherwise, treat the round as failed; never scan temporary directories or infer
-a result from partial output.
-
-On success it prints `REVIEW_OUTPUT_DIR=<path>` followed by the review. The
-private directory holds the same review in `review.md`, the model setting and
-reasoning effort in `metadata.json`, plus `effective-prompt.md`, `run.jsonl`,
-and `err.txt` for audit.
-
-The outer marker names the fresh-review directory. The fresh response includes
-the child marker; the author records both.
-
-Each prompt must name every input its reviewer may read. Start repo-relative
-commands with `cd <repo> &&`. Do not include raw chat or the full context
-packet. For commit / diff-message review, follow the specialization below.
-
-The author revises from the outer fresh review's `review.md`; it already
-incorporates the cold report. Every other file in either private directory is
-process evidence. On failure, inspect the smallest relevant log excerpt.
-
-Before accepting a prose review, confirm that its only cold-review launch
-precedes any source read or statement about the artifact, that `REVIEW FRAME:`
-appears before any embargoed input is read, and that `ARTIFACT CHECK:` appears
-before the cold-result file is read. Confirm that the cold trace reads no
-undeclared source and launches no reviewer. If a check fails, discard the round,
-fix its prompt if needed, and start a new outer fresh-review command before
-editing.
-
-Missing `codex`, auth / sandbox failure, non-zero exit, or timeout means the CLI
-path cannot run; stop and report the infra/setup failure. For a Guardian
-possible-exfiltration rejection of the top-level wrapper call, read
-`critic-iterate/auth-prompt.md` only for that rejection, never on the happy path
-or for an unrelated policy failure. Those recovery steps do not reach a nested
-reviewer running with a private `CODEX_HOME`. The fresh reviewer reports a
-nested rejection or run failure and stops. Do not rerun until the blocking
-policy or configuration changes; then the top-level author or orchestrator
-starts a new prose review round. Empty, off-topic, or malformed reviewer output
-is a bad run; the top-level author or orchestrator discards it, tightens the
-prompt, and starts a new outer fresh-review command. Each required reviewer
-check is incomplete until it produces usable output. Do not proceed self-only or
-switch reviewer paths.
+**Run external review:** follow `{FA}/critic-iterate/run-review.md`.
 
 **Commit / diff messages — separate inner loop from outer evaluator.** The
-author runs the `writing.md` inner loop to convergence before the outer
-evaluator.
+author runs the `write.md` inner loop to convergence before the outer evaluator.
 
 Before opening the author draft or cold report, the evaluator drafts from only
 the task note, the rule files selected under "Fresh reviewer inputs," and the
@@ -504,7 +426,7 @@ Never pass ledger paths or raw ledger contents to the fresh-review task note.
 
 The Decision trail is RAW input — the inner loop selects only the facts needed
 for the reader's task, then applies the cut test (typically the load-bearing
-constraint or rejected alternative; see `writing.md` "## What evergreen context
+constraint or rejected alternative; see `write.md` "## What evergreen context
 means"). The packet-vs-final-message split is input-vs-keep, not a different
 taxonomy. Omitting a decision the reader needs starves the loop; forcing process
 history the reader does not need invents motivation and adds noise.
@@ -528,33 +450,13 @@ Default the Agent-tool `model` parameter to inherit for any subagent whose
 output feeds convergence. Downgrade only for pure-mechanical work (file moves,
 grep-and-report, ID renames).
 
-Delegating authorship does not satisfy the fresh-review requirement. Give
-authorship subagents the Codex reviewer mechanism above. Whoever authors
-normally runs those checks; a non-author ambient does not add another after they
-pass. If delegated authorship fails before the draft converges, stop and report
-it; never take over the writing. If the draft converged and only its review
-failed, the top-level orchestrator may recover the infrastructure and rerun the
-required review on that unchanged draft.
-
 Never substitute self-assessment for a required delegated check (Codex reviewer
 calls per Dual Revision, or any subagent call this file mandates).
 
-**Delegate authorship of writing artifacts to the Codex CLI unless the ambient
-model is Opus 5+ or GPT-5.5+ (resolve it with
-`.../session_current_model_id.py <session UUID>`).** When delegating:
-
-- **Source.** Forward source documents verbatim. Never pre-digest them into a
-  summarized or bulleted "must-cover" list — Codex compresses. For conversation
-  context, quote key user inputs verbatim with minimal glue and give Codex the
-  session JSONL path for lookup. Copy it into Codex's workdir when the reviewer
-  cannot read the original path.
-- **Write access.** Authorship needs a writable environment. Use the caller's
-  existing environment; do not reuse the reviewer wrapper or add an outer
-  sandbox.
-- **Outputs.** Unlike the reviewer, an author writes files: tell it to put the
-  draft in `draft.md` and add each pass artifact to `passes.md` under a unique
-  numbered heading before starting the next pass. Pass no `-o`.
-- **Guardian rejection.** Handle as above.
+**Writing delegation:** use the Codex CLI unless the ambient model is Opus 5+ or
+GPT-5.5+ (check with
+`{FA}/critic-iterate/session_current_model_id.py <session UUID>`). When
+delegating writing, follow `{FA}/critic-iterate/delegated-author.md`.
 
 ## Resist These Shortcuts
 
@@ -584,24 +486,7 @@ model is Opus 5+ or GPT-5.5+ (resolve it with
 
 ## Code Specialization
 
-For every nontrivial code change, run a code critic pass before lint, format,
-tests, or commit. Skip this code-specific pass for a typo, mechanical rename,
-formatter-only change, generated-output update, or isolated literal or config
-value.
-
-For code critic passes and fresh-context reviewers, user nits are inputs, not
-scope. Reconstruct the changed artifact's intended contract, then review the
-whole changed surface adversarially for correctness before style, compression,
-naming, or prose.
-
-Use `code.md`'s "Compression and locality" section when the pass reaches
-compression decisions. This `Code Specialization` section defines when the pass
-runs and what evidence it must leave.
-
-The code-pass artifact must quote one correctness candidate taken or rejected
-and the changed structure most likely to simplify. Record the simplification
-taken, or why the relevant options in `code.md` "Compression and locality" would
-not improve it. Do not change code merely to produce evidence.
+For code changes and reviews, follow `{FA}/code/c-i-critic.md`.
 
 ## Writing Specialization
 
@@ -612,7 +497,7 @@ thresholds, and exemptions.
 
 Identify these critic dimensions before inspecting the current draft:
 
-- **Explanation critic** — For durable explanatory prose, apply `writing.md`
+- **Explanation critic** — For durable explanatory prose, apply `write.md`
   "Substance". For a durable document, also apply "Document". Flag a missing
   question or problem, missing facts or reasoning needed to follow the
   conclusion, and facts the reader does not need. Check applicable proposal and
@@ -621,11 +506,10 @@ Identify these critic dimensions before inspecting the current draft:
   one independent question, set the draft's structure aside and sketch the
   simplest outline that serves its primary reader and purpose. Compare it with
   the draft before line edits. Combine parts that do the same job and cut text
-  that serves no additional reader need. Then apply `writing.md` "Pick the right
+  that serves no additional reader need. Then apply `write.md` "Pick the right
   shape" to each remaining container.
-- **Sentence critic** — Apply `writing.md` "## Iterate" Cut test; it is
-  canonical.
-- **Plain-language critic** — per `writing.md` "## Substance". A necessary
+- **Sentence critic** — Apply `write.md` "## Iterate" Cut test; it is canonical.
+- **Plain-language critic** — per `write.md` "## Substance". A necessary
   sentence can still be jargon-heavy. Replace noun chains and abstract process
   labels with concrete actors, actions, conditions, or outcomes. Restore any
   needed cause, condition, or sequence, and state how the parts connect. Remove

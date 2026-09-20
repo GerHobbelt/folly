@@ -21,6 +21,7 @@
 #include <folly/Conv.h>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -1389,6 +1390,26 @@ void tryStringToFloat(const StrToFloat<String>& strToFloat) {
     EXPECT_EQ(rv.value(), -numeric_limits<float>::infinity()) << input;
   }
 
+  // Subnormals: representable, but below numeric_limits<float>::min()
+  auto rv6 = strToFloat(String("1.4E-45"));
+  EXPECT_TRUE(rv6.hasValue());
+  EXPECT_EQ(rv6.value(), numeric_limits<float>::denorm_min());
+  auto rv7 = strToFloat(String("-1.1754942E-38"));
+  EXPECT_TRUE(rv7.hasValue());
+  EXPECT_EQ(rv7.value(), -std::nextafter(numeric_limits<float>::min(), 0.0f));
+
+  // Below numeric limits. Underflow saturates to a zero carrying the sign of
+  // the input, the way strtod does, whatever the underlying parser reports.
+  // Every strToFloat implementation owes this, so assert it for all of them.
+  for (const std::string& magnitude : {"1E-46", "1E-400"}) {
+    for (const std::string& input : {magnitude, "-" + magnitude}) {
+      auto rv = strToFloat(String(input));
+      ASSERT_TRUE(rv.hasValue()) << input;
+      EXPECT_EQ(rv.value(), 0.0f) << input;
+      EXPECT_EQ(std::signbit(rv.value()), input[0] == '-') << input;
+    }
+  }
+
   // NaN
   const std::array<String, 9> kNanInputs{{
       "nan",
@@ -1507,26 +1528,51 @@ TEST(Conv, TryStringToFloat) {
   tryStringToFloat<folly::StringPiece>(StrToFloatTryTo<folly::StringPiece>());
 }
 
-/// Uses `folly::detail::str_to_floating_fast_float_from_chars` to convert a
-/// string to a float.
+/// Uses `folly::detail::str_to_floating_from_chars` to convert a string to a
+/// float.
 template <class String>
-class StrToFloatFastFloatFromChars : public StrToFloat<String> {
+class StrToFloatFromChars : public StrToFloat<String> {
  public:
   Expected<float, ConversionCode> operator()(String src) const override {
     StringPiece sp{src};
-    return folly::detail::str_to_floating_fast_float_from_chars<float>(&sp);
+    return folly::detail::str_to_floating_from_chars<float>(&sp);
   }
 
   bool returnsErrorOnTrailingJunk() const override { return false; }
 };
 
-TEST(Conv, TryStringToFloat_FastFloatFromChars) {
-  tryStringToFloat<std::string>(StrToFloatFastFloatFromChars<std::string>());
-  tryStringToFloat<std::string_view>(
-      StrToFloatFastFloatFromChars<std::string_view>());
+TEST(Conv, TryStringToFloat_FromChars) {
+  tryStringToFloat<std::string>(StrToFloatFromChars<std::string>());
+  tryStringToFloat<std::string_view>(StrToFloatFromChars<std::string_view>());
   tryStringToFloat<folly::StringPiece>(
-      StrToFloatFastFloatFromChars<folly::StringPiece>());
+      StrToFloatFromChars<folly::StringPiece>());
 }
+
+#if FOLLY_HAVE_STD_FLOAT_FROM_CHARS
+
+/// Uses `folly::detail::str_to_floating_std_from_chars` to convert a string to
+/// a float. This is the fallback for builds without fast_float, and it runs
+/// here whether or not this build has fast_float.
+template <class String>
+class StrToFloatStdFromChars : public StrToFloat<String> {
+ public:
+  Expected<float, ConversionCode> operator()(String src) const override {
+    StringPiece sp(src);
+    return folly::detail::str_to_floating_std_from_chars<float>(&sp);
+  }
+
+  bool returnsErrorOnTrailingJunk() const override { return false; }
+};
+
+TEST(Conv, TryStringToFloat_StdFromChars) {
+  tryStringToFloat<std::string>(StrToFloatStdFromChars<std::string>());
+  tryStringToFloat<std::string_view>(
+      StrToFloatStdFromChars<std::string_view>());
+  tryStringToFloat<folly::StringPiece>(
+      StrToFloatStdFromChars<folly::StringPiece>());
+}
+
+#endif // FOLLY_HAVE_STD_FLOAT_FROM_CHARS
 
 template <class String>
 void tryToDouble() {
