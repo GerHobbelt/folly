@@ -51,19 +51,24 @@ benchmarks:
 
   folly/tool/benchmark_ab.py reanalyze --out OUT
 
+Reports also flag unusually high run-to-run variation.
+
 Results:
 
-  15.2+11.1ns (+73.0%): try_to_result_error
+  15.2+11.1ns (+73.0%; 24/25 agree): try_to_result_error
     //folly/result/test:result_bench
-    15.2+11.2, 15.2+11.1, 15.3+11.0
+    14.9+11.4, 15.0+11.3, (15.2+0.1), 15.2+11.1, 15.4+10.9
 """
 
 RESULT_DOC = """\
 Each result line starts with the median "before" timing and a Hodges-Lehmann
 estimate of Δ ns.  We get one adaptive p{pct} timing per contributing run; the
 estimate is the median of every "after" minus "before" combination (e.g., 25
-differences from 5+5 round timings).  It also shows (Δ%) when median "before"
-exceeds 2ns.
+differences from 5+5 round timings).
+
+The headline also shows:
+- `(Δ%)` when median "before" exceeds 2ns.
+- `(24/25 agree)` when displayed differences do not all support estimated Δ.
 
 A benchmark appears in the lo-pri or hi-pri section when estimated Δ meets
 both that section's nanosecond and percentage thresholds.
@@ -97,7 +102,13 @@ from typing import Protocol
 
 BEFORE_SIDE = "before"
 AFTER_SIDE = "after"
-PCT_MIN_BEFORE_NS = 2.0
+# Percentages are misleading for timings at or below 2ns. Suppress headline Δ%
+# when the "before" median is too small. Also exclude from spread analysis any
+# before/after timing series with a median that small.
+MIN_RELATIVE_MEDIAN_NS = 2.0
+# With fewer than 20 series, one benchmark can move a Tukey cutoff too much. At
+# 20, each quartile contains about five samples.
+MIN_SPREAD_COHORT_SIZE = 20
 # Set p33.3 explicitly so comparisons use the same percentile even when
 # //folly:benchmark defaults differ between revisions.
 BM_TARGET_PERCENTILE = 33.3
@@ -173,18 +184,18 @@ class AttemptPaths:
 class AttemptArtifact:
     json_path: Path
     returncode: int | None
-    convergence_failed: bool | None
+    run_incomplete: bool | None
 
     @property
     def completed(self) -> bool:
-        return self.returncode is not None and self.convergence_failed is not None
+        return self.returncode is not None and self.run_incomplete is not None
 
     @property
     def usable(self) -> bool:
         return (
             self.returncode == 0
             and self.json_path.exists()
-            and self.convergence_failed is False
+            and self.run_incomplete is False
         )
 
 
@@ -252,17 +263,18 @@ class Threshold:
     ns: float
     pct: float
 
-    def met_by(
-        self,
-        change: Observation | ComparisonSummary,
-        *,
-        direction: int,
-    ) -> bool:
-        # Compare displayed values so a row cannot appear to miss the threshold
-        # of the section containing it.
-        return display_round(direction * change.delta) >= display_round(
-            self.ns
-        ) and display_round(direction * change.pct) >= display_round(self.pct)
+
+def meets_threshold(
+    change: Observation | ComparisonSummary,
+    threshold: Threshold,
+    *,
+    direction: int,
+) -> bool:
+    # Compare displayed values so a row cannot appear to miss the threshold
+    # of the section containing it.
+    return display_round(direction * change.delta) >= display_round(
+        threshold.ns
+    ) and display_round(direction * change.pct) >= display_round(threshold.pct)
 
 
 @dataclass(frozen=True)
@@ -282,6 +294,71 @@ class ComparisonRow:
 
 
 @dataclass(frozen=True)
+class SideSpread:
+    side: str
+    minimum: float
+    maximum: float
+    median: float
+
+    @property
+    def range_ns(self) -> float:
+        return self.maximum - self.minimum
+
+    @property
+    def pct(self) -> float:
+        return relative_delta_pct(self.range_ns, self.median)
+
+
+@dataclass(frozen=True)
+class DirectionAgreement:
+    agreeing: int
+    total: int
+
+    @property
+    def text(self) -> str:
+        if self.agreeing == self.total:
+            return ""
+        return f"{self.agreeing}/{self.total} agree"
+
+    @property
+    def pct(self) -> float:
+        return 100.0 * self.agreeing / self.total
+
+
+@dataclass(frozen=True)
+class SpreadCalibration:
+    outlier_cutoff_pct: float
+    high_spread_threshold: Threshold
+
+
+@dataclass(frozen=True)
+class SpreadAnalysis:
+    # Spread analysis considers a before/after timing series only when it has
+    # a measurement in every discovered round and its median exceeds
+    # MIN_RELATIVE_MEDIAN_NS. This eligibility rule applies only to spread;
+    # effect estimates still use all contributing timings.
+    row_to_eligible_spreads: dict[ComparisonRow, tuple[SideSpread, ...]]
+    round_count: int
+    eligible_side_count: int
+    median_pct: float | None  # None when no timing series is eligible
+    calibration: SpreadCalibration | None  # None below MIN_SPREAD_COHORT_SIZE
+
+    def eligible_spreads_for(self, row: ComparisonRow) -> tuple[SideSpread, ...]:
+        return self.row_to_eligible_spreads.get(row, ())
+
+    def high_spreads_for(self, row: ComparisonRow) -> tuple[SideSpread, ...]:
+        if self.calibration is None:
+            return ()
+        threshold = self.calibration.high_spread_threshold
+        return tuple(
+            spread
+            for spread in self.eligible_spreads_for(row)
+            if display_round(spread.range_ns) >= display_round(threshold.ns)
+            and display_round(spread.pct) > display_round(threshold.pct)
+        )
+
+
+@dataclass(frozen=True)
 class ReportSection:
     title: str
     classification: str
@@ -295,7 +372,10 @@ class ComparisonReport:
     needs_attention: tuple[NeedsAttention, ...]
     unpaired_rows: dict[tuple[str, BenchmarkId, str], list[int]]
     benchmark_names_with_multiple_files: frozenset[tuple[str, str]]
+    rows: tuple[ComparisonRow, ...]
+    spread: SpreadAnalysis
     sections: tuple[ReportSection, ...]
+    unclassified_high_spread_rows: tuple[ComparisonRow, ...]
 
 
 # Each caller's type exposes only the Buck and checkout operations it needs.
@@ -363,14 +443,20 @@ def add_report_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="NS",
         type=nonnegative_float,
         default=0.5,
-        help="absolute nanosecond threshold for low-priority sections",
+        help=(
+            "absolute threshold for low-priority sections; also the smallest "
+            "range flagged as high spread"
+        ),
     )
     parser.add_argument(
         "--lo-pct",
         metavar="PCT",
         type=nonnegative_float,
         default=5.0,
-        help="percentage threshold for low-priority sections",
+        help=(
+            "percentage threshold for low-priority sections; also the smallest "
+            "relative range flagged as high spread"
+        ),
     )
 
 
@@ -814,19 +900,19 @@ def load_attempt_artifact(paths: AttemptPaths) -> AttemptArtifact:
         return AttemptArtifact(
             json_path=paths.json,
             returncode=None,
-            convergence_failed=None,
+            run_incomplete=None,
         )
     completion: object = json.loads(paths.completion.read_text(encoding="utf-8"))
     if type(completion) is not dict:
         raise ValueError(f"invalid attempt completion file: {paths.completion}")
     returncode = completion.get("returncode")
-    convergence_failed = completion.get("convergence_failed")
-    if type(returncode) is not int or type(convergence_failed) is not bool:
+    run_incomplete = completion.get("run_incomplete")
+    if type(returncode) is not int or type(run_incomplete) is not bool:
         raise ValueError(f"invalid attempt completion file: {paths.completion}")
     return AttemptArtifact(
         json_path=paths.json,
         returncode=returncode,
-        convergence_failed=convergence_failed,
+        run_incomplete=run_incomplete,
     )
 
 
@@ -834,14 +920,14 @@ def write_attempt_completion(
     completion_path: Path,
     *,
     returncode: int,
-    convergence_failed: bool,
+    run_incomplete: bool,
 ) -> None:
     temporary_path = completion_path.with_suffix(".tmp")
     temporary_path.write_text(
         json.dumps(
             {
                 "returncode": returncode,
-                "convergence_failed": convergence_failed,
+                "run_incomplete": run_incomplete,
             },
             sort_keys=True,
         )
@@ -878,8 +964,8 @@ def attempt_problem_summary(attempt: AttemptArtifact) -> str:
         return f"failed with exit {attempt.returncode}"
     if not attempt.json_path.exists():
         return "did not write JSON"
-    if attempt.convergence_failed:
-        return "did not converge"
+    if attempt.run_incomplete:
+        return "run was incomplete"
     return "was not usable"
 
 
@@ -910,16 +996,16 @@ def run_one_benchmark(
             ),
             log_path=paths.log,
         )
-        convergence_failed = log_has_convergence_failure(paths.log)
+        run_incomplete = log_has_incomplete_run(paths.log)
         artifact = AttemptArtifact(
             json_path=paths.json,
             returncode=returncode,
-            convergence_failed=convergence_failed,
+            run_incomplete=run_incomplete,
         )
         write_attempt_completion(
             paths.completion,
             returncode=returncode,
-            convergence_failed=convergence_failed,
+            run_incomplete=run_incomplete,
         )
         attempts.append(artifact)
         if artifact.usable:
@@ -990,12 +1076,12 @@ def run_rounds(
 ### Stored artifact loading
 
 
-def log_has_convergence_failure(log_path: Path) -> bool:
-    # TODO: Extend //folly:benchmark's JSON contract to identify which rows
-    # converged, so benchmark_ab can retain converged rows from a partial run.
+def log_has_incomplete_run(log_path: Path) -> bool:
+    # TODO: Extend //folly:benchmark's JSON contract with per-benchmark
+    # completion status, so benchmark_ab can retain usable rows from a partial run.
     if not log_path.exists():
         return True
-    return "Did not converge:" in log_path.read_text(encoding="utf-8", errors="replace")
+    return "[RUN INCOMPLETE]" in log_path.read_text(encoding="utf-8", errors="replace")
 
 
 def load_results(json_path: Path) -> dict[BenchmarkId, float]:
@@ -1108,7 +1194,7 @@ def needs_attention_for_run(
         elif any(not attempt.json_path.exists() for attempt in attempts):
             reason = f"Benchmark run wrote no JSON after {try_count_text(count)}"
         else:
-            reason = f"Benchmark run did not converge after {try_count_text(count)}"
+            reason = f"Benchmark run was incomplete after {try_count_text(count)}"
     return NeedsAttention(
         round_number=artifact.round_number,
         side=artifact.side,
@@ -1184,30 +1270,125 @@ def comparison_summary(
     )
 
 
+def direction_agreement(row: ComparisonRow) -> DirectionAgreement:
+    """Count before/after combinations that support Δ at report precision."""
+
+    # A difference displayed as 0.0ns is compatible with either direction.
+    def sign(value: float) -> int:
+        displayed = display_round(value)
+        return (displayed > 0) - (displayed < 0)
+
+    estimated_sign = sign(comparison_summary(row.observations).delta)
+    before = tuple(obs.before for obs in row.observations)
+    after = tuple(obs.after for obs in row.observations)
+    return DirectionAgreement(
+        agreeing=sum(
+            sign(after_time - before_time) in (0, estimated_sign)
+            for before_time in before
+            for after_time in after
+        ),
+        total=len(before) * len(after),
+    )
+
+
+def analyze_spread(
+    rows: tuple[ComparisonRow, ...],
+    *,
+    round_count: int,
+    high_spread_minimum: Threshold,
+) -> SpreadAnalysis:
+    row_to_eligible_spreads: dict[ComparisonRow, tuple[SideSpread, ...]] = {}
+    for row in rows:
+        # A range needs at least two timings. Compare like-sized samples because
+        # ranges grow as more rounds are added.
+        if round_count < 2 or len(row.observations) != round_count:
+            continue
+        eligible_row_spreads = []
+        for side in (BEFORE_SIDE, AFTER_SIDE):
+            values = tuple(
+                getattr(observation, side) for observation in row.observations
+            )
+            median = statistics.median(values)
+            if median <= MIN_RELATIVE_MEDIAN_NS:
+                continue
+            eligible_row_spreads.append(
+                SideSpread(
+                    side=side,
+                    minimum=min(values),
+                    maximum=max(values),
+                    median=median,
+                )
+            )
+        if eligible_row_spreads:
+            row_to_eligible_spreads[row] = tuple(eligible_row_spreads)
+
+    eligible_spreads = tuple(
+        spread
+        for eligible_row_spreads in row_to_eligible_spreads.values()
+        for spread in eligible_row_spreads
+    )
+    eligible_spread_pcts = [spread.pct for spread in eligible_spreads]
+    eligible_side_count = len(eligible_spread_pcts)
+    if not eligible_spread_pcts:
+        return SpreadAnalysis(
+            row_to_eligible_spreads=row_to_eligible_spreads,
+            round_count=round_count,
+            eligible_side_count=0,
+            median_pct=None,
+            calibration=None,
+        )
+
+    median_pct = statistics.median(eligible_spread_pcts)
+    # With fewer series, one benchmark can move the cutoff too much.
+    if eligible_side_count < MIN_SPREAD_COHORT_SIZE:
+        return SpreadAnalysis(
+            row_to_eligible_spreads=row_to_eligible_spreads,
+            round_count=round_count,
+            eligible_side_count=eligible_side_count,
+            median_pct=median_pct,
+            calibration=None,
+        )
+
+    q1_pct, _, q3_pct = statistics.quantiles(
+        eligible_spread_pcts,
+        n=4,
+        method="inclusive",
+    )
+    # Tukey's outer fence limits flags to extreme outliers.
+    outlier_cutoff_pct = q3_pct + 3 * (q3_pct - q1_pct)
+    return SpreadAnalysis(
+        row_to_eligible_spreads=row_to_eligible_spreads,
+        round_count=round_count,
+        eligible_side_count=eligible_side_count,
+        median_pct=median_pct,
+        calibration=SpreadCalibration(
+            outlier_cutoff_pct=outlier_cutoff_pct,
+            high_spread_threshold=Threshold(
+                ns=high_spread_minimum.ns,
+                pct=max(outlier_cutoff_pct, high_spread_minimum.pct),
+            ),
+        ),
+    )
+
+
 def bucket_rows(
-    rows: dict[tuple[str, BenchmarkId], list[Observation]],
+    rows: tuple[ComparisonRow, ...],
     *,
     direction: int,
     threshold: Threshold,
     exclude_threshold: Threshold | None = None,
 ) -> tuple[ComparisonRow, ...]:
-    selected: list[ComparisonRow] = []
-    for (build_target, benchmark), observations in rows.items():
-        summary = comparison_summary(tuple(observations))
+    selected = []
+    for row in rows:
+        summary = comparison_summary(row.observations)
         if display_round(direction * summary.delta) <= 0:
             continue
-        if exclude_threshold is not None and exclude_threshold.met_by(
-            summary, direction=direction
+        if exclude_threshold is not None and meets_threshold(
+            summary, exclude_threshold, direction=direction
         ):
             continue
-        if threshold.met_by(summary, direction=direction):
-            selected.append(
-                ComparisonRow(
-                    build_target=build_target,
-                    benchmark=benchmark,
-                    observations=tuple(observations),
-                )
-            )
+        if meets_threshold(summary, threshold, direction=direction):
+            selected.append(row)
 
     return tuple(
         sorted(
@@ -1222,7 +1403,7 @@ def bucket_rows(
 
 
 def report_section(
-    rows: dict[tuple[str, BenchmarkId], list[Observation]],
+    rows: tuple[ComparisonRow, ...],
     *,
     title: str,
     classification: str,
@@ -1249,8 +1430,16 @@ def analyze_report(
     args: argparse.Namespace,
     targets: tuple[BenchmarkTarget, ...],
 ) -> ComparisonReport:
-    rows, needs_attention_runs, unpaired_rows = paired_observations(
+    paired_rows, needs_attention_runs, unpaired_rows = paired_observations(
         artifacts, args.out, targets
+    )
+    rows = tuple(
+        ComparisonRow(
+            build_target=build_target,
+            benchmark=benchmark,
+            observations=tuple(observations),
+        )
+        for (build_target, benchmark), observations in sorted(paired_rows.items())
     )
     target_and_name_to_files: dict[tuple[str, str], set[str]] = {}
     for artifact in artifacts.values():
@@ -1298,6 +1487,31 @@ def analyze_report(
             threshold=hi_threshold,
         ),
     )
+    spread = analyze_spread(
+        rows,
+        round_count=len({key[0] for key in artifacts}),
+        high_spread_minimum=lo_threshold,
+    )
+    classified_row_ids = {
+        (row.build_target, row.benchmark)
+        for section in sections
+        for row in section.rows
+    }
+    unclassified_high_spread_rows = tuple(
+        sorted(
+            (
+                row
+                for row in rows
+                if spread.high_spreads_for(row)
+                and (row.build_target, row.benchmark) not in classified_row_ids
+            ),
+            key=lambda row: (
+                -max(item.pct for item in spread.high_spreads_for(row)),
+                row.build_target,
+                row.benchmark,
+            ),
+        )
+    )
     return ComparisonReport(
         needs_attention=tuple(needs_attention_runs),
         unpaired_rows=unpaired_rows,
@@ -1306,7 +1520,10 @@ def analyze_report(
             for target_and_name, files in target_and_name_to_files.items()
             if len(files) > 1
         ),
+        rows=rows,
+        spread=spread,
         sections=sections,
+        unclassified_high_spread_rows=unclassified_high_spread_rows,
     )
 
 
@@ -1338,18 +1555,74 @@ def threshold_rounding_warning(
     ]
 
 
-def summary_text(summary: ComparisonSummary, pct_min_before_ns: float) -> str:
+def summary_text(
+    summary: ComparisonSummary,
+    pct_min_before_ns: float,
+    *,
+    agreement: str = "",
+) -> str:
     # TODO: Scale slower rows to us or s, including their per-run values.
-    percentage = ""
+    details = []
     if summary.before > pct_min_before_ns:
-        percentage = f" ({fmt_signed_value(summary.pct)}%)"
-    return f"{fmt_value(summary.before)}{fmt_signed_value(summary.delta)}ns{percentage}"
+        details.append(f"{fmt_signed_value(summary.pct)}%")
+    if agreement:
+        details.append(agreement)
+    suffix = f" ({'; '.join(details)})" if details else ""
+    return f"{fmt_value(summary.before)}{fmt_signed_value(summary.delta)}ns{suffix}"
+
+
+def spread_summary_text(spread: SpreadAnalysis) -> str:
+    if spread.median_pct is None:
+        return "Run-to-run spread (range / median): not calculated"
+    return (
+        "Run-to-run spread (range / median): median "
+        f"{fmt_value(spread.median_pct)}% across "
+        f"{spread.eligible_side_count} timing series"
+    )
+
+
+def spread_context_lines(spread: SpreadAnalysis) -> list[str]:
+    if spread.round_count < 2:
+        return ["Spread needs at least 2 recorded rounds"]
+    if spread.median_pct is None:
+        return [
+            "No before/after timing series has data for every round and median "
+            f">{fmt_value(MIN_RELATIVE_MEDIAN_NS)}ns"
+        ]
+    if spread.calibration is None:
+        return [
+            "High-spread flags skipped: need at least "
+            f"{MIN_SPREAD_COHORT_SIZE} timing series"
+        ]
+
+    calibration = spread.calibration
+    return [
+        "High spread: range "
+        f">{fmt_value(calibration.high_spread_threshold.pct)}% of median and "
+        f">={fmt_value(calibration.high_spread_threshold.ns)}ns "
+        f"(Tukey outlier cutoff: {fmt_value(calibration.outlier_cutoff_pct)}%)",
+    ]
+
+
+def spread_warning_texts(
+    report: ComparisonReport,
+    row: ComparisonRow,
+) -> tuple[str, ...]:
+    spreads = report.spread.high_spreads_for(row)
+    return tuple(
+        (
+            f"High spread ({spread.side}): "
+            f"{fmt_value(spread.minimum)}-{fmt_value(spread.maximum)}ns "
+            f"(range is {fmt_value(spread.pct)}% of median)"
+        )
+        for spread in spreads
+    )
 
 
 def threshold_pairs(
     row: ComparisonRow,
     *,
-    section: ReportSection,
+    section: ReportSection | None,
     markdown: bool,
 ) -> list[str]:
     pairs = []
@@ -1358,7 +1631,9 @@ def threshold_pairs(
         key=lambda observation: (observation.before, observation.round_number),
     ):
         text = f"{fmt_value(observation.before)}{fmt_signed_value(observation.delta)}"
-        if not section.threshold.met_by(observation, direction=section.direction):
+        if section is not None and not meets_threshold(
+            observation, section.threshold, direction=section.direction
+        ):
             text = f"*({text})*" if markdown else f"({text})"
         pairs.append(text)
     return pairs
@@ -1377,27 +1652,38 @@ def benchmark_text(
     return benchmark.name
 
 
-def section_table(report: ComparisonReport, section: ReportSection) -> list[str]:
-    def markdown_row(cells: Iterable[str]) -> str:
-        return "| " + " | ".join(cells) + " |"
+def markdown_table_row(cells: Iterable[str]) -> str:
+    return "| " + " | ".join(cells) + " |"
 
-    if not section.rows:
+
+def comparison_table(
+    report: ComparisonReport,
+    *,
+    title: str,
+    rows: tuple[ComparisonRow, ...],
+    section: ReportSection | None,
+) -> list[str]:
+    if not rows:
         return []
-    lines = [f"## {section.title}", ""]
+    lines = [f"## {title}", ""]
     lines.extend(
         [
-            markdown_row(("estimate", "benchmark", "target", "before ± Δ")),
-            markdown_row(("---:", "---", "---", "---:")),
+            markdown_table_row(("estimate", "benchmark", "target", "before ± Δ")),
+            markdown_table_row(("---:", "---", "---", "---:")),
         ]
     )
-    for row in section.rows:
+    for row in rows:
+        estimate = summary_text(
+            comparison_summary(row.observations),
+            MIN_RELATIVE_MEDIAN_NS,
+            agreement=direction_agreement(row).text,
+        )
+        for warning in spread_warning_texts(report, row):
+            estimate += f"<br>**{warning}**"
         lines.append(
-            markdown_row(
+            markdown_table_row(
                 [
-                    summary_text(
-                        comparison_summary(row.observations),
-                        PCT_MIN_BEFORE_NS,
-                    ),
+                    estimate,
                     benchmark_text(report, row.build_target, row.benchmark),
                     row.build_target,
                     ", ".join(threshold_pairs(row, section=section, markdown=True)),
@@ -1504,6 +1790,10 @@ def render_markdown(
         f"- hi-pri `>={fmt_value(args.hi_ns)}ns` and `>={fmt_value(args.hi_pct)}%`",
         f"- lo-pri `>={fmt_value(args.lo_ns)}ns` and `>={fmt_value(args.lo_pct)}%`",
         "",
+        f"**{spread_summary_text(report.spread)}**",
+        "",
+        *(f"- {detail}" for detail in spread_context_lines(report.spread)),
+        "",
         *threshold_rounding_warning(args, markdown=True),
     ]
     lines.extend(needs_attention_markdown(report, out_dir=args.out))
@@ -1519,7 +1809,22 @@ def render_markdown(
         ]
     )
     for section in report.sections:
-        lines.extend(section_table(report, section))
+        lines.extend(
+            comparison_table(
+                report,
+                title=section.title,
+                rows=section.rows,
+                section=section,
+            )
+        )
+    lines.extend(
+        comparison_table(
+            report,
+            title="High run-to-run spread without a reportable change",
+            rows=report.unclassified_high_spread_rows,
+            section=None,
+        )
+    )
     return "\n".join(lines)
 
 
@@ -1552,18 +1857,24 @@ def unpaired_terminal(report: ComparisonReport) -> list[str]:
     return lines
 
 
-def section_terminal(
+def comparison_terminal(
     report: ComparisonReport,
-    section: ReportSection,
+    *,
+    title: str,
+    rows: tuple[ComparisonRow, ...],
+    section: ReportSection | None,
 ) -> list[str]:
-    if not section.rows:
+    if not rows:
         return []
-    lines = [f"{section.title}:", ""]
-    for row in section.rows:
+    lines = [f"{title}:", ""]
+    for row in rows:
+        lines.append(
+            f"{summary_text(comparison_summary(row.observations), MIN_RELATIVE_MEDIAN_NS, agreement=direction_agreement(row).text)}: "
+            f"{benchmark_text(report, row.build_target, row.benchmark)}"
+        )
+        lines.extend(f"  {warning}" for warning in spread_warning_texts(report, row))
         lines.extend(
             [
-                f"{summary_text(comparison_summary(row.observations), PCT_MIN_BEFORE_NS)}: "
-                f"{benchmark_text(report, row.build_target, row.benchmark)}",
                 f"  {row.build_target}",
                 f"  {', '.join(threshold_pairs(row, section=section, markdown=False))}",
                 "",
@@ -1593,6 +1904,8 @@ def render_comparison_text(
         "Thresholds for estimated Δ:",
         f"  hi-pri >={fmt_value(args.hi_ns)}ns and >={fmt_value(args.hi_pct)}%",
         f"  lo-pri >={fmt_value(args.lo_ns)}ns and >={fmt_value(args.lo_pct)}%",
+        spread_summary_text(report.spread),
+        *(f"  {detail}" for detail in spread_context_lines(report.spread)),
         "",
         *threshold_rounding_warning(args, markdown=False),
     ]
@@ -1609,7 +1922,22 @@ def render_comparison_text(
         ]
     )
     for section in report.sections:
-        lines.extend(section_terminal(report, section))
+        lines.extend(
+            comparison_terminal(
+                report,
+                title=section.title,
+                rows=section.rows,
+                section=section,
+            )
+        )
+    lines.extend(
+        comparison_terminal(
+            report,
+            title="High run-to-run spread without a reportable change",
+            rows=report.unclassified_high_spread_rows,
+            section=None,
+        )
+    )
     return "\n".join(lines).rstrip()
 
 
@@ -1659,25 +1987,53 @@ def tsv_rows(
                         "details": f"rounds {rounds_text(report.unpaired_rows[(target, benchmark, row_side)])}",
                     }
                 )
-    for section in report.sections:
-        for row in section.rows:
-            summary = comparison_summary(row.observations)
-            rows.append(
-                {
-                    "class": section.classification,
-                    "estimated_delta_ns": fmt_value(summary.delta),
-                    "estimated_delta_pct": fmt_value(summary.pct),
-                    "median_before_ns": fmt_value(summary.before),
-                    "median_after_ns": fmt_value(summary.after),
-                    "benchmark": row.benchmark.name,
-                    "benchmark_file": row.benchmark.file,
-                    "target": row.build_target,
-                    "before_Δ": ", ".join(
-                        threshold_pairs(row, section=section, markdown=False)
-                    ),
-                }
+    row_to_section = {
+        row: section for section in report.sections for row in section.rows
+    }
+    high_spread_rows = frozenset(report.unclassified_high_spread_rows)
+    for row in report.rows:
+        section = row_to_section.get(row)
+        if section is not None:
+            classification = section.classification
+        elif row in high_spread_rows:
+            classification = "high-spread"
+        else:
+            classification = "below-threshold"
+        rows.append(
+            tsv_comparison_row(
+                report,
+                row,
+                classification=classification,
+                section=section,
             )
+        )
     return rows
+
+
+def tsv_comparison_row(
+    report: ComparisonReport,
+    row: ComparisonRow,
+    *,
+    classification: str,
+    section: ReportSection | None,
+) -> dict[str, str]:
+    summary = comparison_summary(row.observations)
+    result = {
+        "class": classification,
+        "estimated_delta_ns": fmt_value(summary.delta),
+        "estimated_delta_pct": fmt_value(summary.pct),
+        "median_before_ns": fmt_value(summary.before),
+        "median_after_ns": fmt_value(summary.after),
+        "direction_agreement_pct": fmt_value(direction_agreement(row).pct),
+        "benchmark": row.benchmark.name,
+        "benchmark_file": row.benchmark.file,
+        "target": row.build_target,
+        "before_Δ": ", ".join(threshold_pairs(row, section=section, markdown=False)),
+    }
+    for spread in report.spread.eligible_spreads_for(row):
+        result[f"{spread.side}_range_ns"] = fmt_value(spread.range_ns)
+        result[f"{spread.side}_range_pct_of_median"] = fmt_value(spread.pct)
+    return result
 
 
 def render_tsv(report: ComparisonReport, *, out_dir: Path) -> str:
@@ -1687,14 +2043,19 @@ def render_tsv(report: ComparisonReport, *, out_dir: Path) -> str:
         delimiter="\t",
         lineterminator="\n",
         fieldnames=[
+            "benchmark",
+            "target",
+            "benchmark_file",
             "class",
             "estimated_delta_ns",
             "estimated_delta_pct",
             "median_before_ns",
             "median_after_ns",
-            "benchmark",
-            "benchmark_file",
-            "target",
+            "direction_agreement_pct",
+            "before_range_ns",
+            "before_range_pct_of_median",
+            "after_range_ns",
+            "after_range_pct_of_median",
             "details",
             "before_Δ",
         ],

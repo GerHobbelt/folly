@@ -57,6 +57,14 @@ class IoUringDynamicProvidedBufferRingTestHelper {
   uint32_t ringAvailable() { return ring.ringTail_ - ring.ringHead_; }
   uint64_t outstandingSum() { return ring.areasOutstandingSum(); }
   uint16_t headBid() { return ring.ringBuf(ring.ringHead_)->bid; }
+  const unsigned char* headAddr() {
+    return reinterpret_cast<const unsigned char*>(
+        ring.ringBuf(ring.ringHead_)->addr);
+  }
+
+  void setRingRefillThreshold(uint16_t threshold) {
+    ring.ringRefillThreshold_ = threshold;
+  }
 
   int areaOfPtr(const void* p) {
     for (uint32_t a = 0; a < ring.areaCount_; a++) {
@@ -305,6 +313,7 @@ TEST_F(
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
 
   std::vector<std::unique_ptr<folly::IOBuf>> held;
   bool tested = false;
@@ -369,6 +378,7 @@ TEST_F(
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
 
   for (int i = 0; i < 200; i++) {
     auto buf = consumeOne(*bufRing, helper, 64);
@@ -497,6 +507,7 @@ TEST_F(IoUringDynamicProvidedBufferRingTest, BundleAcrossAreaBoundary) {
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
 
   auto held0 = consumeOne(*bufRing, helper, 64);
   ASSERT_EQ(helper.areaCount(), 2u);
@@ -548,6 +559,7 @@ TEST_F(IoUringDynamicProvidedBufferRingTest, ShrinkAfterGrowthDownToFloor) {
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
   ASSERT_EQ(helper.areaCount(), 2u);
 
   std::vector<std::unique_ptr<folly::IOBuf>> held;
@@ -587,6 +599,7 @@ TEST_F(
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
 
   std::vector<std::unique_ptr<folly::IOBuf>> held;
   std::vector<int> heldArea;
@@ -658,6 +671,7 @@ TEST_F(
   };
   auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
   IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(1);
 
   std::vector<std::unique_ptr<folly::IOBuf>> held;
   std::vector<int> heldArea;
@@ -683,6 +697,66 @@ TEST_F(
         << "every handed-out buffer must resolve to a live area";
     EXPECT_GE(helper.areaCount(), 2u);
     buf.reset();
+  }
+}
+
+TEST_F(
+    IoUringDynamicProvidedBufferRingTest, ringRefillThresholdBatchesRefills) {
+  constexpr uint32_t kBufferCount = 16;
+  constexpr uint8_t kThreshold = 4;
+  io_uring ring{};
+  io_uring_queue_init(512, &ring, 0);
+  IoUringDynamicProvidedBufferRing::Options options = {
+      .gid = 1,
+      .bufferCount = kBufferCount,
+      .bufferSize = 64,
+  };
+  auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
+  IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+  helper.setRingRefillThreshold(kThreshold);
+  ASSERT_EQ(helper.ringAvailable(), kBufferCount);
+
+  std::vector<std::unique_ptr<folly::IOBuf>> held;
+
+  for (uint8_t i = 1; i < kThreshold; i++) {
+    held.push_back(consumeOne(*bufRing, helper, 64));
+    EXPECT_EQ(helper.ringAvailable(), kBufferCount - i)
+        << "refill must be batched, not run per consumption (i=" << i << ")";
+  }
+
+  held.push_back(consumeOne(*bufRing, helper, 64));
+  EXPECT_EQ(helper.ringAvailable(), kBufferCount)
+      << "threshold consumption should trigger a batched refill";
+}
+
+TEST_F(
+    IoUringDynamicProvidedBufferRingTest, RefillAfterAreaCapUsesRecycledArea) {
+  io_uring ring{};
+  io_uring_queue_init(512, &ring, 0);
+  IoUringDynamicProvidedBufferRing::Options options = {
+      .gid = 1,
+      .bufferCount = 2,
+      .bufferSize = 64,
+  };
+  auto bufRing = IoUringDynamicProvidedBufferRing::create(&ring, options);
+  IoUringDynamicProvidedBufferRingTestHelper helper(*bufRing);
+
+  std::vector<std::unique_ptr<folly::IOBuf>> held;
+  for (int i = 0; i < 1000 && helper.ringAvailable() > 0; i++) {
+    held.push_back(consumeOne(*bufRing, helper, 64));
+  }
+  ASSERT_EQ(helper.areaCount(), 64u);
+  ASSERT_EQ(helper.ringAvailable(), 0u);
+
+  held.erase(held.begin(), held.begin() + options.bufferCount);
+
+  bufRing->enobuf();
+  ASSERT_EQ(helper.ringAvailable(), options.bufferCount);
+
+  for (uint32_t i = 0; i < options.bufferCount; i++) {
+    const auto* posted = helper.headAddr();
+    auto buf = consumeOne(*bufRing, helper, 64);
+    EXPECT_EQ(buf->data(), posted);
   }
 }
 

@@ -33,6 +33,7 @@ constexpr uint32_t kMinBufferSize = 32;
 constexpr uint32_t kHugePageSizeBytes = 1024 * 1024 * 2;
 constexpr uint32_t kMaxRingRefillEntries = 32768;
 constexpr uint32_t kInitialAreaCount = 2;
+constexpr uint32_t kRingRefillFreeThreshold = 256;
 constexpr uint32_t kMaxAreaCount = 64;
 } // namespace
 
@@ -179,6 +180,12 @@ IoUringDynamicProvidedBufferRing::IoUringDynamicProvidedBufferRing(
 
   areas_.reserve(kMaxAreaCount);
 
+  if (ringBufferCount_ <= kRingRefillFreeThreshold) {
+    ringRefillThreshold_ = (ringBufferCount_ >> 1);
+  } else {
+    ringRefillThreshold_ = kRingRefillFreeThreshold;
+  }
+
   initialRegister();
   mapRing();
 
@@ -265,6 +272,10 @@ void IoUringDynamicProvidedBufferRing::ringRefill() noexcept {
     return;
   }
 
+  if (ringFillLevel() == 0) {
+    bufferActiveArea_ = bufferRefillArea_;
+  }
+
   uint16_t pendingOutstanding = 0;
   auto freeEntries = ringFreeEntries();
   while (freeEntries--) {
@@ -303,6 +314,12 @@ void IoUringDynamicProvidedBufferRing::ringRefill() noexcept {
     if (tryPublish(startTail, ringTail_)) {
       enobuf_ = false;
     }
+  }
+}
+
+void IoUringDynamicProvidedBufferRing::ringMaybeRefill() noexcept {
+  if (ringFreeEntries() >= ringRefillThreshold_) {
+    ringRefill();
   }
 }
 
@@ -370,7 +387,7 @@ std::unique_ptr<IOBuf> IoUringDynamicProvidedBufferRing::getIoBufSingle(
   ret->markExternallySharedOne();
   incBufferState(*bufferActiveArea_, bid, hasMore, length);
 
-  ringRefill();
+  ringMaybeRefill();
   return ret;
 }
 
@@ -432,7 +449,7 @@ std::unique_ptr<IOBuf> IoUringDynamicProvidedBufferRing::getIoBuf(
     bid = ringIndex(bid + 1);
   }
 
-  ringRefill();
+  ringMaybeRefill();
   return head;
 }
 

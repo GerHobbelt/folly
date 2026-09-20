@@ -358,6 +358,7 @@ fb_dirsync_cpp_library(
         "//folly/logging:logging",
         "//folly/portability:dirent",
         "//folly/portability:fcntl",
+        "//folly/portability:sched",
         "//folly/portability:sockets",
         "//folly/portability:stdlib",
         "//folly/portability:sys_mman",
@@ -910,7 +911,7 @@ fb_dirsync_cpp_library(
         "fbsource//xplat/folly:folly_demangle_macos_disable_iberty_config": [],
         "ovr_config//os:linux": ["fbsource//third-party/binutils:iberty-demangle"],
         "ovr_config//os:macos": ["fbsource//third-party/binutils:iberty-demangle"],
-        "ovr_config//runtime:fbcode": ["third-party//binutils:iberty"],
+        "ovr_config//runtime:fbcode-no-arvr": ["fbsource//third-party/binutils/tp2:iberty"],
     }),
     exported_deps = [
         ":fbstring",
@@ -2123,6 +2124,16 @@ fb_dirsync_cpp_library(
         ":likely",
         ":portability",
         "//folly/detail:discriminated_ptr_detail",
+    ],
+)
+
+fb_dirsync_cpp_library(
+    name = "indirect",
+    headers = ["Indirect.h"],
+    use_raw_headers = True,
+    exported_deps = [
+        ":cpp_attributes",
+        ":traits",
     ],
 )
 
