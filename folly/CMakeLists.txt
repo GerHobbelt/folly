@@ -488,6 +488,7 @@ folly_add_library(
   DEPS
     folly_exception
     folly_file_util
+    folly_portability_filesystem
     folly_portability_fmt_compile
     folly_portability_sys_file
     folly_scope_guard
@@ -611,6 +612,14 @@ folly_add_library(
     folly_lang_new
     folly_portability
     folly_traits
+)
+
+folly_add_library(
+  NAME get_ref_util
+  HEADERS
+    GetRefUtil.h
+  EXPORTED_DEPS
+    folly_cpp_attributes
 )
 
 folly_add_library(
