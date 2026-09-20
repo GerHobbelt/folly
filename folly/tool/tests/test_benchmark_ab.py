@@ -14,6 +14,7 @@
 
 # pyre-strict
 
+import argparse
 import contextlib
 import importlib.resources
 import io
@@ -26,6 +27,31 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from folly.tool import benchmark_ab
+
+
+def _write_fake_benchmark_output(
+    arguments: Sequence[str],
+    *,
+    log_path: Path,
+    value: float,
+    run_incomplete: bool = False,
+) -> None:
+    json_path = Path(
+        next(
+            argument.removeprefix("--bm_json_verbose=")
+            for argument in arguments
+            if argument.startswith("--bm_json_verbose=")
+        )
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(
+        "[RUN INCOMPLETE] Did not converge:\n" if run_incomplete else "",
+        encoding="utf-8",
+    )
+    json_path.write_text(
+        json.dumps([["fixture.cpp", "measured", value]]),
+        encoding="utf-8",
+    )
 
 
 class CheckoutTrackingWorkspace:
@@ -42,6 +68,15 @@ class CheckoutTrackingWorkspace:
         log_path: Path,
     ) -> int:
         raise AssertionError("Buck should not run")
+
+    def run_executable(
+        self,
+        executable: Path,
+        arguments: Sequence[str],
+        *,
+        log_path: Path,
+    ) -> int:
+        raise AssertionError("benchmark executable should not run")
 
     def has_changes(self, *, include_untracked: bool) -> bool:
         return False
@@ -71,11 +106,12 @@ class RelativeRevisionWorkspace(CheckoutTrackingWorkspace):
         return [self.build_target]
 
 
-@dataclass
-class FakeBuckRunner:
-    expected_target: str
-    incomplete_runs: int = 0
-    run_count: int = 0
+class BuildTrackingWorkspace(RelativeRevisionWorkspace):
+    def __init__(self, build_target: str, returncodes: list[int]) -> None:
+        super().__init__(build_target)
+        self.returncodes = returncodes
+        self.build_calls: list[tuple[str, list[str], Path]] = []
+        self.run_calls: list[tuple[Path, list[str], Path]] = []
 
     def run_buck(
         self,
@@ -83,31 +119,72 @@ class FakeBuckRunner:
         *,
         log_path: Path,
     ) -> int:
+        self.build_calls.append((self.current_revision, list(arguments), log_path))
+        returncode = self.returncodes.pop(0)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"build output at {self.current_revision}"]
+        if returncode == 0:
+            source_dir = log_path.parent / ".fake_buck" / self.current_revision
+            source_dir.mkdir(parents=True, exist_ok=True)
+            for index, build_target in enumerate(arguments[3:], start=1):
+                source = source_dir / f"benchmark_{index}"
+                source.write_text(
+                    f"{build_target} at {self.current_revision}\n",
+                    encoding="utf-8",
+                )
+                source.chmod(0o755)
+                lines.append(f"{build_target} {source}")
+        log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return returncode
+
+    def run_executable(
+        self,
+        executable: Path,
+        arguments: Sequence[str],
+        *,
+        log_path: Path,
+    ) -> int:
+        self.run_calls.append((executable, list(arguments), log_path))
+        _write_fake_benchmark_output(
+            arguments,
+            log_path=log_path,
+            value=1.0,
+        )
+        return 0
+
+
+@dataclass
+class FakeBenchmarkRunner:
+    expected_executable: Path
+    incomplete_runs: int = 0
+    run_count: int = 0
+
+    def run_executable(
+        self,
+        executable: Path,
+        arguments: Sequence[str],
+        *,
+        log_path: Path,
+    ) -> int:
         self.run_count += 1
         if (
-            list(arguments[:3]) != ["run", "@mode/opt", self.expected_target]
-            or "--bm_target_percentile=33.3" not in arguments
+            executable != self.expected_executable
+            or list(arguments[:4])
+            != [
+                "--benchmark",
+                "--bm_mode=adaptive",
+                "--bm_target_percentile=33.3",
+                "--bm_max_secs=30",
+            ]
+            or arguments[-1] != "--bm_verbose"
         ):
             return 2
-        json_path = Path(
-            next(
-                argument.removeprefix("--bm_json_verbose=")
-                for argument in arguments
-                if argument.startswith("--bm_json_verbose=")
-            )
-        )
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        # Simulate incomplete runs followed by a successful run.
-        log_path.write_text(
-            "[RUN INCOMPLETE] Did not converge:\n"
-            if self.run_count <= self.incomplete_runs
-            else "",
-            encoding="utf-8",
-        )
         # Distinguish runs so tests can verify which attempt supplied the result.
-        json_path.write_text(
-            json.dumps([["fixture.cpp", "measured", float(self.run_count)]]),
-            encoding="utf-8",
+        _write_fake_benchmark_output(
+            arguments,
+            log_path=log_path,
+            value=float(self.run_count),
+            run_incomplete=self.run_count <= self.incomplete_runs,
         )
         return 0
 
@@ -149,27 +226,71 @@ class BenchmarkAbTest(unittest.TestCase):
         )
 
     def _spread_rows(self) -> tuple[benchmark_ab.ComparisonRow, ...]:
-        return (
-            self._row(
-                "benchmark_0",
-                ((100.0, 100.0), (100.0, 101.0), (140.0, 100.0)),
-            ),
-            self._row(
-                "benchmark_1",
-                ((100.0, 120.0), (100.0, 121.0), (150.0, 120.0)),
-            ),
-            self._row(
-                "benchmark_2",
-                ((100.0, 100.0), (100.0, 101.0), (105.0, 100.0)),
-            ),
-            *(
-                self._row(
-                    f"benchmark_{index}",
-                    ((100.0, 100.0), (100.0, 101.0), (101.0, 100.0)),
-                )
-                for index in range(3, 10)
-            ),
+        stable_after = (100.0, 101.0, 100.0, 101.0, 100.0)
+        return tuple(
+            self._row(name, tuple(zip(before, after, strict=True)))
+            for name, before, after in (
+                (
+                    "persistent_spread",
+                    (100.0, 100.0, 100.0, 140.0, 200.0),
+                    stable_after,
+                ),
+                (
+                    # Effect estimation uses every timing (Δ=10ns); trimming
+                    # both sides would yield 0.
+                    "effect_and_spread",
+                    (10.0, 10.0, 10.0, 20.0, 20.0),
+                    (10.0, 10.0, 20.0, 30.0, 30.0),
+                ),
+                (
+                    "spread_threshold_boundary",
+                    (100.0, 100.0, 100.0, 105.0, 105.0),
+                    stable_after,
+                ),
+                (
+                    "single_slow_timing",
+                    (100.0, 100.0, 100.0, 100.0, 200.0),
+                    stable_after,
+                ),
+                *(
+                    (
+                        f"stable_{index}",
+                        (100.0, 100.0, 100.0, 101.0, 101.0),
+                        stable_after,
+                    )
+                    for index in range(4, 10)
+                ),
+            )
         )
+
+    def _analyze_spread_report(
+        self,
+        args: argparse.Namespace,
+    ) -> benchmark_ab.ComparisonReport:
+        rows = self._spread_rows()
+        # Mark the in-memory results usable without writing attempt files.
+        attempt = benchmark_ab.AttemptArtifact(
+            json_path=Path(__file__),
+            returncode=0,
+            run_incomplete=False,
+        )
+        artifacts: dict[tuple[int, str, str], benchmark_ab.RunArtifact] = {}
+        for round_index in range(len(rows[0].observations)):
+            for side in (benchmark_ab.BEFORE_SIDE, benchmark_ab.AFTER_SIDE):
+                artifacts[(round_index + 1, side, self.target.build_target)] = (
+                    benchmark_ab.RunArtifact(
+                        round_number=round_index + 1,
+                        side=side,
+                        target=self.target,
+                        attempts=(attempt,),
+                        results={
+                            row.benchmark: getattr(row.observations[round_index], side)
+                            for row in rows
+                        },
+                    )
+                )
+
+        return benchmark_ab.analyze_report(artifacts, args, (self.target,))
 
     def _write_attempt_artifact(
         self,
@@ -415,6 +536,90 @@ class BenchmarkAbTest(unittest.TestCase):
                 str(raised.exception),
             )
 
+    def test_measurement_stops_after_preflight_build_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "out"
+            args = benchmark_ab.parse_args(
+                [
+                    "measure",
+                    "--before=before",
+                    "--after=after",
+                    "--out",
+                    str(out),
+                    "//folly/test/...",
+                ]
+            )
+            workspace = BuildTrackingWorkspace(
+                self.target.build_target,
+                returncodes=[0, 3],
+            )
+
+            with self.assertRaises(SystemExit) as raised:
+                benchmark_ab.run_measurement(args, workspace)
+
+            self.assertEqual(
+                f"after revision build failed with exit 3; full output: "
+                f"{out / 'build_after.log'}",
+                str(raised.exception),
+            )
+
+            expected_arguments = [
+                "build",
+                "@mode/opt",
+                "--show-full-output",
+                self.target.build_target,
+            ]
+            self.assertEqual(
+                [
+                    ("before_node", expected_arguments, out / "build_before.log"),
+                    ("after_node", expected_arguments, out / "build_after.log"),
+                ],
+                workspace.build_calls,
+            )
+            self.assertEqual("start", workspace.current_revision)
+            self.assertIn(
+                "build output at after_node",
+                (out / "build_after.log").read_text(encoding="utf-8"),
+            )
+            self.assertFalse((out / "round_1").exists())
+
+    def test_measurement_runs_saved_executables(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "out"
+            args = benchmark_ab.parse_args(
+                [
+                    "measure",
+                    "--before=before",
+                    "--after=after",
+                    "--rounds=1",
+                    "--out",
+                    str(out),
+                    "//folly/test/...",
+                ]
+            )
+            workspace = BuildTrackingWorkspace(
+                self.target.build_target,
+                returncodes=[0, 0],
+            )
+
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(0, benchmark_ab.run_measurement(args, workspace))
+
+            artifact_name = benchmark_ab.make_benchmark_targets(
+                (self.target.build_target,)
+            )[0].artifact_name
+            self.assertEqual(
+                [
+                    out / "binaries" / "before" / artifact_name,
+                    out / "binaries" / "after" / artifact_name,
+                ],
+                [call[0] for call in workspace.run_calls],
+            )
+            self.assertEqual("start", workspace.current_revision)
+
     def test_validate_args_rejects_dangerous_measurement_values(self) -> None:
         for options, error in (
             (("--bm-max-secs=0",), "--bm-max-secs must be at least 1"),
@@ -426,6 +631,18 @@ class BenchmarkAbTest(unittest.TestCase):
             (
                 ("--hi-pct=10", "--lo-pct=20"),
                 "--lo-pct must not exceed --hi-pct",
+            ),
+            (
+                ("--broad-spread-pct=101",),
+                "--broad-spread-pct must be greater than 0 and at most 100",
+            ),
+            (
+                ("--broad-spread-pct=0",),
+                "--broad-spread-pct must be greater than 0 and at most 100",
+            ),
+            (
+                ("--spread-ignore-slowest=-1",),
+                "--spread-ignore-slowest must be nonnegative",
             ),
         ):
             with self.subTest(options=options):
@@ -443,7 +660,13 @@ class BenchmarkAbTest(unittest.TestCase):
                 self.assertEqual(error, str(raised.exception))
 
     def test_report_thresholds_must_be_nonnegative_and_finite(self) -> None:
-        for option in ("--hi-ns", "--hi-pct", "--lo-ns", "--lo-pct"):
+        for option in (
+            "--hi-ns",
+            "--hi-pct",
+            "--lo-ns",
+            "--lo-pct",
+            "--broad-spread-pct",
+        ):
             for value in ("-1", "nan"):
                 with (
                     self.subTest(option=option, value=value),
@@ -503,7 +726,8 @@ class BenchmarkAbTest(unittest.TestCase):
         ):
             self.assertIn(">=1.0ns", rendered)
             self.assertIn(
-                "Thresholds were rounded to one decimal place for classification.",
+                "Thresholds were rounded to one decimal place when deciding "
+                "results and alarms.",
                 rendered,
             )
 
@@ -524,6 +748,46 @@ class BenchmarkAbTest(unittest.TestCase):
         self.assertEqual(200, len(long_name))
         self.assertTrue(long_name.endswith("important_benchmark"))
 
+    def test_save_built_executables_handles_duplicate_basenames(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            targets = benchmark_ab.make_benchmark_targets(
+                ("fbcode//foo/a:bench", "fbcode//foo_a:bench")
+            )
+            sources = []
+            for index in range(2):
+                source = root / f"source_{index}" / "bench"
+                source.parent.mkdir()
+                source.write_text(f"binary {index}\n", encoding="utf-8")
+                source.chmod(0o755)
+                sources.append(source)
+            log_path = root / "build_before.log"
+            log_path.write_text(
+                "\n".join(
+                    f"{target.build_target} {source}"
+                    for target, source in zip(targets, sources, strict=True)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            saved = benchmark_ab.save_built_executables(
+                side=benchmark_ab.BEFORE_SIDE,
+                log_path=log_path,
+                out_dir=root,
+                targets=targets,
+            )
+
+            self.assertEqual(
+                [target.artifact_name for target in targets],
+                [saved[target].name for target in targets],
+            )
+            self.assertEqual(
+                ["binary 0\n", "binary 1\n"],
+                [saved[target].read_text(encoding="utf-8") for target in targets],
+            )
+            self.assertTrue(all(path.stat().st_mode & 0o111 for path in saved.values()))
+
     def test_run_one_benchmark_retries_until_result_is_usable(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             args = benchmark_ab.parse_args(
@@ -537,8 +801,9 @@ class BenchmarkAbTest(unittest.TestCase):
                     "//folly/test/...",
                 ]
             )
-            buck = FakeBuckRunner(
-                self.target.build_target,
+            executable = Path(temp) / "bench"
+            runner = FakeBenchmarkRunner(
+                executable,
                 incomplete_runs=1,
             )
 
@@ -548,10 +813,11 @@ class BenchmarkAbTest(unittest.TestCase):
                 round_count=1,
                 side=benchmark_ab.BEFORE_SIDE,
                 target=self.target,
-                buck=buck,
+                executable=executable,
+                runner=runner,
             )
 
-            self.assertEqual(2, buck.run_count)
+            self.assertEqual(2, runner.run_count)
             self.assertEqual(
                 [True, False],
                 [attempt.run_incomplete for attempt in artifact.attempts],
@@ -561,10 +827,10 @@ class BenchmarkAbTest(unittest.TestCase):
                 artifact.results,
             )
 
-    def test_workspace_combines_buck_stderr_with_log(self) -> None:
+    def test_workspace_combines_executable_stderr_with_log(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            log_path = root / "buck.log"
+            log_path = root / "benchmark.log"
             workspace = benchmark_ab.SaplingWorkspace(
                 root=root,
                 buck_executable=Path(sys.executable),
@@ -572,7 +838,8 @@ class BenchmarkAbTest(unittest.TestCase):
 
             # Folly writes the incomplete-run marker to stderr. If it escapes
             # the log, run_one_benchmark() can accept an unusable result.
-            returncode = workspace.run_buck(
+            returncode = workspace.run_executable(
+                Path(sys.executable),
                 [
                     "-c",
                     "import sys; print('[RUN INCOMPLETE]', file=sys.stderr)",
@@ -685,7 +952,9 @@ else:
             spread=benchmark_ab.SpreadAnalysis(
                 row_to_eligible_spreads={},
                 round_count=0,
-                eligible_side_count=0,
+                full_series_count=0,
+                broad_spread_count=0,
+                ignore_n_slowest=0,
                 median_pct=None,
                 calibration=None,
             ),
@@ -854,11 +1123,25 @@ else:
         self.assertEqual(200.0, summary.pct)
 
     def test_spread_eligibility_is_per_side(self) -> None:
-        row = self._row("tiny_before", ((1.0, 10.0), (1.0, 11.0), (1.0, 12.0)))
+        # Exclusion moves the before median below the relative-reporting floor,
+        # but must not remove its full series from calibration or the broad alarm.
+        row = self._row(
+            "tiny_before",
+            (
+                (1.0, 10.0),
+                (1.0, 10.0),
+                (1.0, 10.0),
+                (4.0, 10.0),
+                (4.0, 10.0),
+                (100.0, 10.0),
+            ),
+        )
         spread = benchmark_ab.analyze_spread(
             (row,),
-            round_count=3,
+            round_count=6,
+            broad_threshold=benchmark_ab.Threshold(ns=1.0, pct=10.0),
             high_spread_minimum=benchmark_ab.Threshold(ns=0.5, pct=5.0),
+            ignore_n_slowest=1,
         )
         report = benchmark_ab.ComparisonReport(
             needs_attention=(),
@@ -874,6 +1157,8 @@ else:
             (benchmark_ab.AFTER_SIDE,),
             tuple(item.side for item in spread.eligible_spreads_for(row)),
         )
+        self.assertEqual(2, spread.full_series_count)
+        self.assertEqual(1, spread.broad_spread_count)
         tsv = benchmark_ab.tsv_comparison_row(
             report,
             row,
@@ -881,160 +1166,174 @@ else:
             section=None,
         )
         self.assertNotIn("before_range_ns", tsv)
-        self.assertEqual("2.0", tsv["after_range_ns"])
+        self.assertEqual("0.0", tsv["after_range_ns"])
+        self.assertEqual("1", tsv["ignore_n_slowest"])
 
     def test_spread_requires_two_rounds(self) -> None:
         row = self._row("single_round", ((100.0, 100.0),))
         spread = benchmark_ab.analyze_spread(
             (row,),
             round_count=1,
+            broad_threshold=benchmark_ab.Threshold(ns=1.0, pct=10.0),
             high_spread_minimum=benchmark_ab.Threshold(ns=0.5, pct=5.0),
+            ignore_n_slowest=0,
         )
 
+        self.assertEqual(0, spread.full_series_count)
+        self.assertIsNone(spread.median_pct)
+
+    def test_spread_requires_two_timings_after_exclusions(self) -> None:
+        row = self._row("too_few_retained", ((100.0, 100.0), (101.0, 101.0)))
+        spread = benchmark_ab.analyze_spread(
+            (row,),
+            round_count=2,
+            broad_threshold=benchmark_ab.Threshold(ns=1.0, pct=10.0),
+            high_spread_minimum=benchmark_ab.Threshold(ns=0.5, pct=5.0),
+            ignore_n_slowest=1,
+        )
+
+        self.assertEqual(2, spread.full_series_count)
         self.assertIsNone(spread.median_pct)
         self.assertEqual(
-            ["Spread needs at least 2 recorded rounds"],
-            benchmark_ab.spread_context_lines(spread),
+            "Not calculated: need at least 2 timings after exclusions (1 available)",
+            benchmark_ab.spread_summary_lines(spread)[-1].strip(),
         )
 
     def test_spread_calibrates_outliers(self) -> None:
         # Ten benchmarks measured in every round contribute 20 before/after
         # series.
         rows = self._spread_rows()
+        rows_by_name = {row.benchmark.name: row for row in rows}
 
+        hi_threshold = benchmark_ab.Threshold(ns=1.0, pct=10.0)
         high_spread_minimum = benchmark_ab.Threshold(ns=0.5, pct=4.96)
         too_small = benchmark_ab.analyze_spread(
             rows[:-1],
-            round_count=3,
+            round_count=5,
+            broad_threshold=hi_threshold,
             high_spread_minimum=high_spread_minimum,
+            ignore_n_slowest=1,
         )
         calibrated = benchmark_ab.analyze_spread(
             rows,
-            round_count=3,
+            round_count=5,
+            broad_threshold=hi_threshold,
             high_spread_minimum=high_spread_minimum,
+            ignore_n_slowest=1,
         )
 
         self.assertIsNone(too_small.calibration)
-        self.assertEqual((), too_small.high_spreads_for(rows[0]))
-        self.assertEqual(20, calibrated.eligible_side_count)
+        self.assertEqual(
+            (), too_small.high_spreads_for(rows_by_name["persistent_spread"])
+        )
+        self.assertEqual(20, calibrated.full_series_count)
+        self.assertEqual(4, calibrated.broad_spread_count)
+        # All timings, including isolated slow ones, set the Tukey cutoff.
         self.assertEqual(
             benchmark_ab.SpreadCalibration(
-                outlier_cutoff_pct=1.0,
-                high_spread_threshold=benchmark_ab.Threshold(ns=0.5, pct=4.96),
+                outlier_cutoff_pct=5.0,
+                high_spread_threshold=benchmark_ab.Threshold(ns=0.5, pct=5.0),
             ),
             calibrated.calibration,
         )
         self.assertEqual(
             (benchmark_ab.BEFORE_SIDE,),
-            tuple(spread.side for spread in calibrated.high_spreads_for(rows[0])),
+            tuple(
+                spread.side
+                for spread in calibrated.high_spreads_for(
+                    rows_by_name["persistent_spread"]
+                )
+            ),
         )
         # 5.0% does not exceed the displayed >5.0% cutoff.
-        self.assertEqual((), calibrated.high_spreads_for(rows[2]))
+        self.assertEqual(
+            (),
+            calibrated.high_spreads_for(rows_by_name["spread_threshold_boundary"]),
+        )
+        # A single slow timing is omitted from the row flag but remains visible
+        # to the benchmark-wide alarm.
+        self.assertEqual(
+            (), calibrated.high_spreads_for(rows_by_name["single_slow_timing"])
+        )
 
-    def test_spread_renders_diagnostics(self) -> None:
-        rows = self._spread_rows()
-        spread = benchmark_ab.analyze_spread(
-            rows,
-            round_count=3,
-            high_spread_minimum=benchmark_ab.Threshold(ns=0.5, pct=0.5),
+    def test_report_places_and_renders_high_spread_rows_once(self) -> None:
+        args = benchmark_ab.parse_args(["reanalyze", "--out=out"])
+        report = self._analyze_spread_report(args)
+        placed_names = [
+            row.benchmark.name for section in report.sections for row in section.rows
+        ] + [row.benchmark.name for row in report.unclassified_high_spread_rows]
+        self.assertEqual(1, placed_names.count("persistent_spread"))
+        self.assertEqual(1, placed_names.count("effect_and_spread"))
+        self.assertEqual(
+            ["persistent_spread"],
+            [row.benchmark.name for row in report.unclassified_high_spread_rows],
         )
-        effect_section = benchmark_ab.ReportSection(
-            title="High-priority regressions",
-            classification="loss-hi-pri",
-            direction=1,
-            threshold=benchmark_ab.Threshold(ns=1.0, pct=10.0),
-            rows=(rows[1],),
-        )
-        report = benchmark_ab.ComparisonReport(
-            needs_attention=(),
-            unpaired_rows={},
-            benchmark_names_with_multiple_files=frozenset(),
-            rows=(rows[0], rows[1]),
-            spread=spread,
-            sections=(effect_section,),
-            unclassified_high_spread_rows=(rows[0],),
-        )
-        args = benchmark_ab.parse_args(
-            [
-                "reanalyze",
-                "--out=out",
-                "--hi-ns=0.5",
-                "--hi-pct=0.5",
-                "--lo-pct=0.5",
-            ]
-        )
+
         terminal = benchmark_ab.render_terminal(report, args, self._manifest())
         for rendered in (
             terminal,
             benchmark_ab.render_markdown(report, args, self._manifest()),
         ):
-            self.assertEqual(
-                1,
-                rendered.count(
-                    "High spread (before): 100.0-140.0ns (range is 40.0% of median)"
-                ),
-            )
-            self.assertEqual(
-                1,
-                rendered.count(
-                    "High spread (before): 100.0-150.0ns (range is 50.0% of median)"
-                ),
+            self.assertEqual(3, rendered.count("High spread ("))
+            self.assertIn(
+                "High spread (before; excluding 1 slowest): "
+                "100.0-140.0ns (40.0% of median)",
+                rendered,
             )
             self.assertIn(
                 "High run-to-run spread without a reportable change",
                 rendered,
             )
             self.assertIn(
-                "High spread: range >1.0% of median and >=0.5ns "
-                "(Tukey outlier cutoff: 1.0%)",
+                "High spread threshold: >5.0% (Tukey outlier cutoff) and >=0.5ns",
                 rendered,
             )
+            self.assertLess(
+                rendered.index("High run-to-run spread without a reportable change"),
+                rendered.index("High-priority regressions"),
+            )
         self.assertLessEqual(max(map(len, terminal.splitlines())), 80)
-        tsv = benchmark_ab.tsv_rows(report, out_dir=Path("out"))
-        self.assertEqual(["high-spread", "loss-hi-pri"], [row["class"] for row in tsv])
-        self.assertEqual(
-            ["40.0", "50.0"],
-            [row["before_range_pct_of_median"] for row in tsv],
-        )
 
-    def test_report_partitions_high_spread_rows_once(self) -> None:
-        rows = self._spread_rows()
-        # Mark the in-memory results usable without writing attempt files.
-        attempt = benchmark_ab.AttemptArtifact(
-            json_path=Path(__file__),
-            returncode=0,
-            run_incomplete=False,
-        )
-        artifacts: dict[tuple[int, str, str], benchmark_ab.RunArtifact] = {}
-        for round_index in range(3):
-            for side in (benchmark_ab.BEFORE_SIDE, benchmark_ab.AFTER_SIDE):
-                artifacts[(round_index + 1, side, self.target.build_target)] = (
-                    benchmark_ab.RunArtifact(
-                        round_number=round_index + 1,
-                        side=side,
-                        target=self.target,
-                        attempts=(attempt,),
-                        results={
-                            row.benchmark: getattr(row.observations[round_index], side)
-                            for row in rows
-                        },
-                    )
+        benchmark_to_tsv = {
+            row["benchmark"]: row
+            for row in benchmark_ab.tsv_rows(report, out_dir=Path("out"))
+        }
+        self.assertEqual(
+            [("high-spread", "40.0"), ("loss-hi-pri", "100.0")],
+            [
+                (
+                    benchmark_to_tsv[name]["class"],
+                    benchmark_to_tsv[name]["before_range_pct_of_median"],
                 )
+                for name in ("persistent_spread", "effect_and_spread")
+            ],
+        )
 
-        report = benchmark_ab.analyze_report(
-            artifacts,
-            benchmark_ab.parse_args(["reanalyze", "--out=out"]),
-            (self.target,),
+    def test_broad_spread_warning_uses_configured_share(self) -> None:
+        args = benchmark_ab.parse_args(
+            ["reanalyze", "--out=out", "--broad-spread-pct=20"]
         )
-        placed_names = [
-            row.benchmark.name for section in report.sections for row in section.rows
-        ] + [row.benchmark.name for row in report.unclassified_high_spread_rows]
-        self.assertEqual(1, placed_names.count("benchmark_0"))
-        self.assertEqual(1, placed_names.count("benchmark_1"))
-        self.assertEqual(
-            ["benchmark_0"],
-            [row.benchmark.name for row in report.unclassified_high_spread_rows],
+        report = self._analyze_spread_report(args)
+        for rendered in (
+            benchmark_ab.render_terminal(report, args, self._manifest()),
+            benchmark_ab.render_markdown(report, args, self._manifest()),
+        ):
+            self.assertIn(
+                "High run-to-run spread across the benchmark set",
+                rendered,
+            )
+            self.assertIn("4/20 before/after series (20.0%)", rendered)
+
+        quiet_args = benchmark_ab.parse_args(
+            ["reanalyze", "--out=out", "--broad-spread-pct=20.1"]
         )
+        for rendered in (
+            benchmark_ab.render_terminal(report, quiet_args, self._manifest()),
+            benchmark_ab.render_markdown(report, quiet_args, self._manifest()),
+        ):
+            self.assertNotIn(
+                "High run-to-run spread across the benchmark set", rendered
+            )
 
     def test_percentage_floors_sub_picosecond_timings(self) -> None:
         # Adaptive baseline subtraction can produce zero; sub-picosecond

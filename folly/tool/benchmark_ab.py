@@ -36,10 +36,16 @@ The positional arguments are Buck target patterns.  At the "before" revision,
 the tool expands each pattern to runnable C++ tests and binaries that
 transitively depend on `//folly:benchmark`, excluding targets with the Buck
 label `not_a_folly_benchmark`.  It runs that fixed target set at both revisions.
-Benchmark targets absent from "before" are not measured.  Each round checks out
-both requested `sl` revisions.  At the end, we restore the starting revision.
-A failed target invocation, or one where any benchmark fails to converge, is
-retried. Results contribute only after a successful, fully converged attempt.
+Benchmark targets absent from "before" are not measured. Before measurement,
+the tool builds both revisions and saves their executables in the artifact
+directory under `binaries/{before,after}/<unique artifact name>` within
+`--out`. It then runs those saved executables directly. A build failure aborts
+immediately; complete output remains in `build_{before,after}.log` within
+`--out`.
+
+Each side's benchmark executable is attempted up to `--max-run-attempts` after
+a process failure or nonconverged run. Exhausted runs are reported as unusable.
+The starting revision is restored after success or failure.
 
 The output directory stores the raw benchmark output plus text, Markdown, and
 sortable TSV reports. A concise comparison goes to stdout; progress goes to
@@ -51,7 +57,7 @@ benchmarks:
 
   folly/tool/benchmark_ab.py reanalyze --out OUT
 
-Reports also flag unusually high run-to-run variation.
+Reports also flag unusually high or widespread run-to-run variation.
 
 Results:
 
@@ -77,7 +83,7 @@ The comma-separated `before±Δ` pairs show whether the change is consistent
 across rounds.  They are sorted by `before` timing, not by run order.
 Parentheses mark a pair whose Δ missed a section threshold.
 
-Within each priority section, rows are sorted by estimated Δ, smallest first.
+Each win/regression section sorts benchmarks by estimated Δ, smallest first.
 """
 
 
@@ -86,6 +92,7 @@ import csv
 import io
 import json
 import math
+import os
 import re
 import shutil
 import statistics
@@ -333,14 +340,17 @@ class SpreadCalibration:
 
 @dataclass(frozen=True)
 class SpreadAnalysis:
-    # Spread analysis considers a before/after timing series only when it has
-    # a measurement in every discovered round and its median exceeds
-    # MIN_RELATIVE_MEDIAN_NS. This eligibility rule applies only to spread;
-    # effect estimates still use all contributing timings.
+    # Spread analysis considers only complete before/after timing series.
+    # Calibration and the broad alarm use full series above
+    # MIN_RELATIVE_MEDIAN_NS; individual warnings apply the same floor after
+    # excluding slow timings. These exclusions do not affect effect estimates,
+    # which use all contributing timings.
     row_to_eligible_spreads: dict[ComparisonRow, tuple[SideSpread, ...]]
     round_count: int
-    eligible_side_count: int
-    median_pct: float | None  # None when no timing series is eligible
+    full_series_count: int
+    broad_spread_count: int
+    ignore_n_slowest: int
+    median_pct: float | None  # None when no retained series is eligible
     calibration: SpreadCalibration | None  # None below MIN_SPREAD_COHORT_SIZE
 
     def eligible_spreads_for(self, row: ComparisonRow) -> tuple[SideSpread, ...]:
@@ -392,7 +402,17 @@ class BuckRunner(Protocol):
     ) -> int: ...
 
 
-class Workspace(BuckQuery, BuckRunner, Protocol):
+class BenchmarkRunner(Protocol):
+    def run_executable(
+        self,
+        executable: Path,
+        arguments: Sequence[str],
+        *,
+        log_path: Path,
+    ) -> int: ...
+
+
+class Workspace(BuckQuery, BuckRunner, BenchmarkRunner, Protocol):
     def has_changes(self, *, include_untracked: bool) -> bool: ...
 
     def resolve_revision(self, revision: str) -> str: ...
@@ -429,14 +449,20 @@ def add_report_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="NS",
         type=nonnegative_float,
         default=1.0,
-        help="absolute nanosecond threshold for high-priority sections",
+        help=(
+            "absolute threshold for high-priority sections; also used to detect "
+            "widespread run-to-run variation"
+        ),
     )
     parser.add_argument(
         "--hi-pct",
         metavar="PCT",
         type=nonnegative_float,
         default=10.0,
-        help="percentage threshold for high-priority sections",
+        help=(
+            "percentage threshold for high-priority sections; also used with "
+            "--hi-ns to detect widespread run-to-run variation"
+        ),
     )
     parser.add_argument(
         "--lo-ns",
@@ -456,6 +482,29 @@ def add_report_arguments(parser: argparse.ArgumentParser) -> None:
         help=(
             "percentage threshold for low-priority sections; also the smallest "
             "relative range flagged as high spread"
+        ),
+    )
+    # TODO: Calibrate this guessed default against known broadly noisy runs.
+    parser.add_argument(
+        "--broad-spread-pct",
+        metavar="PCT",
+        type=nonnegative_float,
+        default=50.0,
+        help=(
+            "percentage of timing series that must meet --hi-ns and --hi-pct "
+            "to raise the broad-spread alarm; requires at least 20 series"
+        ),
+    )
+    parser.add_argument(
+        "--spread-ignore-slowest",
+        dest="ignore_n_slowest",
+        metavar="N",
+        type=int,
+        default=1,
+        help=(
+            "number of slowest timings ignored from each before/after series "
+            "when calculating per-benchmark spread; the broad alarm and "
+            "effect estimates use every timing"
         ),
     )
 
@@ -577,10 +626,14 @@ def validate_args(args: argparse.Namespace) -> None:
             raise SystemExit("--max-run-attempts must be at least 1")
         if args.bm_max_secs < 1:
             raise SystemExit("--bm-max-secs must be at least 1")
+    if args.ignore_n_slowest < 0:
+        raise SystemExit("--spread-ignore-slowest must be nonnegative")
     if args.lo_ns > args.hi_ns:
         raise SystemExit("--lo-ns must not exceed --hi-ns")
     if args.lo_pct > args.hi_pct:
         raise SystemExit("--lo-pct must not exceed --hi-pct")
+    if not 0 < args.broad_spread_pct <= 100:
+        raise SystemExit("--broad-spread-pct must be greater than 0 and at most 100")
 
 
 def benchmark_query(pattern: str) -> str:
@@ -795,6 +848,23 @@ class SaplingWorkspace:
                 text=True,
             ).returncode
 
+    def run_executable(
+        self,
+        executable: Path,
+        arguments: Sequence[str],
+        *,
+        log_path: Path,
+    ) -> int:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as out:
+            return subprocess.run(
+                [str(executable), *arguments],
+                cwd=self.root,
+                stdout=out,
+                stderr=subprocess.STDOUT,
+                text=True,
+            ).returncode
+
     def has_changes(self, *, include_untracked: bool) -> bool:
         return bool(
             subprocess.check_output(
@@ -876,14 +946,9 @@ def attempt_paths(
 def benchmark_arguments(
     args: argparse.Namespace,
     *,
-    target: BenchmarkTarget,
     json_path: Path,
 ) -> list[str]:
     return [
-        "run",
-        args.mode,
-        target.build_target,
-        "--",
         "--benchmark",
         "--bm_mode=adaptive",
         f"--bm_target_percentile={BM_TARGET_PERCENTILE}",
@@ -891,6 +956,91 @@ def benchmark_arguments(
         f"--bm_json_verbose={json_path}",
         "--bm_verbose",
     ]
+
+
+def save_built_executables(
+    *,
+    side: str,
+    log_path: Path,
+    out_dir: Path,
+    targets: Sequence[BenchmarkTarget],
+) -> dict[BenchmarkTarget, Path]:
+    target_to_output: dict[str, Path] = {}
+    expected_targets = {target.build_target for target in targets}
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        build_target, separator, output = line.partition(" ")
+        if separator and build_target in expected_targets:
+            output_path = Path(output.strip())
+            previous = target_to_output.setdefault(build_target, output_path)
+            if previous != output_path:
+                raise SystemExit(
+                    f"{side} build reported multiple outputs for "
+                    f"{build_target}; full output: {log_path}"
+                )
+
+    binary_dir = out_dir / "binaries" / side
+    binary_dir.mkdir(parents=True, exist_ok=True)
+    executables: dict[BenchmarkTarget, Path] = {}
+    for target in targets:
+        source = target_to_output.get(target.build_target)
+        if (
+            source is None
+            or not source.is_absolute()
+            or not source.is_file()
+            or not os.access(source, os.X_OK)
+        ):
+            raise SystemExit(
+                f"{side} build did not report an executable for "
+                f"{target.build_target}; full output: {log_path}"
+            )
+        destination = binary_dir / target.artifact_name
+        shutil.copy2(source, destination)
+        executables[target] = destination
+    return executables
+
+
+def preflight_builds(
+    args: argparse.Namespace,
+    manifest: MeasurementManifest,
+    workspace: Workspace,
+) -> dict[tuple[str, BenchmarkTarget], Path]:
+    executables: dict[tuple[str, BenchmarkTarget], Path] = {}
+    for side, revision in (
+        (BEFORE_SIDE, manifest.before),
+        (AFTER_SIDE, manifest.after),
+    ):
+        workspace.checkout(revision)
+        log_path = args.out / f"build_{side}.log"
+        print(
+            progress_line(
+                f"building {len(manifest.targets)} targets ({side}); "
+                f"full output: {log_path}"
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        returncode = workspace.run_buck(
+            [
+                "build",
+                manifest.mode,
+                "--show-full-output",
+                *(target.build_target for target in manifest.targets),
+            ],
+            log_path=log_path,
+        )
+        if returncode != 0:
+            raise SystemExit(
+                f"{side} revision build failed with exit {returncode}; "
+                f"full output: {log_path}"
+            )
+        for target, executable in save_built_executables(
+            side=side,
+            log_path=log_path,
+            out_dir=args.out,
+            targets=manifest.targets,
+        ).items():
+            executables[(side, target)] = executable
+    return executables
 
 
 def load_attempt_artifact(paths: AttemptPaths) -> AttemptArtifact:
@@ -976,7 +1126,8 @@ def run_one_benchmark(
     round_count: int,
     side: str,
     target: BenchmarkTarget,
-    buck: BuckRunner,
+    executable: Path,
+    runner: BenchmarkRunner,
 ) -> RunArtifact:
     base_dir = run_dir(args.out, round_number, side, target)
     attempts: list[AttemptArtifact] = []
@@ -988,10 +1139,10 @@ def run_one_benchmark(
     )
     for attempt in range(1, max_attempts + 1):
         paths = attempt_paths(base_dir, target, attempt)
-        returncode = buck.run_buck(
+        returncode = runner.run_executable(
+            executable,
             benchmark_arguments(
                 args,
-                target=target,
                 json_path=paths.json,
             ),
             log_path=paths.log,
@@ -1040,16 +1191,13 @@ def check_working_copy(args: argparse.Namespace, workspace: Workspace) -> None:
 def run_rounds(
     args: argparse.Namespace,
     manifest: MeasurementManifest,
-    workspace: Workspace,
+    executables: dict[tuple[str, BenchmarkTarget], Path],
+    runner: BenchmarkRunner,
 ) -> None:
     rounds = args.rounds
     started_at = time.monotonic()
     for round_number in range(1, rounds + 1):
-        for side, revision in (
-            (BEFORE_SIDE, manifest.before),
-            (AFTER_SIDE, manifest.after),
-        ):
-            workspace.checkout(revision)
+        for side in (BEFORE_SIDE, AFTER_SIDE):
             for target in manifest.targets:
                 run_one_benchmark(
                     args,
@@ -1057,7 +1205,8 @@ def run_rounds(
                     round_count=rounds,
                     side=side,
                     target=target,
-                    buck=workspace,
+                    executable=executables[(side, target)],
+                    runner=runner,
                 )
         print(
             progress_line(
@@ -1295,62 +1444,81 @@ def analyze_spread(
     rows: tuple[ComparisonRow, ...],
     *,
     round_count: int,
+    broad_threshold: Threshold,
     high_spread_minimum: Threshold,
+    ignore_n_slowest: int,
 ) -> SpreadAnalysis:
+    retained_timing_count = round_count - ignore_n_slowest
     row_to_eligible_spreads: dict[ComparisonRow, tuple[SideSpread, ...]] = {}
+    all_timing_spreads: list[SideSpread] = []
     for row in rows:
-        # A range needs at least two timings. Compare like-sized samples because
-        # ranges grow as more rounds are added.
+        # Compare like-sized samples because ranges grow as rounds are added.
         if round_count < 2 or len(row.observations) != round_count:
             continue
         eligible_row_spreads = []
         for side in (BEFORE_SIDE, AFTER_SIDE):
-            values = tuple(
+            values = sorted(
                 getattr(observation, side) for observation in row.observations
             )
-            median = statistics.median(values)
-            if median <= MIN_RELATIVE_MEDIAN_NS:
+            full_median = statistics.median(values)
+            if full_median > MIN_RELATIVE_MEDIAN_NS:
+                all_timing_spreads.append(
+                    SideSpread(
+                        side=side,
+                        minimum=values[0],
+                        maximum=values[-1],
+                        median=full_median,
+                    )
+                )
+            if retained_timing_count < 2:
                 continue
+            retained_values = values[:retained_timing_count]
+            retained_median = statistics.median(retained_values)
+            if retained_median <= MIN_RELATIVE_MEDIAN_NS:
+                continue
+            # Per-benchmark warnings ignore isolated slow runs. The Tukey cutoff
+            # still uses full ranges, so removing a timing cannot lower it.
             eligible_row_spreads.append(
                 SideSpread(
                     side=side,
-                    minimum=min(values),
-                    maximum=max(values),
-                    median=median,
+                    minimum=retained_values[0],
+                    maximum=retained_values[-1],
+                    median=retained_median,
                 )
             )
         if eligible_row_spreads:
             row_to_eligible_spreads[row] = tuple(eligible_row_spreads)
 
-    eligible_spreads = tuple(
-        spread
+    retained_spread_pcts = [
+        spread.pct
         for eligible_row_spreads in row_to_eligible_spreads.values()
         for spread in eligible_row_spreads
+    ]
+    all_timing_spread_pcts = [spread.pct for spread in all_timing_spreads]
+    full_series_count = len(all_timing_spread_pcts)
+    # A slow round shared by many series is what the broad alarm diagnoses.
+    broad_spread_count = sum(
+        display_round(spread.range_ns) >= display_round(broad_threshold.ns)
+        and display_round(spread.pct) >= display_round(broad_threshold.pct)
+        for spread in all_timing_spreads
     )
-    eligible_spread_pcts = [spread.pct for spread in eligible_spreads]
-    eligible_side_count = len(eligible_spread_pcts)
-    if not eligible_spread_pcts:
-        return SpreadAnalysis(
-            row_to_eligible_spreads=row_to_eligible_spreads,
-            round_count=round_count,
-            eligible_side_count=0,
-            median_pct=None,
-            calibration=None,
-        )
-
-    median_pct = statistics.median(eligible_spread_pcts)
+    median_pct = (
+        statistics.median(retained_spread_pcts) if retained_spread_pcts else None
+    )
     # With fewer series, one benchmark can move the cutoff too much.
-    if eligible_side_count < MIN_SPREAD_COHORT_SIZE:
+    if full_series_count < MIN_SPREAD_COHORT_SIZE:
         return SpreadAnalysis(
             row_to_eligible_spreads=row_to_eligible_spreads,
             round_count=round_count,
-            eligible_side_count=eligible_side_count,
+            full_series_count=full_series_count,
+            broad_spread_count=broad_spread_count,
+            ignore_n_slowest=ignore_n_slowest,
             median_pct=median_pct,
             calibration=None,
         )
 
     q1_pct, _, q3_pct = statistics.quantiles(
-        eligible_spread_pcts,
+        all_timing_spread_pcts,
         n=4,
         method="inclusive",
     )
@@ -1359,7 +1527,9 @@ def analyze_spread(
     return SpreadAnalysis(
         row_to_eligible_spreads=row_to_eligible_spreads,
         round_count=round_count,
-        eligible_side_count=eligible_side_count,
+        full_series_count=full_series_count,
+        broad_spread_count=broad_spread_count,
+        ignore_n_slowest=ignore_n_slowest,
         median_pct=median_pct,
         calibration=SpreadCalibration(
             outlier_cutoff_pct=outlier_cutoff_pct,
@@ -1490,7 +1660,9 @@ def analyze_report(
     spread = analyze_spread(
         rows,
         round_count=len({key[0] for key in artifacts}),
+        broad_threshold=hi_threshold,
         high_spread_minimum=lo_threshold,
+        ignore_n_slowest=args.ignore_n_slowest,
     )
     classified_row_ids = {
         (row.build_target, row.benchmark)
@@ -1545,12 +1717,19 @@ def threshold_rounding_warning(
 ) -> list[str]:
     if all(
         value == display_round(value)
-        for value in (args.hi_ns, args.hi_pct, args.lo_ns, args.lo_pct)
+        for value in (
+            args.hi_ns,
+            args.hi_pct,
+            args.lo_ns,
+            args.lo_pct,
+            args.broad_spread_pct,
+        )
     ):
         return []
     return [
         ("**Note:** " if markdown else "Note: ")
-        + "Thresholds were rounded to one decimal place for classification.",
+        + "Thresholds were rounded to one decimal place when deciding results "
+        "and alarms.",
         "",
     ]
 
@@ -1571,36 +1750,81 @@ def summary_text(
     return f"{fmt_value(summary.before)}{fmt_signed_value(summary.delta)}ns{suffix}"
 
 
-def spread_summary_text(spread: SpreadAnalysis) -> str:
-    if spread.median_pct is None:
-        return "Run-to-run spread (range / median): not calculated"
-    return (
-        "Run-to-run spread (range / median): median "
-        f"{fmt_value(spread.median_pct)}% across "
-        f"{spread.eligible_side_count} timing series"
+def spread_summary_lines(spread: SpreadAnalysis) -> list[str]:
+    lines = [
+        "Run-to-run spread per before/after series:",
+        f"  Metric: (max - min) / median, excluding {spread.ignore_n_slowest} slowest",
+    ]
+    retained_timing_count = max(
+        spread.round_count - spread.ignore_n_slowest,
+        0,
     )
-
-
-def spread_context_lines(spread: SpreadAnalysis) -> list[str]:
-    if spread.round_count < 2:
-        return ["Spread needs at least 2 recorded rounds"]
-    if spread.median_pct is None:
-        return [
-            "No before/after timing series has data for every round and median "
-            f">{fmt_value(MIN_RELATIVE_MEDIAN_NS)}ns"
+    if retained_timing_count < 2:
+        return lines + [
+            "  Not calculated: need at least 2 timings after exclusions "
+            f"({retained_timing_count} available)"
         ]
+    if spread.median_pct is None:
+        return lines + [
+            "  Not calculated: no complete series has median "
+            f">{fmt_value(MIN_RELATIVE_MEDIAN_NS)}ns after exclusions"
+        ]
+
+    lines.append(
+        f"  Median: {fmt_value(spread.median_pct)}% across "
+        f"{sum(len(items) for items in spread.row_to_eligible_spreads.values())} "
+        "timing series"
+    )
     if spread.calibration is None:
-        return [
-            "High-spread flags skipped: need at least "
+        return lines + [
+            "  High spread threshold and broad alarm: need at least "
             f"{MIN_SPREAD_COHORT_SIZE} timing series"
         ]
 
     calibration = spread.calibration
+    cutoff_text = (
+        "Tukey outlier cutoff"
+        if calibration.high_spread_threshold.pct == calibration.outlier_cutoff_pct
+        else (f"Tukey outlier cutoff: {fmt_value(calibration.outlier_cutoff_pct)}%")
+    )
+    lines.append(
+        "  High spread threshold: "
+        f">{fmt_value(calibration.high_spread_threshold.pct)}% "
+        f"({cutoff_text}) and "
+        f">={fmt_value(calibration.high_spread_threshold.ns)}ns"
+    )
+    return lines
+
+
+def broad_spread_warning_lines(
+    spread: SpreadAnalysis,
+    args: argparse.Namespace,
+    *,
+    markdown: bool,
+) -> list[str]:
+    if spread.full_series_count < MIN_SPREAD_COHORT_SIZE:
+        return []
+    pct = 100.0 * spread.broad_spread_count / spread.full_series_count
+    if display_round(pct) < display_round(args.broad_spread_pct):
+        return []
+    count = (
+        f"{spread.broad_spread_count}/{spread.full_series_count} "
+        f"before/after series ({fmt_value(pct)}%)"
+    )
+    range_threshold = (
+        f"{fmt_value(args.hi_ns)}ns and {fmt_value(args.hi_pct)}% of their median"
+    )
+    if markdown:
+        return [
+            "**Warning: High run-to-run spread across the benchmark set.** "
+            f"{count} have a full run-to-run range of at least {range_threshold}.",
+            "",
+        ]
     return [
-        "High spread: range "
-        f">{fmt_value(calibration.high_spread_threshold.pct)}% of median and "
-        f">={fmt_value(calibration.high_spread_threshold.ns)}ns "
-        f"(Tukey outlier cutoff: {fmt_value(calibration.outlier_cutoff_pct)}%)",
+        "WARNING: High run-to-run spread across the benchmark set",
+        f"  {count} have a full run-to-run range of at least",
+        f"  {range_threshold}.",
+        "",
     ]
 
 
@@ -1611,9 +1835,10 @@ def spread_warning_texts(
     spreads = report.spread.high_spreads_for(row)
     return tuple(
         (
-            f"High spread ({spread.side}): "
+            f"High spread ({spread.side}; excluding "
+            f"{report.spread.ignore_n_slowest} slowest): "
             f"{fmt_value(spread.minimum)}-{fmt_value(spread.maximum)}ns "
-            f"(range is {fmt_value(spread.pct)}% of median)"
+            f"({fmt_value(spread.pct)}% of median)"
         )
         for spread in spreads
     )
@@ -1766,6 +1991,7 @@ def render_markdown(
     manifest: MeasurementManifest,
 ) -> str:
     targets = manifest.targets
+    spread_lines = spread_summary_lines(report.spread)
     lines = [
         f"**Output:** `{args.out}`",
         "",
@@ -1790,10 +2016,6 @@ def render_markdown(
         f"- hi-pri `>={fmt_value(args.hi_ns)}ns` and `>={fmt_value(args.hi_pct)}%`",
         f"- lo-pri `>={fmt_value(args.lo_ns)}ns` and `>={fmt_value(args.lo_pct)}%`",
         "",
-        f"**{spread_summary_text(report.spread)}**",
-        "",
-        *(f"- {detail}" for detail in spread_context_lines(report.spread)),
-        "",
         *threshold_rounding_warning(args, markdown=True),
     ]
     lines.extend(needs_attention_markdown(report, out_dir=args.out))
@@ -1806,7 +2028,20 @@ def render_markdown(
                 pct=fmt_value(manifest.bm_target_percentile),
             ).splitlines(),
             "",
+            f"**{spread_lines[0]}**",
+            "",
+            *(f"- {detail.strip()}" for detail in spread_lines[1:]),
+            "",
+            *broad_spread_warning_lines(report.spread, args, markdown=True),
         ]
+    )
+    lines.extend(
+        comparison_table(
+            report,
+            title="High run-to-run spread without a reportable change",
+            rows=report.unclassified_high_spread_rows,
+            section=None,
+        )
     )
     for section in report.sections:
         lines.extend(
@@ -1817,14 +2052,6 @@ def render_markdown(
                 section=section,
             )
         )
-    lines.extend(
-        comparison_table(
-            report,
-            title="High run-to-run spread without a reportable change",
-            rows=report.unclassified_high_spread_rows,
-            section=None,
-        )
-    )
     return "\n".join(lines)
 
 
@@ -1904,8 +2131,6 @@ def render_comparison_text(
         "Thresholds for estimated Δ:",
         f"  hi-pri >={fmt_value(args.hi_ns)}ns and >={fmt_value(args.hi_pct)}%",
         f"  lo-pri >={fmt_value(args.lo_ns)}ns and >={fmt_value(args.lo_pct)}%",
-        spread_summary_text(report.spread),
-        *(f"  {detail}" for detail in spread_context_lines(report.spread)),
         "",
         *threshold_rounding_warning(args, markdown=False),
     ]
@@ -1919,7 +2144,18 @@ def render_comparison_text(
                 pct=fmt_value(manifest.bm_target_percentile),
             ).splitlines(),
             "",
+            *spread_summary_lines(report.spread),
+            "",
+            *broad_spread_warning_lines(report.spread, args, markdown=False),
         ]
+    )
+    lines.extend(
+        comparison_terminal(
+            report,
+            title="High run-to-run spread without a reportable change",
+            rows=report.unclassified_high_spread_rows,
+            section=None,
+        )
     )
     for section in report.sections:
         lines.extend(
@@ -1930,14 +2166,6 @@ def render_comparison_text(
                 section=section,
             )
         )
-    lines.extend(
-        comparison_terminal(
-            report,
-            title="High run-to-run spread without a reportable change",
-            rows=report.unclassified_high_spread_rows,
-            section=None,
-        )
-    )
     return "\n".join(lines).rstrip()
 
 
@@ -2025,6 +2253,7 @@ def tsv_comparison_row(
         "median_before_ns": fmt_value(summary.before),
         "median_after_ns": fmt_value(summary.after),
         "direction_agreement_pct": fmt_value(direction_agreement(row).pct),
+        "ignore_n_slowest": str(report.spread.ignore_n_slowest),
         "benchmark": row.benchmark.name,
         "benchmark_file": row.benchmark.file,
         "target": row.build_target,
@@ -2052,6 +2281,7 @@ def render_tsv(report: ComparisonReport, *, out_dir: Path) -> str:
             "median_before_ns",
             "median_after_ns",
             "direction_agreement_pct",
+            "ignore_n_slowest",
             "before_range_ns",
             "before_range_pct_of_median",
             "after_range_ns",
@@ -2124,7 +2354,8 @@ def run_measurement(
             return 0
         args.out.mkdir(parents=True, exist_ok=True)
         write_manifest(args.out, manifest)
-        run_rounds(args, manifest, workspace)
+        executables = preflight_builds(args, manifest, workspace)
+        run_rounds(args, manifest, executables, workspace)
     except KeyboardInterrupt:
         print("\nAborted. Restoring source tree via:", file=sys.stderr)
         print(f"  sl goto {start_rev}", file=sys.stderr, flush=True)

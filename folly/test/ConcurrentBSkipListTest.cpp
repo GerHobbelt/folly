@@ -5543,9 +5543,9 @@ StressResult runSplitHeavySkipperStress(int seconds) {
   std::atomic<int64_t> corrupted{0};
 
   std::vector<std::thread> threads;
-  threads.reserve(12);
+  threads.reserve(folly::kIsSanitizeThread ? 4 : 12);
 
-  for (int w = 0; w < 4; ++w) {
+  for (int w = 0; w < (folly::kIsSanitizeThread ? 2 : 4); ++w) {
     threads.emplace_back([&]() {
       while (!stop.load(std::memory_order_relaxed)) {
         int key = nextOdd.fetch_add(2, std::memory_order_relaxed);
@@ -5557,7 +5557,7 @@ StressResult runSplitHeavySkipperStress(int seconds) {
     });
   }
 
-  for (int r = 0; r < 8; ++r) {
+  for (int r = 0; r < (folly::kIsSanitizeThread ? 2 : 8); ++r) {
     threads.emplace_back([&]() {
       while (!stop.load(std::memory_order_relaxed)) {
         typename ListType::Skipper skipper(list);
@@ -5595,7 +5595,8 @@ TEST(ConcurrentBSkipList, SafeLockedReadsZeroMisses) {
 }
 
 TEST(ConcurrentBSkipList, SafeLockedSplitHeavyReadsZeroMisses) {
-  auto result = runSplitHeavySkipperStress<SafeSplitHeavyList>(3);
+  auto result = runSplitHeavySkipperStress<SafeSplitHeavyList>(
+      folly::kIsSanitizeThread ? 2 : 3);
   LOG(INFO) << "Safe split-heavy (KeyReadPolicy::Locked, 16B key): missed="
             << result.missed << " corrupted=" << result.corrupted;
   EXPECT_EQ(result.missed, 0);
@@ -5667,9 +5668,9 @@ VersionedKeyStressResult runVersionedSplitHeavySkipperStress(int seconds) {
   std::atomic<int64_t> mismatchedFields{0};
 
   std::vector<std::thread> threads;
-  threads.reserve(12);
+  threads.reserve(folly::kIsSanitizeThread ? 4 : 32);
 
-  for (int w = 0; w < 4; ++w) {
+  for (int w = 0; w < (folly::kIsSanitizeThread ? 2 : 4); ++w) {
     threads.emplace_back([&]() {
       while (!stop.load(std::memory_order_relaxed)) {
         int64_t key = nextOdd.fetch_sub(2, std::memory_order_relaxed);
@@ -5681,7 +5682,7 @@ VersionedKeyStressResult runVersionedSplitHeavySkipperStress(int seconds) {
     });
   }
 
-  for (int r = 0; r < 8; ++r) {
+  for (int r = 0; r < (folly::kIsSanitizeThread ? 2 : 8); ++r) {
     threads.emplace_back([&]() {
       while (!stop.load(std::memory_order_relaxed)) {
         typename ListType::Skipper skipper(list);
@@ -5716,7 +5717,8 @@ VersionedKeyStressResult runVersionedSplitHeavySkipperStress(int seconds) {
 TEST(
     ConcurrentBSkipList, SafeLockedVersionedLargeKeySplitHeavyReadsZeroMisses) {
   auto result =
-      runVersionedSplitHeavySkipperStress<SafeVersionedSplitHeavyList>(3);
+      runVersionedSplitHeavySkipperStress<SafeVersionedSplitHeavyList>(
+          folly::kIsSanitizeThread ? 2 : 3);
   LOG(INFO)
       << "Safe split-heavy versioned 16B key (KeyReadPolicy::Locked): missed="
       << result.missed
@@ -5730,7 +5732,8 @@ TEST(
 TEST(
     ConcurrentBSkipList, OptimisticVersionedLargeKeySplitHeavyReadsZeroMisses) {
   auto result =
-      runVersionedSplitHeavySkipperStress<OptimisticVersionedSplitHeavyList>(3);
+      runVersionedSplitHeavySkipperStress<OptimisticVersionedSplitHeavyList>(
+          folly::kIsSanitizeThread ? 2 : 3);
   LOG(INFO)
       << "Optimistic split-heavy versioned 16B key (RelaxedAtomic): missed="
       << result.missed

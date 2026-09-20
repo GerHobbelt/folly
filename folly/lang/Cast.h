@@ -43,7 +43,9 @@ FOLLY_ERASE like_t<S, T>* down_cast(S* ptr) noexcept {
   static_assert(std::is_polymorphic<Q>::value, "not polymorphic");
   static_assert(std::is_base_of<Q, T>::value, "not down-castable");
   using R = like_t<S, T>;
+#if FOLLY_HAS_RTTI
   FOLLY_SAFE_DCHECK(dynamic_cast<R*>(ptr), "not a runtime down-cast");
+#endif
   return static_cast<R*>(ptr);
 }
 template <typename T, typename S>
@@ -55,7 +57,11 @@ template <typename Dst, typename Src>
   requires std::is_function_v<Src>
 FOLLY_ERASE Dst* reinterpret_function_cast(Src* src) noexcept {
   FOLLY_PUSH_WARNING
+  //  Not every clang that reaches this header knows the warning group, and an
+  //  unknown group is itself an error under -Werror.
+#if FOLLY_HAS_WARNING("-Wcast-function-type-mismatch")
   FOLLY_CLANG_DISABLE_WARNING("-Wcast-function-type-mismatch")
+#endif
   return reinterpret_cast<Dst*>(src);
   FOLLY_POP_WARNING
 }
