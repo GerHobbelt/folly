@@ -826,7 +826,7 @@ struct alignas(constexpr_max(kRequiredVectorAlignment, alignof(ItemType)))
   // register, which lets the match index be derived without the round trip
   // through a NEON nibble mask that tagMatchIter above has to perform.
   template <typename F>
-  FOLLY_ALWAYS_INLINE bool forEachTagMatch(uint8x16_t needleV, F&& func) const {
+  FOLLY_ALWAYS_INLINE bool forEachTagMatch(uint8x16_t needleV, F func) const {
     svbool_t pred = svwhilelt_b8_u32(0, kCapacity);
     svuint8_t tagV = svld1_u8(pred, &tags_[0]);
     svbool_t rem =
@@ -928,7 +928,7 @@ struct alignas(constexpr_max(kRequiredVectorAlignment, alignof(ItemType)))
   // Visits the index of each slot whose tag matches, stopping early if func
   // returns true; the return value is whether it stopped early.
   template <typename N, typename F>
-  FOLLY_ALWAYS_INLINE bool forEachTagMatch(N needleV, F&& func) const {
+  FOLLY_ALWAYS_INLINE bool forEachTagMatch(N needleV, F func) const {
     auto [hits, nonzero] = tagMatchIter(needleV);
     if (nonzero) {
       do {
@@ -2523,7 +2523,7 @@ class F14Table : public Policy {
           auto hp = splitHash(
               this->computeItemHash(const_cast<Item const&>(srcItem)));
           FOLLY_SAFE_CHECK(hp.second == srcChunk->tag(srcI), "");
-          prefetchAddr(chunkAt(moduloByChunkCount(hp.first)));
+          prefetchAddr(std::to_address(chunkAt(moduloByChunkCount(hp.first))));
           if (pendingItem != nullptr) {
             auto dstIter = allocateTag(fullness, pendingHp);
             this->moveItemDuringRehash(dstIter.itemAddr(), *pendingItem);

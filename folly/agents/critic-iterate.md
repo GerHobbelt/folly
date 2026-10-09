@@ -213,155 +213,15 @@ launches a cold reader. Use the same pair below this threshold when the user
 requests a cold read or the artifact follows a known first-read comprehension
 failure. "Fresh" means unprimed by the author's diagnosis, not context-free.
 
-Before the first prose review, derive a **cold-reader brief** from the request
-and artifact destination. In 2–3 short sentences, normally 60 words or fewer,
-say who the reader is, what they already know, and what they are trying to
-accomplish, without supplying the conclusion or causal story. Include only the
-non-goals or unresolved facts needed to bound the review. Omit prior critique
-and coverage lists. Reuse the brief verbatim in the fresh task note and every
-cold-reader prompt. Treat it as complete: knowing a system does not imply
-knowing the terms or details of the work under review.
-
-Keep the brief fixed unless its source inputs change or show it is wrong. If it
-changes, immediately show the old brief, new brief, and reason; mention the
-change in the final debrief and run a new review pair. If a brief exceeds 100
-words, explain why in the next accountability artifact and final debrief.
-
-**Prose review round.** After the author-side cycle converges, format the
-candidate, then start the review round. The fresh reviewer owns the round and
-starts the cold reader as a nested CLI call. The runtime preambles own reviewer
-behavior and execution order.
-
-For a substantial document with a distinct opening and body that explains why
-something happens, other than a commit or diff message, cold-check the opening.
-Put its exact title and opening, but not the body, in the cold task. Give it
-only the cold-reader brief and that opening, with no candidate path. For other
-prose, give the cold reader only the whole candidate. The fresh reviewer returns
-one coherent set of candidate findings after comparing its independent frame,
-the candidate, and the cold account.
-
-For non-prose, the fresh reviewer applies the same evidence and design checks
-before opening the artifact, then verifies material claims introduced by it and
-returns an alternative or findings.
-
-**Fresh reviewer inputs.** Build its prompt from only:
-
-- **A short task note:**
-  - Identify the artifact as prose or non-prose. For prose, include the
-    cold-reader brief verbatim, say whether the cold reader sees only the
-    opening or the whole candidate, and mark its source inputs as required.
-    Otherwise state its goal and intended users.
-  - For an investigation, include the question the reviewer must answer unless
-    the artifact's goal already states it.
-  - Include external facts or requirements needed to verify correctness when
-    allowed sources cannot supply them. State them as verification inputs, not
-    required artifact wording. Do not supply derivable conclusions or prior
-    critique; if critique exposed a fact or requirement, include only that.
-  - Derive the reader's starting knowledge from the artifact's final location.
-    For stacked commits, review each commit as it will appear after its
-    predecessors land. Do not assume the reader has read their messages. Omit
-    process history.
-- Each full rule file whose declared trigger covers the artifact type or a
-  decision under review; omit files that are only topically related. Batch reads
-  where practical. When a governing rule is also the candidate, read and apply
-  it only after `REVIEW FRAME:`.
-- Sources, measurements, or run results needed to verify material claims.
-- The frozen candidate as an embargoed path. Any diff that exposes it shares the
-  embargo. For rule-file candidates, earlier versions do too.
-- For prose, the exact nested cold-review command and its prompt path. The path
-  is execution-only, not a readable input.
-- For review of a change, read-only access to the diff.
-
-Treat task-note wording as evidence, not approved prose: define, replace, or cut
-language the intended reader would not understand.
-
-Mark each source path as required to read or merely permitted.
-
-For prose, a requested addition must name the reader task or required
-relationship it serves. A requested cut must show that the artifact's purpose
-does not need that fact. Truth, relatedness, or hypothetical usefulness is not
-enough to keep it; "shorter" alone is not enough to cut it.
-
-**Integration and closure.** The General Cycle's no-edit rule governs
-author-side passes. Before acting on review, mark any useful proposal outside
-the user's agreed task as `SCOPE_EXPANSION`. Without user approval, do not apply
-it or let it block completion.
-
-For prose, compare the candidate with the independent frame by reader model and
-structure, not sentence by sentence. Neither is preferred; keep the structure
-that better serves the reader.
-
-For external prose review, classify every remaining fresh-reviewer finding
-before editing; its response already integrates the cold report:
-
-- `MUST_TAKE`: must be fixed; leaving it would materially harm correctness or
-  the reader's task.
-- `MINOR`: worth fixing, but the artifact still works without it.
-- `REJECTED`: wrong, already addressed, or net-negative.
-
-A material error, missed requirement, wrong action, or reader blocker is
-`MUST_TAKE`. Escalate if the allowed evidence cannot repair a material finding.
-Before applying a reviewer finding that would change the artifact, verify its
-factual claims.
-
-If a `MUST_TAKE` finding changes a proposed fix's behavior, invalidates a
-fallback, or exposes a deciding correctness assumption, reapply
-`design-vetting.md` before editing. Pure presentation or citation changes do not
-trigger this.
-
-A successful fresh review and its cold read count as 1 review round. The review
-budget defaults to 1 round. A personal rule can set a different default with
-`critic-iterate-K`.
-
-After each review round:
-
-1. Fix every `MUST_TAKE` and `MINOR` finding.
-2. Run the General Cycle until a full pass makes no edit.
-3. Format, then cold-read the final candidate. Any edit returns to step 2. Any
-   material problem fixed in steps 2 or 3, or material change made after the
-   review started, becomes `MUST_TAKE`.
-4. Take the first action that applies:
-   - If neither the last fresh review nor later checks found a `MUST_TAKE`
-     issue, finish.
-   - If every `MUST_TAKE` fix since the last fresh review was mechanical, verify
-     each one directly and finish. Rewording prose is not mechanical.
-   - If review budget remains, start another review round and return to step 1.
-   - Otherwise, reread the finished draft.
-     - Start another review round despite the exhausted budget only when:
-       - later edits could cause an important misunderstanding or wrong action;
-         and
-       - no fresh reviewer checked or proposed the resulting meaning.
-
-       Tell the user first. When the round finishes, return to step 1 and
-       mention the extra round in the final debrief.
-
-     - Otherwise, finish with a notice that starts with the exact text
-       `OutOfBudget:`:
-
-       > OutOfBudget: This output may have easy-to-spot gaps because I ran out
-       > of review budget. Reply `c-i+K` to allow up to K more review rounds;
-       > later rounds usually yield smaller gains. The default is 1 round;
-       > personal rules may override it with `critic-iterate-N`.
-
-Record dispositions only in the accountability artifact; summarize
-`SCOPE_EXPANSION` items in the final debrief. For other artifacts, take the
-better version, merge, or apply its findings.
-
-Do not edit the candidate while either reviewer runs. If it changes after a
-round starts, that round no longer covers the revision. After the reviewers
-finish, resume above at step 2.
-
-**Run external review:** follow `{FA}/critic-iterate/run-review.md`.
-
 **Commit / diff messages.** Before opening the author draft or cold report, put
 a complete independent message, including its Test Plan, in `REVIEW FRAME:`.
 Then follow the general comparison, triage, and closure rules.
 
 **Context packet discipline (commit messages).** The author or orchestrator
 still builds a context packet for commit messages. For fresh review, pass only
-the short task note described above, not the whole packet. Structure the
-author-side packet into three named sections so the author can scan it
-predictably:
+the short task note defined in `{FA}/critic-iterate/review-task.md`, not the
+whole packet. Structure the author-side packet into three named sections so the
+author can scan it predictably:
 
 Before constructing the author packet or reviewer task note, reread the active
 workstream ledger when one exists. Build the author packet from current task
@@ -401,6 +261,53 @@ constraint or rejected alternative; see `write.md` "## What evergreen context
 means"). The packet-vs-final-message split is input-vs-keep, not a different
 taxonomy. Omitting a decision the reader needs starves the loop; forcing process
 history the reader does not need invents motivation and adds noise.
+
+To build external-review inputs, follow `{FA}/critic-iterate/review-task.md`.
+
+After the author-side cycle converges, format the prose candidate.
+
+Do not edit the candidate while either reviewer runs. If it changes after a
+round starts, that round no longer covers the revision. In that case, after the
+reviewers finish, resume at step 2 under “Integration and closure” below.
+
+**Run external review:** follow `{FA}/critic-iterate/run-review.md`.
+
+**Integration and closure.** To integrate a usable review, follow
+`{FA}/critic-iterate/integrate-review.md`.
+
+A successful fresh review and its cold read count as 1 review round. The review
+budget defaults to 1 round. A personal rule can set a different default with
+`critic-iterate-K`.
+
+After each review round:
+
+1. Fix every `MUST_TAKE` and `MINOR` finding.
+2. Run the General Cycle until a full pass makes no edit.
+3. Format, then cold-read the final candidate. Any edit returns to step 2. Any
+   material problem fixed in steps 2 or 3, or material change made after the
+   review started, becomes `MUST_TAKE`.
+4. Take the first action that applies:
+   - If neither the last fresh review nor later checks found a `MUST_TAKE`
+     issue, finish.
+   - If every `MUST_TAKE` fix since the last fresh review was mechanical, verify
+     each one directly and finish. Rewording prose is not mechanical.
+   - If review budget remains, start another review round and return to step 1.
+   - Otherwise, reread the finished draft.
+     - Start another review round despite the exhausted budget only when:
+       - later edits could cause an important misunderstanding or wrong action;
+         and
+       - no fresh reviewer checked or proposed the resulting meaning.
+
+       Tell the user first. When the round finishes, return to step 1 and
+       mention the extra round in the final debrief.
+
+     - Otherwise, finish with a notice that starts with the exact text
+       `OutOfBudget:`:
+
+       > OutOfBudget: This output may have easy-to-spot gaps because I ran out
+       > of review budget. Reply `c-i+K` to allow up to K more review rounds;
+       > later rounds usually yield smaller gains. The default is 1 round;
+       > personal rules may override it with `critic-iterate-N`.
 
 **Debrief tail.** End multi-step debriefs with
 `Delegated checks: T required, A attempts, F failed`; count each required

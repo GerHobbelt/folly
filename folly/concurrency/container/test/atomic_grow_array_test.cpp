@@ -16,11 +16,16 @@
 
 #include <folly/concurrency/container/atomic_grow_array.h>
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <numeric>
+#include <ranges>
+#include <vector>
 
 #include <folly/lang/Keep.h>
 #include <folly/portability/GTest.h>
+#include <folly/test/DeterministicSchedule.h>
 
 extern "C" FOLLY_KEEP int check_folly_atomic_grow_array_index(
     folly::atomic_grow_array<int>& array, size_t const index) {
@@ -55,6 +60,17 @@ static_assert( //
         folly::atomic_grow_array<int>::iterator const&>);
 
 static_assert( //
+    std::random_access_iterator<folly::atomic_grow_array<int>::iterator>);
+static_assert( //
+    std::random_access_iterator<folly::atomic_grow_array<int>::const_iterator>);
+
+static_assert( //
+    std::ranges::random_access_range<folly::atomic_grow_array<int>::view>);
+static_assert( //
+    std::ranges::random_access_range<
+        folly::atomic_grow_array<int>::const_view>);
+
+static_assert( //
     std::is_nothrow_default_constructible_v<
         folly::atomic_grow_array<int>::view>);
 static_assert( //
@@ -86,6 +102,19 @@ struct AtomicGrowArrayTest : testing::Test {
     template <typename V>
     using atom = std::atomic<V>;
   };
+
+  using dsched = folly::test::DeterministicSchedule;
+  template <typename V>
+  using dsched_atom = folly::test::DeterministicAtomic<V>;
+  struct dsched_policy_base {
+    template <typename V>
+    using atom = dsched_atom<V>;
+  };
+  using dsched_array = folly::atomic_grow_array<
+      int,
+      folly::atomic_grow_array_policy_default<int, dsched_atom>>;
+
+  static constexpr size_t dsched_num_seeds = 256;
 };
 
 TEST_F(AtomicGrowArrayTest, example) {
@@ -161,6 +190,49 @@ TEST_F(AtomicGrowArrayTest, empty) {
   }
 }
 
+TEST_F(AtomicGrowArrayTest, iterator) {
+  folly::atomic_grow_array<int> array;
+  for (int i = 0; i < 4; ++i) {
+    array[i] = 3 - i;
+  }
+  auto view = array.as_view();
+  ASSERT_EQ(4, view.size());
+  std::ranges::sort(view);
+  EXPECT_EQ(
+      (std::vector<int>{0, 1, 2, 3}),
+      (std::vector<int>(view.begin(), view.end())));
+
+  auto const check = [](auto const b, auto const e) {
+    EXPECT_EQ(0, *b);
+    EXPECT_EQ(&*b, b.operator->());
+    EXPECT_EQ(1, *(b + 1));
+    EXPECT_EQ(1, *(1 + b));
+    EXPECT_EQ(2, *(e - 2));
+    EXPECT_EQ(2, b[2]);
+    EXPECT_EQ(4, e - b);
+
+    EXPECT_TRUE(b < e);
+    EXPECT_FALSE(e < b);
+    EXPECT_FALSE(b < b);
+    EXPECT_TRUE(b <= e);
+    EXPECT_TRUE(b <= b);
+    EXPECT_FALSE(e <= b);
+    EXPECT_TRUE(e > b);
+    EXPECT_FALSE(b > e);
+    EXPECT_FALSE(b > b);
+    EXPECT_TRUE(e >= b);
+    EXPECT_TRUE(b >= b);
+    EXPECT_FALSE(b >= e);
+
+    auto it = e;
+    EXPECT_EQ(3, *--it);
+    EXPECT_EQ(3, *it--);
+    EXPECT_EQ(2, *it);
+  };
+  check(view.begin(), view.end());
+  check(view.cbegin(), view.cend());
+}
+
 TEST_F(AtomicGrowArrayTest, stress) {
   constexpr size_t num_iters = size_t(1) << 6;
   constexpr size_t num_threads = size_t(1) << 5;
@@ -199,5 +271,71 @@ TEST_F(AtomicGrowArrayTest, stress) {
       auto const view = std::as_const(array).as_view();
       EXPECT_EQ(expected, count(view));
     }
+  }
+}
+
+TEST_F(AtomicGrowArrayTest, dsched_size_matches_capacity_after_racing_growth) {
+  for (size_t seed = 0; seed < dsched_num_seeds; ++seed) {
+    SCOPED_TRACE(seed);
+    dsched sched{dsched::uniform(seed)};
+    dsched_array array;
+    std::vector<std::thread> threads;
+    for (size_t index : {0u, 1u, 3u}) {
+      threads.push_back(dsched::thread([&, index] { array[index]; }));
+    }
+    for (auto& th : threads) {
+      dsched::join(th);
+    }
+    EXPECT_EQ(array.as_view().size(), array.size());
+  }
+}
+
+TEST_F(AtomicGrowArrayTest, dsched_grow_sees_current_size_after_lost_race) {
+  struct policy_t : dsched_policy_base {
+    size_t grow(size_t curr, size_t index) const {
+      return std::max(2 * curr, index + 1);
+    }
+    int make() const { return 0; }
+  };
+  //  a grows from 0 to 3 and b grows from 0 to 2; if b grows first, then a must
+  //  grow from 2 to 4, even if a had already begun to grow from 0
+  for (size_t seed = 0; seed < dsched_num_seeds; ++seed) {
+    SCOPED_TRACE(seed);
+    dsched sched{dsched::uniform(seed)};
+    folly::atomic_grow_array<int, policy_t> array;
+    size_t b_size = 0;
+    auto a = dsched::thread([&] { array[2]; });
+    auto b = dsched::thread([&] {
+      array[1];
+      b_size = array.as_view().size();
+    });
+    dsched::join(a);
+    dsched::join(b);
+    auto const size = array.as_view().size();
+    EXPECT_EQ(b_size == 2 ? 4 : size, size);
+    EXPECT_TRUE(size == 3 || size == 4);
+  }
+}
+
+TEST_F(AtomicGrowArrayTest, dsched_size_monotonic_under_racing_growth) {
+  constexpr size_t num_reads = 16;
+  for (size_t seed = 0; seed < dsched_num_seeds; ++seed) {
+    SCOPED_TRACE(seed);
+    dsched sched{dsched::uniform(seed)};
+    dsched_array array;
+    std::vector<size_t> sizes;
+    std::vector<std::thread> threads;
+    threads.push_back(dsched::thread([&] {
+      for (size_t i = 0; i < num_reads; ++i) {
+        sizes.push_back(array.size());
+      }
+    }));
+    for (size_t index : {0u, 1u, 3u}) {
+      threads.push_back(dsched::thread([&, index] { array[index]; }));
+    }
+    for (auto& th : threads) {
+      dsched::join(th);
+    }
+    EXPECT_TRUE(std::is_sorted(sizes.begin(), sizes.end()));
   }
 }

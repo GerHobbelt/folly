@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <iterator>
 #include <new>
 #include <span>
 #include <thread>
@@ -29,6 +30,7 @@
 #include <folly/lang/Align.h>
 #include <folly/lang/Bits.h>
 #include <folly/lang/New.h>
+#include <folly/synchronization/AtomicUtil.h>
 
 namespace folly {
 
@@ -177,16 +179,21 @@ class atomic_grow_array : private Policy {
 
     down& operator++() noexcept { return ++index_, as_down(); }
     down operator++(int) noexcept { return down{array_, index_++}; }
+    down& operator--() noexcept { return --index_, as_down(); }
+    down operator--(int) noexcept { return down{array_, index_--}; }
     down& operator+=(difference_type const n) noexcept {
       return index_ += n, as_down();
     }
-    down operator+(difference_type const n) noexcept {
+    down operator+(difference_type const n) const noexcept {
       return down{as_down()} += n;
+    }
+    friend down operator+(difference_type const n, down const rhs) noexcept {
+      return rhs + n;
     }
     down& operator-=(difference_type const n) noexcept {
       return index_ -= n, as_down();
     }
-    down operator-(difference_type const n) noexcept {
+    down operator-(difference_type const n) const noexcept {
       return down{as_down()} -= n;
     }
     friend difference_type operator-(down const lhs, down const rhs) noexcept {
@@ -199,19 +206,22 @@ class atomic_grow_array : private Policy {
       return lhs.index_ != rhs.index_;
     }
     friend bool operator<(down const lhs, down const rhs) noexcept {
-      return lhs.index < rhs.index_;
+      return lhs.index_ < rhs.index_;
     }
     friend bool operator<=(down const lhs, down const rhs) noexcept {
-      return lhs.index <= rhs.index_;
+      return lhs.index_ <= rhs.index_;
     }
     friend bool operator>(down const lhs, down const rhs) noexcept {
-      return lhs.index > rhs.index_;
+      return lhs.index_ > rhs.index_;
     }
     friend bool operator>=(down const lhs, down const rhs) noexcept {
-      return lhs.index >= rhs.index_;
+      return lhs.index_ >= rhs.index_;
     }
-    reference operator*() noexcept { return *array_->list[index_]; }
-    reference operator[](difference_type const n) { return *(*this + n); }
+    reference operator*() const noexcept { return *array_->list[index_]; }
+    pointer operator->() const noexcept { return array_->list[index_]; }
+    reference operator[](difference_type const n) const noexcept {
+      return *(*this + n);
+    }
   };
 
   template <bool Const>
@@ -361,11 +371,13 @@ class atomic_grow_array : private Policy {
 
     using base::base;
     using base::operator++;
+    using base::operator--;
     using base::operator+;
     using base::operator+=;
     using base::operator-;
     using base::operator-=;
     using base::operator*;
+    using base::operator->;
     using base::operator[];
   };
 
@@ -387,11 +399,13 @@ class atomic_grow_array : private Policy {
 
     using base::base;
     using base::operator++;
+    using base::operator--;
     using base::operator+;
     using base::operator+=;
     using base::operator-;
     using base::operator-=;
     using base::operator*;
+    using base::operator->;
     using base::operator[];
 
     /* implicit */ const_iterator(iterator that) noexcept : base{that} {}
@@ -523,12 +537,13 @@ class atomic_grow_array : private Policy {
     //  mutex slab, whether directly or indirectly
     array* p = array_.load(mo_acquire);
     array* q = nullptr;
-    size_type const size = policy().grow(p ? p->size : 0, index);
-    assert(index < size);
     do {
       if (p && index < p->size) {
         return p;
       }
+      //  p may have changed after a race loss, so grow from its current size
+      size_type const size = policy().grow(p ? p->size : 0, index);
+      assert(index < size);
       //  the race begins here
       q = new_array(size, p);
       if (!q) {
@@ -540,7 +555,8 @@ class atomic_grow_array : private Policy {
       //  see: folly::atomic_compare_exchange_strong_explicit
       if (array_.compare_exchange_strong(p, q, mo_acq_rel, mo_acquire)) {
         //  the race is won
-        size_.store(size, mo_release);
+        //  but a winner of a later race may already have stored a larger size
+        folly::atomic_fetch_max_cond(size_, size, mo_release);
         return q;
       }
       //  the race is lost
@@ -584,7 +600,8 @@ class atomic_grow_array : private Policy {
     //  initialize new elements and the pointers to them; may throw
     for (size_type i = base; i < size; ++i) {
       //  detect race losses early
-      //  just need release, but acquire for consistency with c/x in at_slow
+      //  must be acquire, as for the failure order of the c/x in at_slow: on a
+      //  race loss, the caller dereferences the array given back in next
       if (auto const p = array_.load(std::memory_order_acquire); p != next) {
         next = p;
         return nullptr;
