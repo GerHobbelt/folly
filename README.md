@@ -176,11 +176,6 @@ By default `getdeps.py` will build the tests for folly. To run them:
     cd folly
     python3 ./build/fbcode_builder/getdeps.py --allow-system-packages test
 
-### `build.sh`/`build.bat` wrapper
-
-`build.sh` can be used on Linux and MacOS, on Windows use
-the `build.bat` script instead. Its a wrapper around `getdeps.py`.
-
 ### Iterating on a `getdeps.py` build
 
 To invoke `cmake` again against a build getdeps made, there is a helpful `run_cmake.py` script output in the scratch-path build directory. You can find the scratch build directory from logs or with `python3 ./build/fbcode_builder/getdeps.py show-build-dir`.
@@ -200,7 +195,7 @@ At time of writing (Dec 2021) there is a build break on GCC 11.x based systems i
 
 Note that many tests are disabled for folly Windows builds, you can see them in the log from the cmake configure step, or by looking for WINDOWS_DISABLED in `CMakeLists.txt`
 
-That said, `getdeps.py` builds work on Windows and are tested in CI.
+That said, Windows is tested in CI with the CMake build above, and `getdeps.py` builds work there as well.
 
 If you prefer, you can try Vcpkg. folly is available in [Vcpkg](https://github.com/Microsoft/vcpkg#vcpkg) and releases may be built via `vcpkg install folly:x64-windows`.
 

@@ -77,15 +77,13 @@ function (folly_fetch_from_manifest name manifest)
   else ()
     message(FATAL_ERROR "no archive or pinned commit in ${path}")
   endif ()
-  # A shared dependency has to be installed alongside whatever links it, and
-  # folly installs nothing it fetches. $<BUILD_LOCAL_INTERFACE:> hides such a
-  # dependency from folly's usage requirements but not from the link dependents
-  # that install(EXPORT folly) records for a shared library, so keep it static
-  # and position independent and let it fold into folly.
+  # Some dependencies build a static library whatever BUILD_SHARED_LIBS says,
+  # gflags and libevent among them, and folly links those into its shared
+  # libraries. An ELF linker takes that only if the objects are position
+  # independent.
   if (BUILD_SHARED_LIBS)
-    set(BUILD_SHARED_LIBS OFF)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-  endif()
+  endif ()
   # CMAKE_REQUIRED_* configure folly's own check_* calls, and a subproject
   # inherits them. An imported target such as Threads::Threads is absent from
   # the separate project a try_compile() generates, so a dependency's own checks
@@ -93,6 +91,7 @@ function (folly_fetch_from_manifest name manifest)
   cmake_push_check_state(RESET)
   FetchContent_MakeAvailable(${name})
   cmake_pop_check_state()
+  set_property(GLOBAL APPEND PROPERTY FOLLY_FETCHED_DEPS ${name})
 endfunction ()
 
 set(BOOST_LINK_STATIC
@@ -177,6 +176,12 @@ if (NOT LIBGFLAGS_FOUND)
   # As a subproject gflags builds only its single-threaded library.
   set(GFLAGS_BUILD_gflags_LIB ON)
   set(GFLAGS_BUILD_gflags_nothreads_LIB OFF)
+  # gflags builds a static library even for a shared build, and its `gflags`
+  # aliases prefer it. Every shared library linking an alias then embeds its
+  # own copy, and the second copy to register its flags aborts the process.
+  if (BUILD_SHARED_LIBS)
+    set(GFLAGS_BUILD_STATIC_LIBS OFF)
+  endif ()
   folly_fetch_from_manifest(gflags gflags)
   # FindGflags reports through variables; the subproject alias already carries
   # the generated include directory, so only the library needs one.
@@ -301,12 +306,6 @@ endif ()
 # configure; that is only workable because nothing here compiles against
 # OpenSSL at configure time.
 function (folly_build_openssl)
-  if (WIN32)
-    message(
-      FATAL_ERROR
-        "OpenSSL not found. Building it here needs a Unix shell, so install "
-        "OpenSSL and set OPENSSL_ROOT_DIR.")
-  endif ()
   folly_manifest_path(openssl path)
   file(READ "${path}" text)
   if (NOT text MATCHES
@@ -324,21 +323,48 @@ function (folly_build_openssl)
   set(version "${CMAKE_MATCH_1}")
   message(STATUS "OpenSSL not found, building ${url}")
   set(prefix "${CMAKE_CURRENT_BINARY_DIR}/openssl")
-  # Configure does not find the SDK on its own the way the compiler CMake
-  # drives does, and without it every header lookup fails.
+  # Configure is a Perl script on every platform.
+  find_program(FOLLY_OPENSSL_PERL NAMES perl)
+  if (NOT FOLLY_OPENSSL_PERL)
+    message(FATAL_ERROR
+      "OpenSSL not found, and building it needs perl on PATH. Install perl, "
+      "or install OpenSSL and set OPENSSL_ROOT_DIR.")
+  endif()
   set(extra "")
-  if (APPLE)
-    set(sysroot "${CMAKE_OSX_SYSROOT}")
-    if (NOT sysroot)
-      execute_process(
+  set(jobs "")
+  if (WIN32)
+    # jom reads nmake's input and builds in parallel; nmake is the fallback.
+    find_program(FOLLY_OPENSSL_MAKE NAMES jom nmake)
+    set(make_hint
+        "Run from a Visual Studio developer prompt, or install OpenSSL and "
+        "set OPENSSL_ROOT_DIR.")
+    # The target getdeps builds. /FS lets several cl.exe share one .pdb.
+    set(extra VC-WIN64A-masm -utf-8 /FS)
+    set(libs "${prefix}/lib/libssl.lib" "${prefix}/lib/libcrypto.lib")
+  else()
+    find_program(FOLLY_OPENSSL_MAKE NAMES make)
+    set(make_hint "Install make, or install OpenSSL and set OPENSSL_ROOT_DIR.")
+    set(jobs -j)
+    set(libs "${prefix}/lib/libssl.a" "${prefix}/lib/libcrypto.a")
+    # Configure does not find the SDK on its own the way the compiler CMake
+    # drives does, and without it every header lookup fails.
+    if (APPLE)
+      set(sysroot "${CMAKE_OSX_SYSROOT}")
+      if (NOT sysroot)
+        execute_process(
         COMMAND xcrun --show-sdk-path
-        OUTPUT_VARIABLE sysroot
+          OUTPUT_VARIABLE sysroot
         OUTPUT_STRIP_TRAILING_WHITESPACE)
-    endif ()
-    if (sysroot)
-      set(extra "-isysroot" "${sysroot}")
+      endif ()
+      if (sysroot)
+        set(extra "-isysroot" "${sysroot}")
+      endif()
     endif ()
   endif ()
+  if (NOT FOLLY_OPENSSL_MAKE)
+    message(FATAL_ERROR "OpenSSL not found, and building it needs a make. "
+                        ${make_hint})
+  endif()
   include(ExternalProject)
   ExternalProject_Add(
     openssl
@@ -347,14 +373,16 @@ function (folly_build_openssl)
     # Timestamp the extracted tree, so a changed pin rebuilds it.
     DOWNLOAD_EXTRACT_TIMESTAMP FALSE
     BUILD_IN_SOURCE ON
-    CONFIGURE_COMMAND <SOURCE_DIR>/Configure --prefix=${prefix} --libdir=lib
-                      no-shared ${extra}
-    BUILD_COMMAND make -j
+    CONFIGURE_COMMAND
+      ${FOLLY_OPENSSL_PERL} <SOURCE_DIR>/Configure --prefix=${prefix}
+      --libdir=lib no-shared ${extra}
+    BUILD_COMMAND ${FOLLY_OPENSSL_MAKE} ${jobs}
     # install_sw leaves out the man pages, which dominate a full install.
-    INSTALL_COMMAND make install_sw
+    INSTALL_COMMAND ${FOLLY_OPENSSL_MAKE} install_sw
     # Without this Ninja has no rule to produce the libraries and refuses to
     # link them.
-    BUILD_BYPRODUCTS "${prefix}/lib/libssl.a" "${prefix}/lib/libcrypto.a")
+    BUILD_BYPRODUCTS ${libs}
+  )
   # An include directory has to exist by generate time even when what it will
   # hold does not.
   file(MAKE_DIRECTORY "${prefix}/include")
@@ -364,15 +392,16 @@ function (folly_build_openssl)
   # because a dependent that fetched folly refers to them from its own scope.
   # add_dependencies() is what orders compiling against the ExternalProject;
   # BUILD_BYPRODUCTS only orders linking.
-  foreach (lib ssl crypto)
-    if (lib STREQUAL ssl)
-      set(target OpenSSL::SSL)
-    else()
-      set(target OpenSSL::Crypto)
-    endif()
+  # ${libs} holds ssl then crypto, so it lines up with ${targets} index for
+  # index. The library file name is not spelled here because its suffix is
+  # .lib on Windows and .a elsewhere.
+  set(targets OpenSSL::SSL OpenSSL::Crypto)
+  foreach (i RANGE 1)
+    list(GET targets ${i} target)
+    list(GET libs ${i} location)
     add_library(${target} STATIC IMPORTED GLOBAL)
     set_target_properties(${target} PROPERTIES
-      IMPORTED_LOCATION "${prefix}/lib/lib${lib}.a"
+      IMPORTED_LOCATION "${location}"
       INTERFACE_INCLUDE_DIRECTORIES "${prefix}/include")
     add_dependencies(${target} openssl)
   endforeach()
