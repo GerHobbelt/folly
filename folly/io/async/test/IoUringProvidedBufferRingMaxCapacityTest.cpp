@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <folly/io/async/IoUringDynamicProvidedBufferRing.h>
+#include <folly/io/async/IoUringProvidedBufferRing.h>
 
 #include <gtest/gtest.h>
 
@@ -23,23 +23,20 @@
 namespace folly {
 namespace {
 
-TEST(
-    IoUringDynamicProvidedBufferRingMaxCapacityTest,
-    AcceptsMaximumBufferCount) {
+TEST(IoUringProvidedBufferRingMaxCapacityTest, Create) {
   io_uring ring{};
-  ring.ring_fd = -1;
+  ASSERT_EQ(0, ::io_uring_queue_init(2, &ring, 0));
 
-  IoUringDynamicProvidedBufferRing::Options options = {
+  IoUringProvidedBufferRing::Options options = {
       .gid = 0,
       .bufferCount = 32768,
       .bufferSize = 32,
   };
+  auto maxRing = IoUringProvidedBufferRing::create(&ring, options);
 
-  // Reaching the registration-specific error proves that validation accepted
-  // the maximum without consuming the host's shared memlock budget.
-  EXPECT_THROW(
-      IoUringDynamicProvidedBufferRing::create(&ring, options),
-      IoUringDynamicProvidedBufferRing::LibUringCallError);
+  EXPECT_EQ(maxRing->count(), 32768);
+  maxRing.reset();
+  ::io_uring_queue_exit(&ring);
 }
 
 } // namespace

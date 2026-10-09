@@ -245,6 +245,7 @@ fb_dirsync_cpp_unittest(
         "AsyncSocketTest2.cpp",
     ],
     labels = ["case-isolation-failure"],
+    source_headers = ["AsyncSocketTest.h", "AsyncSocketTest2.h"],
     supports_static_listing = False,
     deps = [
         "fbsource//third-party/glibc:rt",
@@ -252,6 +253,7 @@ fb_dirsync_cpp_unittest(
         ":blocking_socket",
         ":callback_state_enum",
         ":conn_callback",
+        ":io_uring_test_util",
         ":mocks",
         ":tfo_util",
         ":util",
@@ -830,6 +832,36 @@ fb_dirsync_cpp_unittest(
 )
 
 fb_dirsync_cpp_library(
+    name = "io_uring_test_util",
+    srcs = ["IoUringTestUtil.cpp"],
+    headers = ["IoUringTestUtil.h"],
+    use_raw_headers = True,
+    deps = [
+        "fbsource//third-party/glog:glog",
+        ":async_socket_test_lib",
+        "//folly/io/async:async_socket",
+    ],
+    exported_deps = [
+        "//folly/io:iobuf",
+        "//folly/io/async:async_base",
+        "//folly/io/async:async_transport",
+        "//folly/io/async:io_uring_backend",
+        "//folly/portability:gtest",
+    ],
+)
+
+fb_dirsync_cpp_unittest(
+    name = "async_socket_provided_buffer_test",
+    srcs = ["AsyncSocketProvidedBufferTest.cpp"],
+    headers = [],
+    deps = [
+        ":io_uring_test_util",
+        "//folly/io/async:async_socket",
+        "//folly/portability:gtest",
+    ],
+)
+
+fb_dirsync_cpp_library(
     name = "zero_copy_lib",
     srcs = ["ZeroCopy.cpp"],
     headers = ["ZeroCopy.h"],
@@ -849,6 +881,7 @@ fb_dirsync_cpp_unittest(
     srcs = ["ZeroCopyTest.cpp"],
     headers = [],
     deps = [
+        ":io_uring_test_util",
         ":zero_copy_lib",
         "//folly/portability:gtest",
     ],
@@ -936,6 +969,9 @@ fbcode_target(
         "certs/tests-cert.pem": ":tests-cert.pem",
         "certs/tests-key.pem": ":tests-key.pem",
     },
+    source_headers = [
+        "AsyncSSLSocketTest.h",
+    ],
     supports_static_listing = False,
     deps = [
         "fbsource//third-party/glibc:dl",
@@ -1354,6 +1390,19 @@ fbcode_target(
 
 fbcode_target(
     _kind = cpp_unittest,
+    name = "io_uring_provided_buffer_ring_max_capacity_test",
+    srcs = ["IoUringProvidedBufferRingMaxCapacityTest.cpp"],
+    labels = [
+        tpx_labels.heavyweight8,
+        tpx_labels.serialize_test_cases,
+    ],
+    deps = [
+        "//folly/io/async:io_uring_provided_buffer_ring",
+    ],
+)
+
+fbcode_target(
+    _kind = cpp_unittest,
     name = "io_uring_dynamic_provided_buffer_ring_test",
     srcs = ["IoUringDynamicProvidedBufferRingTest.cpp"],
     deps = [
@@ -1365,10 +1414,6 @@ fbcode_target(
     _kind = cpp_unittest,
     name = "io_uring_dynamic_provided_buffer_ring_max_capacity_test",
     srcs = ["IoUringDynamicProvidedBufferRingMaxCapacityTest.cpp"],
-    labels = [
-        tpx_labels.heavyweight,
-        tpx_labels.serialize_test_cases,
-    ],
     deps = [
         "//folly/io/async:io_uring_dynamic_provided_buffer_ring",
     ],
@@ -1400,6 +1445,8 @@ fbcode_target(
         "//folly/coro:blocking_wait",
         "//folly/coro:collect",
         "//folly/io:iobuf",
+        "//folly/io/async:async_base",
+        "//folly/io/async:scoped_event_base_thread",
         "//folly/io/async:simple_async_io",
         "//folly/portability:gtest",
         "//folly/synchronization:baton",
