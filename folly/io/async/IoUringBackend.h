@@ -83,8 +83,11 @@ class IoUringBackend : public EventBaseBackendBase {
     return options_.timeout.count() > 0 && options_.batchSize > 0;
   }
   bool useBundles() const {
-    return options_.providedBufUseBundles &&
-        (params_.features & IORING_FEAT_RECVSEND_BUNDLE);
+    // Bundles are only supported with the dynamic provided buffer ring;
+    // the fixed (static) ring's bundle support is broken.
+    return (params_.features & IORING_FEAT_RECVSEND_BUNDLE) &&
+        options_.providedBufferRingMode ==
+        IoUringOptions::ProvidedBufferRingMode::Dynamic;
   }
 
   int computeSrcPortForQueueId(
@@ -100,8 +103,6 @@ class IoUringBackend : public EventBaseBackendBase {
   void queueRecvZc(
       int fd, void* buf, unsigned long nbytes, RecvZcCallback&& callback)
       override;
-
-  event_base* getEventBase() override { return nullptr; }
 
   int eb_event_base_loop(int flags) override;
   int eb_event_base_loopbreak() override;
@@ -410,10 +411,8 @@ class IoUringBackend : public EventBaseBackendBase {
     }
 
     void processSubmit(io_uring_sqe* sqe) noexcept override {
-      auto* ev = event_->getEvent();
-      if (ev) {
-        prepPollAdd(sqe, ev->ev_fd, getPollFlags(ev->ev_events));
-      }
+      prepPollAdd(
+          sqe, event_->eb_ev_fd(), getPollFlags(event_->eb_ev_events()));
     }
 
     virtual void processActive() {}

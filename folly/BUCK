@@ -314,10 +314,10 @@ fb_dirsync_cpp_library(
     ],
     force_static = select({
         "DEFAULT": False,
-        "ovr_config//build_mode:arvr_mode[enabled]": select({
-            "DEFAULT": False,
-            "ovr_config//os:macos": True,
-        }),
+        # @fb-only[end= ]: "ovr_config//build_mode:arvr_mode[enabled]": select({
+            # @fb-only[end= ]: "DEFAULT": False,
+            # @fb-only[end= ]: "ovr_config//os:macos": True,
+        # @fb-only[end= ]: }),
     }),
     use_raw_headers = True,
     deps = [
@@ -896,7 +896,7 @@ fb_dirsync_cpp_library(
         # x86_64-conda-linux-gnu-c++ (conda-forge gcc 11.4.0-13) 11.4.0
         # fails to compile Demangle.cpp because of unused static functions despite
         # using [[maybe_unused]] attribute.
-        "ovr_config//distro/constraints:conda": ["-Wno-unused-function"],
+        # @fb-only[end= ]: "ovr_config//distro/constraints:conda": ["-Wno-unused-function"],
     }),
     use_raw_headers = True,
     deps = [
@@ -910,7 +910,7 @@ fb_dirsync_cpp_library(
         "fbsource//xplat/folly:folly_demangle_macos_disable_iberty_config": [],
         "ovr_config//os:linux": ["fbsource//third-party/binutils:iberty-demangle"],
         "ovr_config//os:macos": ["fbsource//third-party/binutils:iberty-demangle"],
-        "ovr_config//runtime:fbcode-no-arvr": ["fbsource//third-party/binutils/tp2:iberty"],
+        # @fb-only[end= ]: "ovr_config//runtime:fbcode-no-arvr": ["fbsource//third-party/binutils/tp2:iberty"],
     }),
     exported_deps = [
         ":fbstring",
@@ -2678,7 +2678,7 @@ fb_dirsync_cpp_library(
         ],
     }),
     exported_preprocessor_flags = select({
-        "//xplat/folly/buck_config:folly-singleton-schedule-at-exit-disabled": [
+        "fbsource//xplat/folly/buck_config:folly-singleton-schedule-at-exit-disabled": [
             "-DFOLLY_SINGLETON_SKIP_SCHEDULE_ATEXIT=1",
         ],
         "DEFAULT": [],
@@ -2756,27 +2756,27 @@ fb_dirsync_cpp_library(
 
 # For things that would go in c++ stdlib <utility>:
 
-fb_native.export_file(
-    name = "src-tree",
-    src = ".",
-    mode = "reference",
-    visibility = ["PUBLIC"],
-)
+# @fb-only[end= ]: fb_native.export_file(
+    # @fb-only[end= ]: name = "src-tree",
+    # @fb-only[end= ]: src = ".",
+    # @fb-only[end= ]: mode = "reference",
+    # @fb-only[end= ]: visibility = ["PUBLIC"],
+# @fb-only[end= ]: )
 
-fb_native.export_file(
-    name = "support/gdb.py",
-    src = "support/gdb.py",
-    visibility = ["PUBLIC"],
-)
+# @fb-only[end= ]: fb_native.export_file(
+    # @fb-only[end= ]: name = "support/gdb.py",
+    # @fb-only[end= ]: src = "support/gdb.py",
+    # @fb-only[end= ]: visibility = ["PUBLIC"],
+# @fb-only[end= ]: )
 
-fb_native.export_file(
-    name = "fibers/scripts/gdb.py",
-    src = "fibers/scripts/gdb.py",
-    visibility = ["PUBLIC"],
-)
+# @fb-only[end= ]: fb_native.export_file(
+    # @fb-only[end= ]: name = "fibers/scripts/gdb.py",
+    # @fb-only[end= ]: src = "fibers/scripts/gdb.py",
+    # @fb-only[end= ]: visibility = ["PUBLIC"],
+# @fb-only[end= ]: )
 
-fb_native.export_file(
-    name = "coro/scripts/co_bt.py",
-    src = "coro/scripts/co_bt.py",
-    visibility = ["PUBLIC"],
-)
+# @fb-only[end= ]: fb_native.export_file(
+    # @fb-only[end= ]: name = "coro/scripts/co_bt.py",
+    # @fb-only[end= ]: src = "coro/scripts/co_bt.py",
+    # @fb-only[end= ]: visibility = ["PUBLIC"],
+# @fb-only[end= ]: )

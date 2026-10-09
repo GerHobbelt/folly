@@ -49,8 +49,6 @@ class EpollBackend : public EventBaseBackendBase {
 
   int getPollableFd() const override { return epollFd_; }
 
-  event_base* getEventBase() override { return nullptr; }
-
   // Returns a non-standard value 2 when called with EVLOOP_NONBLOCK and the
   // loop would block if called in a blocking fashion.
   int eb_event_base_loop(int flags) override;
@@ -108,7 +106,7 @@ class EpollBackend : public EventBaseBackendBase {
   IntrusiveHeap<TimerInfo> timers_;
 
   SocketPair signalFds_;
-  std::map<int, std::set<struct event*>> signals_;
+  std::map<int, std::set<Event*>> signals_;
 };
 } // namespace folly
 #endif
