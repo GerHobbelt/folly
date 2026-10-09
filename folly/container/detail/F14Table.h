@@ -807,7 +807,11 @@ struct alignas(constexpr_max(kRequiredVectorAlignment, alignof(ItemType)))
   // resolve the common no-match branch without waiting on the mask extraction.
   std::pair<SparseMaskIter, bool> tagMatchIter(uint8x16_t needleV) const {
     svbool_t pred = svwhilelt_b8_u32(0, kCapacity);
-    svuint8_t tagV = svld1_u8(pred, &tags_[0]);
+    // Plain-NEON 16-byte load v.s. SVE predicated 12/14-byte load: some of the
+    // remaining bytes will be needed for outboundOverflowCount(). If they are
+    // already in a register from a 16-byte load, the optimizer will get these
+    // bytes from the register and avoid issuing an additional scalar load.
+    svuint8_t tagV = svset_neonq_u8(svundef_u8(), vld1q_u8(&tags_[0]));
     svbool_t matchPred =
         svmatch_u8(pred, tagV, svset_neonq_u8(svundef_u8(), needleV));
     // get info from every byte into the bottom half of every uint16_t
@@ -828,7 +832,9 @@ struct alignas(constexpr_max(kRequiredVectorAlignment, alignof(ItemType)))
   template <typename F>
   FOLLY_ALWAYS_INLINE bool forEachTagMatch(uint8x16_t needleV, F func) const {
     svbool_t pred = svwhilelt_b8_u32(0, kCapacity);
-    svuint8_t tagV = svld1_u8(pred, &tags_[0]);
+    // Plain-NEON 16-byte load v.s. SVE predicated 12/14-byte load: see matching
+    // line in tagMatchIter().
+    svuint8_t tagV = svset_neonq_u8(svundef_u8(), vld1q_u8(&tags_[0]));
     svbool_t rem =
         svmatch_u8(pred, tagV, svset_neonq_u8(svundef_u8(), needleV));
     // svmatch and svbic both set the condition flags, so this test is free.
@@ -957,9 +963,32 @@ struct alignas(constexpr_max(kRequiredVectorAlignment, alignof(ItemType)))
     return LastOccupiedInMask{this->occupiedMask()};
   }
 
+#if FOLLY_F14_SVE_PREDICATE_NATIVE_ACTIVE
+
+  // Predicate-native, unlike occupiedMask() above (used by occupiedIter(),
+  // occupiedRangeIter(), and lastOccupied()): building occupiedMask()'s
+  // packed MaskType requires converting the predicate back into a vector
+  // (mov z,p/z,#imm), which measured as a net loss on Neoverse-V2. Since
+  // this call only needs a single index (or "none"), it can instead extract
+  // one directly via BRKB+CNTP, the same technique forEachTagMatch uses.
+  ResolvedFirstEmpty firstEmpty() const {
+    svbool_t pred = svwhilelt_b8_u32(0, kCapacity);
+    svuint8_t tagV = svset_neonq_u8(svundef_u8(), vld1q_u8(&tags_[0]));
+    svbool_t emptyPred = svcmpeq_n_u8(pred, tagV, 0);
+    if (!svptest_any(pred, emptyPred)) {
+      return {false, 0};
+    }
+    std::size_t i = svcntp_b8(pred, svbrkb_z(pred, emptyPred));
+    return {true, i};
+  }
+
+#else
+
   FirstEmptyInMask firstEmpty() const {
     return FirstEmptyInMask{this->occupiedMask() ^ kFullMask};
   }
+
+#endif
 
   bool occupied(std::size_t index) const { return tags_[index] != 0; }
 
@@ -2523,7 +2552,9 @@ class F14Table : public Policy {
           auto hp = splitHash(
               this->computeItemHash(const_cast<Item const&>(srcItem)));
           FOLLY_SAFE_CHECK(hp.second == srcChunk->tag(srcI), "");
-          prefetchAddr(std::to_address(chunkAt(moduloByChunkCount(hp.first))));
+          prefetchAddr(
+              Chunk::chunkRawAt(
+                  std::to_address(chunks_), moduloByChunkCount(hp.first)));
           if (pendingItem != nullptr) {
             auto dstIter = allocateTag(fullness, pendingHp);
             this->moveItemDuringRehash(dstIter.itemAddr(), *pendingItem);
@@ -2718,9 +2749,12 @@ class F14Table : public Policy {
     }
 
     if (!empty()) {
+      auto* const chunks = std::to_address(chunks_); // hoisted loop-invariant
+      auto const cc = chunkCount(); // hoisted loop-invariant
       if (destroyItemOnClear()) {
-        for (std::size_t ci = 0; ci < chunkCount(); ++ci) {
-          ChunkPtr chunk = chunkAt(ci);
+        for (std::size_t ci = 0; ci < cc; ++ci) {
+          ChunkPtr chunk = std::pointer_traits<ChunkPtr>::pointer_to(
+              *Chunk::chunkRawAt(chunks, ci));
           auto iter = chunk->occupiedIter();
           if (prefetchBeforeDestroy()) {
             for (auto piter = iter; piter.hasNext();) {
@@ -2736,9 +2770,9 @@ class F14Table : public Policy {
         // It's okay to do this in a separate loop because we only do it
         // when the chunk count is small.  That avoids a branch when we
         // are promoting a clear to a reset for a large table.
-        auto scale = Chunk::capacityScale(std::to_address(chunks_));
-        for (std::size_t ci = 0; ci < chunkCount(); ++ci) {
-          chunkAt(ci)->clear();
+        auto scale = Chunk::capacityScale(chunks);
+        for (std::size_t ci = 0; ci < cc; ++ci) {
+          Chunk::chunkRawAt(chunks, ci)->clear();
         }
         chunkAt(0)->markEof(scale);
       }
