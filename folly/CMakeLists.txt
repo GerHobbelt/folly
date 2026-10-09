@@ -594,6 +594,7 @@ folly_add_library(
     folly_lang_new
     folly_portability
     folly_traits
+    folly_utility
 )
 
 folly_add_library(
@@ -744,14 +745,17 @@ folly_add_library(
 if (IS_X86_64_ARCH AND NOT MSVC)
   folly_add_library(
     NAME memcpy_x86
-    SRCS
-      memcpy.S
+    SRCS memcpy.S
   )
   set_property(
     TARGET folly_memcpy_x86_obj
-    APPEND PROPERTY COMPILE_OPTIONS "-x" "assembler-with-cpp"
+    APPEND
+    PROPERTY
+      COMPILE_OPTIONS
+      "-x"
+      "assembler-with-cpp"
   )
-endif()
+endif ()
 
 # aarch64 assembly memcpy implementation
 if (IS_AARCH64_ARCH)
@@ -763,8 +767,7 @@ if (IS_AARCH64_ARCH)
       external/aor/memcpy-mops.S
       external/aor/memcpy_sve.S
       external/aor/memmove-mops.S
-    HEADERS
-      external/aor/asmdefs.h
+    HEADERS external/aor/asmdefs.h
   )
 
   folly_add_library(
@@ -773,10 +776,9 @@ if (IS_AARCH64_ARCH)
       external/aor/memset-advsimd.S
       external/aor/memset-mops.S
       external/aor/memset-sve.S
-    HEADERS
-      external/aor/asmdefs.h
-    )
-endif()
+    HEADERS external/aor/asmdefs.h
+  )
+endif ()
 
 folly_add_library(
   NAME memory
@@ -1089,12 +1091,15 @@ folly_add_library(
     folly_concurrency_cache_locality
     folly_cpp_attributes
     folly_detail_futex
+    folly_lang_assume
     folly_likely
     folly_portability_asm
+    folly_synchronization_atomic_traits
     folly_synchronization_lock
     folly_synchronization_relaxed_atomic
     folly_synchronization_sanitize_thread
     folly_system_thread_id
+    folly_traits
 )
 
 set(FOLLY_SINGLETON_SELECT_DEPS)
@@ -1447,7 +1452,7 @@ add_subdirectory(settings)
 add_subdirectory(ssl)
 add_subdirectory(stats)
 add_subdirectory(synchronization)
-add_subdirectory(system)
+add_subdirectory(./system)
 add_subdirectory(testing)
 add_subdirectory(tracing)
 

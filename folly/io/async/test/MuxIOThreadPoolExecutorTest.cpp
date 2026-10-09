@@ -19,7 +19,9 @@
 #if FOLLY_HAS_EPOLL
 
 #include <thread>
+#include <vector>
 
+#include <folly/Function.h>
 #include <folly/executors/test/IOThreadPoolExecutorBaseTestLib.h>
 #include <folly/io/async/MuxIOThreadPoolExecutor.h>
 #include <folly/portability/GTest.h>
@@ -61,14 +63,41 @@ TEST(MuxIOThreadPoolExecutor, SingleEpollLoopRun) {
 
   testEvbs();
 
-  ex.setNumThreads(1);
-  EXPECT_EQ(ex.numThreads(), 1);
-  EXPECT_EQ(ex.numActiveThreads(), 1);
-  testEvbs();
-
+  // Downsizing is not supported; exercise upsizing from the many-EventBases,
+  // few-threads steady state.
   ex.setNumThreads(kNumEventBases);
   EXPECT_EQ(ex.numThreads(), kNumEventBases);
   testEvbs();
+}
+
+TEST(MuxIOThreadPoolExecutor, PollerRingMigration) {
+  // Few threads and many EventBases with short timers, so polls armed on one
+  // thread are routinely completed on another.
+  static constexpr size_t kNumThreads = 2;
+  static constexpr size_t kNumEventBases = 64;
+  static constexpr size_t kIterationsPerEvb = 20;
+
+  folly::MuxIOThreadPoolExecutor::Options options;
+  options.setNumEventBases(kNumEventBases);
+  folly::MuxIOThreadPoolExecutor ex(kNumThreads, options);
+
+  const auto evbs = ex.getAllEventBases();
+  folly::Latch latch(kNumEventBases * kIterationsPerEvb);
+  std::vector<size_t> remaining(kNumEventBases, kIterationsPerEvb);
+
+  // Each EventBase's callbacks run serially on its own loop, so remaining[i]
+  // needs no extra synchronization. count_down() is the last shared access, so
+  // no worker touches these locals once latch.wait() returns.
+  folly::Function<void(size_t)> tick = [&](size_t i) {
+    if (--remaining[i] > 0) {
+      evbs[i]->runAfterDelay([&tick, i] { tick(i); }, /* milliseconds */ 1);
+    }
+    latch.count_down();
+  };
+  for (size_t i = 0; i < kNumEventBases; ++i) {
+    evbs[i]->runInEventBaseThread([&tick, i] { tick(i); });
+  }
+  latch.wait();
 }
 
 TEST(MuxIOThreadPoolExecutor, SingleEpollLoopTimers) {
@@ -95,6 +124,7 @@ TEST(MuxIOThreadPoolExecutor, InvalidSetNumThreads) {
   ex.setNumThreads(16); // No-op.
   EXPECT_THROW(ex.setNumThreads(0), std::invalid_argument);
   EXPECT_THROW(ex.setNumThreads(17), std::invalid_argument);
+  EXPECT_THROW(ex.setNumThreads(8), std::invalid_argument); // No downsizing.
 
   EXPECT_THROW(folly::MuxIOThreadPoolExecutor(0), std::invalid_argument);
   folly::MuxIOThreadPoolExecutor::Options options;

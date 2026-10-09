@@ -10392,6 +10392,143 @@ TEST_P(AsyncSocketTest, IoUringMovableCallbackHandsOffToMovableCallback) {
   acceptedSocket->close();
 }
 
+TEST_P(AsyncSocketTest, SwitchToEventHandlerModeWithoutIoUringIsNoOp) {
+  if (GetParam() == BackendType::IO_URING) {
+    GTEST_SKIP() << "readiness-based I/O behavior";
+  }
+
+  TestServer server;
+  EventBase& evb = getEventBase();
+  auto socket = AsyncSocket::newSocket(&evb);
+  socket->connect(nullptr, server.getAddress(), 30);
+  evb.loop();
+  auto acceptedSocket = server.accept();
+
+  ReadCallback readCallback;
+  readCallback.dataAvailableCallback = [&] { socket->setReadCB(nullptr); };
+  socket->setReadCB(&readCallback);
+
+  auto pendingSwitch = socket->asyncSwitchToEventHandlerMode();
+  ASSERT_TRUE(pendingSwitch.isReady());
+  EXPECT_EQ(std::move(pendingSwitch).get(), nullptr);
+  EXPECT_EQ(socket->getReadCallback(), &readCallback);
+
+  const std::string payload = "hello";
+  acceptedSocket->write(
+      reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
+  evb.loop();
+  readCallback.verifyData(payload.data(), payload.size());
+
+  socket->close();
+  acceptedSocket->close();
+}
+
+TEST_P(AsyncSocketTest, IoUringSwitchToEventHandlerModeRejectsInvalidState) {
+  if (GetParam() != BackendType::IO_URING) {
+    GTEST_SKIP() << "native io_uring I/O behavior";
+  }
+
+  TestServer server(false, 4096);
+  EventBase& evb = getEventBase();
+  auto socket = AsyncSocket::newSocket(&evb);
+  auto expectInvalidState = [&](const std::string& conditions) {
+    auto pendingSwitch = socket->asyncSwitchToEventHandlerMode();
+    ASSERT_TRUE(pendingSwitch.isReady());
+    ASSERT_TRUE(pendingSwitch.hasException());
+    const auto* exception =
+        pendingSwitch.result()
+            .exception()
+            .get_exception<AsyncSocketException>();
+    ASSERT_NE(exception, nullptr);
+    EXPECT_EQ(exception->getType(), AsyncSocketException::INVALID_STATE);
+    EXPECT_THAT(exception->what(), HasSubstr(conditions));
+  };
+
+  expectInvalidState(
+      "established=false, pending connect=false, pending writes=false");
+
+  ConnCallback connectCallback;
+  SocketOptionMap options{{{SOL_SOCKET, SO_SNDBUF}, 4096}};
+  socket->connect(&connectCallback, server.getAddress(), 30, options);
+  ASSERT_EQ(connectCallback.state, STATE_WAITING);
+  expectInvalidState(
+      "established=false, pending connect=true, pending writes=false");
+  evb.loop();
+  ASSERT_EQ(connectCallback.state, STATE_SUCCEEDED);
+  auto acceptedSocket = server.accept();
+
+  ReadCallback readCallback;
+  socket->setReadCB(&readCallback);
+  WriteCallback writeCallback;
+  const std::string payload(1024 * 1024, 'w');
+  socket->write(&writeCallback, payload.data(), payload.size());
+  ASSERT_EQ(writeCallback.state, STATE_WAITING);
+  expectInvalidState(
+      "established=true, pending connect=false, pending writes=true");
+  EXPECT_TRUE(socket->good());
+  EXPECT_EQ(socket->getReadCallback(), &readCallback);
+  EXPECT_EQ(writeCallback.state, STATE_WAITING);
+
+  socket->closeNow();
+  acceptedSocket->close();
+  evb.loop();
+}
+
+TEST_P(AsyncSocketTest, IoUringSwitchToEventHandlerModeKeepsInFlightBytes) {
+  if (GetParam() != BackendType::IO_URING) {
+    GTEST_SKIP() << "native io_uring recv behavior";
+  }
+
+  TestServer server;
+  EventBase& evb = getEventBase();
+  auto socket = AsyncSocket::newSocket(&evb);
+  socket->connect(nullptr, server.getAddress(), 30);
+  evb.loop();
+  auto acceptedSocket = server.accept();
+
+  TrackingMovableReadCallback nativeCallback;
+  socket->setReadCB(&nativeCallback);
+  evb.loopOnce(EVLOOP_NONBLOCK);
+
+  std::string payload(8192, '\0');
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<char>('a' + i % 26);
+  }
+  acceptedSocket->write(
+      reinterpret_cast<const uint8_t*>(payload.data()), payload.size());
+
+  const auto fd = socket->getNetworkSocket();
+  const auto originalFlags = fcntl(fd.toFd(), F_GETFL, 0);
+  ASSERT_NE(originalFlags, -1);
+  EXPECT_EQ(originalFlags & O_NONBLOCK, 0);
+  auto pendingSwitch = socket->asyncSwitchToEventHandlerMode();
+  EXPECT_FALSE(pendingSwitch.isReady());
+  EXPECT_EQ(fcntl(fd.toFd(), F_GETFL, 0), originalFlags);
+  auto drained = std::move(pendingSwitch).via(&evb).getVia(&evb);
+  EXPECT_EQ(fcntl(fd.toFd(), F_GETFL, 0), originalFlags);
+  ASSERT_EQ(netops::set_socket_non_blocking(fd), 0);
+  EXPECT_EQ(nativeCallback.dataRead(), 0);
+  if (drained) {
+    socket->setPreReceivedData(std::move(drained));
+  }
+
+  ReadCallback readinessCallback;
+  readinessCallback.dataAvailableCallback = [&] {
+    if (readinessCallback.dataRead() == payload.size()) {
+      socket->setReadCB(nullptr);
+      evb.terminateLoopSoon();
+    }
+  };
+  socket->setReadCB(&readinessCallback);
+  if (readinessCallback.dataRead() < payload.size()) {
+    evb.loop();
+  }
+  readinessCallback.verifyData(payload.data(), payload.size());
+
+  socket->close();
+  acceptedSocket->close();
+}
+
 TEST_P(AsyncSocketTest, PreReceivedDataOnly) {
   TestServer server;
 
@@ -11794,5 +11931,119 @@ TEST_P(AsyncSocketTest, MoveEventBaseWithActiveRead) {
   serverSock->detachEventBase();
   serverSock->attachEventBase(&evb);
   serverSock->close();
+  socket->close();
+}
+
+TEST_P(AsyncSocketTest, MoveEventBaseWithReadCallbackCleared) {
+  TestServer server;
+  EventBase& evb = getEventBase();
+  auto evb2 = makeEventBase();
+
+  auto socket = AsyncSocket::newSocket(&evb);
+  ConnCallback connCb;
+  socket->connect(&connCb, server.getAddress(), 30);
+  evb.loop();
+  ASSERT_EQ(connCb.state, STATE_SUCCEEDED);
+
+  auto acceptedFd = server.acceptFD();
+  auto serverSock = AsyncSocket::UniquePtr(new AsyncSocket(&evb, acceptedFd));
+
+  ReadCallback readCb;
+  serverSock->setReadCB(&readCb);
+  serverSock->setReadCB(nullptr);
+
+  ASSERT_TRUE(serverSock->isDetachable());
+  serverSock->detachEventBase();
+  serverSock->attachEventBase(evb2.get());
+
+  readCb.dataAvailableCallback = [&] { evb2->terminateLoopSoon(); };
+  serverSock->setReadCB(&readCb);
+
+  const std::string data = "read after moving event base";
+  WriteCallback writeCb;
+  socket->write(&writeCb, data.data(), data.size());
+
+  for (int i = 0; i < 50 && readCb.dataRead() < data.size(); ++i) {
+    evb.runAfterDelay([&] { evb.terminateLoopSoon(); }, 20);
+    evb.loop();
+    evb2->runAfterDelay([&] { evb2->terminateLoopSoon(); }, 20);
+    evb2->loop();
+  }
+
+  readCb.verifyData(data.data(), data.size());
+
+  serverSock->detachEventBase();
+  serverSock->attachEventBase(&evb);
+  serverSock->close();
+  socket->close();
+}
+
+TEST_P(AsyncSocketTest, CloseWithDetachedReadHandle) {
+  TestServer server;
+  EventBase& evb = getEventBase();
+
+  auto socket = AsyncSocket::newSocket(&evb);
+  ConnCallback connCb;
+  socket->connect(&connCb, server.getAddress(), 30);
+  evb.loop();
+  ASSERT_EQ(connCb.state, STATE_SUCCEEDED);
+
+  auto acceptedFd = server.acceptFD();
+  auto serverSock = AsyncSocket::UniquePtr(new AsyncSocket(&evb, acceptedFd));
+
+  ReadCallback readCb;
+  serverSock->setReadCB(&readCb);
+
+  ASSERT_TRUE(serverSock->isDetachable());
+  serverSock->detachEventBase();
+  serverSock->closeNow();
+
+  EXPECT_TRUE(serverSock->isClosedBySelf());
+  EXPECT_FALSE(serverSock->isClosedByPeer());
+  EXPECT_EQ(readCb.state, STATE_SUCCEEDED);
+
+  socket->close();
+  evb.loop();
+}
+
+TEST_P(AsyncSocketTest, MoveSocketWithAlreadyDetachedReadHandle) {
+  TestServer server;
+  EventBase& evb = getEventBase();
+
+  auto socket = AsyncSocket::newSocket(&evb);
+  ConnCallback connCb;
+  socket->connect(&connCb, server.getAddress(), 30);
+  evb.loop();
+  ASSERT_EQ(connCb.state, STATE_SUCCEEDED);
+
+  auto acceptedFd = server.acceptFD();
+  auto serverSock = AsyncSocket::UniquePtr(new AsyncSocket(&evb, acceptedFd));
+
+  ReadCallback initialReadCb;
+  serverSock->setReadCB(&initialReadCb);
+  serverSock->setReadCB(nullptr);
+
+  auto movedOnce = AsyncSocket::UniquePtr(new AsyncSocket(serverSock.get()));
+  serverSock.reset();
+  auto movedTwice = AsyncSocket::UniquePtr(new AsyncSocket(movedOnce.get()));
+  movedOnce.reset();
+
+  ReadCallback readCb;
+  readCb.dataAvailableCallback = [&] { evb.terminateLoopSoon(); };
+  movedTwice->setReadCB(&readCb);
+
+  const std::string data = "read after moving socket twice";
+  WriteCallback writeCb;
+  socket->write(&writeCb, data.data(), data.size());
+
+  for (int i = 0; i < 50 && readCb.dataRead() < data.size(); ++i) {
+    evb.runAfterDelay([&] { evb.terminateLoopSoon(); }, 20);
+    evb.loop();
+  }
+
+  EXPECT_EQ(writeCb.state, STATE_SUCCEEDED);
+  readCb.verifyData(data.data(), data.size());
+
+  movedTwice->close();
   socket->close();
 }
