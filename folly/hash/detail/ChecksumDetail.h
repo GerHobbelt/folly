@@ -99,6 +99,114 @@ uint32_t crc32c_sw(
 uint32_t crc32_hw(
     const uint8_t* data, size_t nbytes, uint32_t startingChecksum = ~0U);
 
+/**
+ * Whether a call of this size takes a generated kernel instead of scalar
+ * crc32c_hw. Size alone does not settle it on every part, so there is a
+ * third answer: Intel takes them above 4096, AMD only above 6144.
+ *
+ * kIntelOnly is kept separate rather than folded into a bool so that a call
+ * settled by its size never reads the vendor, which is a function-local
+ * static and costs a guard check on every small call.
+ */
+enum class Crc32cGenerated {
+  kNo,
+  kYes,
+  kIntelOnly,
+};
+
+/**
+ * Which of the three a call of this size gets. Split out from crc32c() and
+ * kept free of any CPU query so the choice can be tested on any host, which a
+ * runtime dispatch cannot be: every kernel returns the same checksum, so
+ * comparing output says nothing about which one ran.
+ */
+constexpr Crc32cGenerated crc32c_generated_for(size_t nbytes) {
+  if (nbytes <= 4096) {
+    return Crc32cGenerated::kNo;
+  }
+  return nbytes > 6144 ? Crc32cGenerated::kYes : Crc32cGenerated::kIntelOnly;
+}
+
+/**
+ * Smallest call that takes one of the wider folds. The two numbers differ
+ * because the kernel being replaced differs. On AMD a call this size runs
+ * scalar crc32c_hw, which the wider fold beats from 4096 up. On Intel it runs
+ * avx512_crc32c_v8s3x4, which is still ahead on a buffer that has fallen out
+ * of cache until about 6144.
+ */
+inline constexpr size_t kCrc32cWideMinBytesAmd = 4096;
+inline constexpr size_t kCrc32cWideMinBytesIntel = 6144;
+
+enum class Crc32cWideFold {
+  kNone,
+  kWide512,
+  kWide256Avx512,
+  kWide256Avx2,
+};
+
+/**
+ * Which wider fold a call should use. Split out from crc32c() and kept free
+ * of any CPU query so the choice can be tested on any host, which a runtime
+ * dispatch cannot be: every fold returns the same checksum, so comparing
+ * output says nothing about which one ran.
+ */
+constexpr Crc32cWideFold crc32c_wide_fold_for(
+    size_t nbytes, bool avx512Usable, bool avx2Usable, bool vendorIntel) {
+  const size_t least =
+      vendorIntel ? kCrc32cWideMinBytesIntel : kCrc32cWideMinBytesAmd;
+  if (nbytes < least) {
+    return Crc32cWideFold::kNone;
+  }
+  if (avx512Usable) {
+    return vendorIntel
+        ? Crc32cWideFold::kWide256Avx512
+        : Crc32cWideFold::kWide512;
+  }
+  return avx2Usable ? Crc32cWideFold::kWide256Avx2 : Crc32cWideFold::kNone;
+}
+
+/**
+ * Shortest call the 512-bit fold takes, in 16-byte vectors. The loop needs
+ * eight. Both floors are higher, and set where the fold is measured to win
+ * rather than where it merely runs.
+ *
+ * On AMD that is 64 vectors: below 32 the two parts measured disagree about
+ * the sign and one loses about 4%. Intel gains nothing until 256 vectors,
+ * so it waits.
+ */
+inline constexpr size_t kCrc32Vpclmul512MinVectorsAmd = 64;
+inline constexpr size_t kCrc32Vpclmul512MinVectorsIntel = 256;
+
+enum class Crc32Fold {
+  kScalar,
+  kVpclmul256,
+  kVpclmul512,
+};
+
+/**
+ * Which fold a call of this many 16-byte vectors gets. Split out from
+ * crc32_hw() and kept free of any CPU query so the choice can be tested on
+ * any host, which a runtime dispatch cannot be: every fold returns the same
+ * checksum, so comparing output says nothing about which one ran.
+ *
+ * A call below the floor still takes the widest fold the part can run. The
+ * floor chooses between the two widest folds, and never drops a call two
+ * widths at once.
+ */
+constexpr Crc32Fold crc32_fold_for(
+    size_t vec_count,
+    bool vpclmul512Usable,
+    bool vpclmulUsable,
+    bool vendorIntel) {
+  const size_t least = vendorIntel
+      ? kCrc32Vpclmul512MinVectorsIntel
+      : kCrc32Vpclmul512MinVectorsAmd;
+  if (vpclmul512Usable && vec_count >= least) {
+    return Crc32Fold::kVpclmul512;
+  }
+  return vpclmulUsable ? Crc32Fold::kVpclmul256 : Crc32Fold::kScalar;
+}
+
 #if FOLLY_X64 && FOLLY_SSE_PREREQ(4, 2)
 uint32_t crc32_hw_aligned(
     uint32_t remainder, const __m128i* p, size_t vec_count);
@@ -125,6 +233,29 @@ bool crc32_vpclmul_usable();
 /** crc32_hw_aligned, folding 256 bits at a time. Bit-identical output. */
 uint32_t crc32_hw_aligned_vpclmul(
     uint32_t remainder, const __m128i* p, size_t vec_count);
+
+/** Whether the 512-bit fold below can be used on this CPU. */
+bool crc32_vpclmul512_usable();
+
+/** crc32_hw_aligned, folding 512 bits at a time. Bit-identical output. */
+uint32_t crc32_hw_aligned_vpclmul512(
+    uint32_t remainder, const __m128i* p, size_t vec_count);
+
+/**
+ * Whether the wider CRC-32C folds below can be used on this CPU. The two
+ * AVX-512 folds have the same precondition, so one test covers both. The
+ * `_avx2` fold is the one a part with VPCLMULQDQ and no AVX-512 can still run.
+ */
+bool crc32c_wide_avx512_usable();
+bool crc32c_wide256_avx2_usable();
+
+/**
+ * avx512_crc32c_v8s3x4, folding 512 or 256 bits at a time. Bit-identical
+ * output.
+ */
+uint32_t crc32c_wide512(const uint8_t* buf, size_t len, uint32_t crc0);
+uint32_t crc32c_wide256_avx512(const uint8_t* buf, size_t len, uint32_t crc0);
+uint32_t crc32c_wide256_avx2(const uint8_t* buf, size_t len, uint32_t crc0);
 #endif
 #else
 #define FOLLY_HAS_CRC32_VPCLMUL 0

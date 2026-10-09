@@ -40,9 +40,9 @@ Default-on for:
 Routine conversation, status updates, debriefs, working notes, and context dumps
 trigger only through another condition above.
 
-Purely mechanical changes do not trigger by default, regardless of line count.
-Examples are typos, broken links, formatting, and repeating an already-approved
-rename or rephrase.
+Purely mechanical changes do not trigger by default. Examples are typos, broken
+links, formatting, generated-output updates, and user-specified mechanical
+edits, including batch changes.
 
 Accountability artifacts and delegated-review reports produced by this workflow
 do not themselves trigger another critic-iterate cycle.
@@ -107,8 +107,6 @@ Per pass:
 1. **Identify the critic dimensions** for the artifact type before inspecting
    the current draft, so dimension selection is not biased toward dimensions the
    draft happens to pass. Examples:
-   - Writing: explanation / shape / cut / plain language / cold re-read (see
-     "Writing specialization").
    - Evidence: Are claims that could change the answer supported, with inference
      and uncertainty visible?
    - `design-vetting.md`: Full problem covered? Viability checked before
@@ -155,9 +153,9 @@ author passes inline in the chat, with each finding marked:
 - ❌ REJECTED — quote the affected text/element, state why kept.
 
 When prose requires Fresh Review, use the `MUST_TAKE` / `MINOR` / `REJECTED`
-classes under "Integration and closure" for reviewer and author findings. Quote
-the affected text and state the applied change or why it was rejected. For
-`MINOR`, also say why the candidate was acceptable without it.
+classes under "Revision and closure" for reviewer and author findings. Quote the
+affected text and state the applied change or why it was rejected. For `MINOR`,
+also say why the candidate was acceptable without it.
 
 In either format, list each `SCOPE_EXPANSION` separately.
 
@@ -217,63 +215,25 @@ failure. "Fresh" means unprimed by the author's diagnosis, not context-free.
 a complete independent message, including its Test Plan, in `REVIEW FRAME:`.
 Then follow the general comparison, triage, and closure rules.
 
-**Context packet discipline (commit messages).** The author or orchestrator
-still builds a context packet for commit messages. For fresh review, pass only
-the short task note defined in `{FA}/critic-iterate/review-task.md`, not the
-whole packet. Structure the author-side packet into three named sections so the
-author can scan it predictably:
+**Context packet discipline (commit messages).** Before drafting a commit or
+diff message, the author or orchestrator must follow
+`{FA}/write/commit-summary/c-i-author.md`.
 
-Before constructing the author packet or reviewer task note, reread the active
-workstream ledger when one exists. Build the author packet from current task
-inputs relevant to Stack context, Reader must know, or Decision trail, including
-any ledger goal and unsuperseded requirements or rationale. Before the author
-uses or dispatches the packet, treat every input as a claim or requirement, not
-approved wording. Apply "Evidence" when a false claim could change the message,
-then check each input against the intended reader's starting knowledge. Keep
-code identifiers when they anchor a fact or help find the relevant code. Explain
-the concrete actor, condition, action, or outcome hidden by unfamiliar
-shorthand, and define unavoidable technical terms on first use. Raw input may be
-overcomplete, but not opaque.
+To prepare a fresh review, follow `{FA}/critic-iterate/fresh-review.md`.
 
-Never pass ledger paths or raw ledger contents to the fresh-review task note.
-
-- **Stack context** — for diffs in a stack: what predecessors covered and what
-  follow-ons will do. Include review-affecting predecessor framing or follow-on
-  plans in the task note; omit mechanics not needed to understand the current
-  diff.
-- **Reader must know** — the few facts whose absence would make a reader act
-  wrongly or misunderstand the change, plus the artifact goal and intended
-  readers. Past three or four facts, reapply that test to each; do not merge
-  distinct causal facts into an abstract label. The final message may compress
-  detail and wording only while preserving the reader's needed model. Put a fact
-  in the fresh-review task note only when the reviewer needs it to verify
-  correctness and cannot derive it from the sources it may read.
-- **Decision trail** — for a design choice not mechanically forced by the spec
-  or bug, collect only the choices, constraints, or reversals needed to explain
-  the final shape. Typical candidates are a rejected alternative whose trade-off
-  is not clear from the diff, a constraint that pinned the choice, or a reversal
-  that explains a surprising result. Do not inventory the rest of the
-  discussion.
-
-The Decision trail is RAW input — the inner loop selects only the facts needed
-for the reader's task, then applies the cut test (typically the load-bearing
-constraint or rejected alternative; see `write.md` "## What evergreen context
-means"). The packet-vs-final-message split is input-vs-keep, not a different
-taxonomy. Omitting a decision the reader needs starves the loop; forcing process
-history the reader does not need invents motivation and adds noise.
-
-To build external-review inputs, follow `{FA}/critic-iterate/review-task.md`.
-
-After the author-side cycle converges, format the prose candidate.
+After the author-side cycle converges, run available, applicable checks that are
+inexpensive relative to fresh review, such as formatting, text checks, lint,
+compilation, or focused unit tests. Fix failures and reconverge. Only then
+launch fresh review.
 
 Do not edit the candidate while either reviewer runs. If it changes after a
 round starts, that round no longer covers the revision. In that case, after the
-reviewers finish, resume at step 2 under “Integration and closure” below.
+reviewers finish, resume at step 2 under “Revision and closure” below.
 
 **Run external review:** follow `{FA}/critic-iterate/run-review.md`.
 
-**Integration and closure.** To integrate a usable review, follow
-`{FA}/critic-iterate/integrate-review.md`.
+**Revision and closure.** To revise after a usable review, follow
+`{FA}/critic-iterate/revise.md`.
 
 A successful fresh review and its cold read count as 1 review round. The review
 budget defaults to 1 round. A personal rule can set a different default with
@@ -353,42 +313,9 @@ delegating writing, follow `{FA}/critic-iterate/delegated-author.md`.
 
 ## Code Specialization
 
-For code changes and reviews, follow `{FA}/code/c-i-critic.md`.
+For code changes and reviews, follow `{FA}/code/c-i-review.md`.
 
-## Writing Specialization
-
-The general process governs. This section names the writing-specific dimensions,
-thresholds, and exemptions.
-
-### Cycle
-
-Identify these critic dimensions before inspecting the current draft:
-
-- **Explanation critic** — For durable explanatory prose, apply `write.md`
-  "Substance". For a durable document, also apply "Document". Flag a missing
-  question or problem, missing facts or reasoning needed to follow the
-  conclusion, and facts the reader does not need. Check applicable proposal and
-  investigation requirements before narrower style issues.
-- **Shape critic** — For prose with multiple sections or that answers more than
-  one independent question, set the draft's structure aside and sketch the
-  simplest outline that serves its primary reader and purpose. Compare it with
-  the draft before line edits. Combine parts that do the same job and cut text
-  that serves no additional reader need. Then apply `write.md` "Pick the right
-  shape" to each remaining container.
-- **Sentence critic** — Apply `write.md` "## Iterate" Cut test; it is canonical.
-- **Plain-language critic** — per `write.md` "## Substance". A necessary
-  sentence can still be jargon-heavy. Replace noun chains and abstract process
-  labels with concrete actors, actions, conditions, or outcomes. Restore any
-  needed cause, condition, or sequence, and state how the parts connect. Remove
-  qualifiers that do not change the instruction.
-
-Then cold re-read per the general cycle.
-
-### Scope
-
-Every prose edit that triggers this rule requires an accountability artifact.
-
-### Fresh Review Thresholds
+## Fresh Review Thresholds
 
 The general "high-stakes" definition applies to all writing. Concrete thresholds
 for cases that need them:
@@ -404,8 +331,3 @@ for cases that need them:
   or readability change; there is no size threshold.
 - **Posts seeking input:** fresh review is required by default, with no
   threshold.
-
-### Self-Dog-Fooding Gate
-
-When the edit adds or modifies a rule, the edit's own prose must comply with
-that rule. Apply during the cycle, not after.

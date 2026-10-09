@@ -211,6 +211,74 @@ TEST(Checksum, crc32cHardwareAvx512) {
   }
 }
 
+// Which fold gets picked, on hardware that does not have to be present. Every
+// fold returns the same checksum, so no amount of output comparison can catch
+// the dispatch sending a call to the wrong one.
+TEST(Checksum, crc32cWideFoldChoice) {
+  using folly::detail::Crc32cWideFold;
+  const auto pick = folly::detail::crc32c_wide_fold_for;
+  constexpr size_t kAmd = folly::detail::kCrc32cWideMinBytesAmd;
+  constexpr size_t kIntel = folly::detail::kCrc32cWideMinBytesIntel;
+
+  // Too small for any wider fold, whatever the part is.
+  for (size_t nbytes : {size_t(0), size_t(1), size_t(1024), kAmd - 1}) {
+    EXPECT_EQ(Crc32cWideFold::kNone, pick(nbytes, true, true, false)) << nbytes;
+    EXPECT_EQ(Crc32cWideFold::kNone, pick(nbytes, true, true, true)) << nbytes;
+  }
+
+  // The threshold is lower on AMD, because the kernel the fold displaces
+  // there is the scalar one. 4096 is a common request size, so which side of
+  // the boundary it falls on is worth pinning.
+  EXPECT_EQ(Crc32cWideFold::kWide512, pick(kAmd, true, true, false));
+  EXPECT_EQ(Crc32cWideFold::kNone, pick(kAmd, true, true, true));
+  EXPECT_EQ(Crc32cWideFold::kNone, pick(kIntel - 1, true, true, true));
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx512, pick(kIntel, true, true, true));
+
+  // One fold per part: AMD keeps the 512-bit one at every size above the
+  // threshold. A size split was measured and is not worth its branch.
+  EXPECT_EQ(Crc32cWideFold::kWide512, pick(8192, true, true, false));
+  EXPECT_EQ(Crc32cWideFold::kWide512, pick(1 << 20, true, true, false));
+
+  // Intel takes the 256-bit fold: it led at every size measured.
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx512, pick(8192, true, true, true));
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx512, pick(1 << 20, true, true, true));
+
+  // Without AVX-512 the 256-bit fold runs at every size above the threshold,
+  // and a part with neither runs no wider fold at all.
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx2, pick(kAmd, false, true, false));
+  EXPECT_EQ(Crc32cWideFold::kNone, pick(kIntel - 1, false, true, true));
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx2, pick(kIntel, false, true, true));
+  EXPECT_EQ(Crc32cWideFold::kWide256Avx2, pick(1 << 20, false, true, false));
+  EXPECT_EQ(Crc32cWideFold::kNone, pick(kAmd, false, false, false));
+  EXPECT_EQ(Crc32cWideFold::kNone, pick(1 << 20, false, false, true));
+}
+
+// Below the wider folds, crc32c() still chooses between a generated kernel
+// and scalar crc32c_hw. Every kernel returns the same checksum, so that
+// choice is only visible here.
+TEST(Checksum, crc32cGeneratedChoice) {
+  using folly::detail::crc32c_generated_for;
+  using folly::detail::Crc32cGenerated;
+
+  // Too small for a generated kernel on any part. 4096 itself is included:
+  // routing it to the generated kernel was measured and is a loss on the
+  // Intel part that carries most of this kernel's cost.
+  for (size_t nbytes :
+       {size_t(0), size_t(1), size_t(1024), size_t(4095), size_t(4096)}) {
+    EXPECT_EQ(Crc32cGenerated::kNo, crc32c_generated_for(nbytes)) << nbytes;
+  }
+
+  // Above 4096 and up to 6144 only Intel takes one, and 6144 is the last such
+  // size rather than the first that every part takes.
+  EXPECT_EQ(Crc32cGenerated::kIntelOnly, crc32c_generated_for(4097));
+  EXPECT_EQ(Crc32cGenerated::kIntelOnly, crc32c_generated_for(6144));
+
+  // Above 6144 every part takes one.
+  for (size_t nbytes : {size_t(6145), size_t(8192), size_t(1) << 20}) {
+    EXPECT_EQ(Crc32cGenerated::kYes, crc32c_generated_for(nbytes)) << nbytes;
+  }
+}
+
 TEST(Checksum, crc32cHardwareEqAvx512) {
   if (avx512CrcUsable()) {
     for (size_t i = 0; i < 1000; i++) {
@@ -365,38 +433,113 @@ TEST(Checksum, crc32cContinuationAutodetect) {
   testCRC32CContinuation(folly::crc32c);
 }
 
-// crc32c() selects between crc32c_hw and the generated kernels on a 4096-byte
+// crc32c() selects between crc32c_hw and the generated kernels on a byte-count
 // threshold, so the two sides of it run different code. expectedResults jumps
 // from 17 bytes straight to 2MiB, and which kernel the threshold selects is
 // vendor-dependent, so the generated ones are also tested directly rather than
 // only through whichever crc32c() happens to reach on the host running this.
+//
+// 4096, 6144 and 8192 are all swept because the threshold has sat on each of
+// them and the test must straddle it wherever it is. 12288 is where the two
+// AMD folds now hand over, and 65536 is where they used to.
 TEST(Checksum, crc32cEqAcrossDispatchThreshold) {
   constexpr size_t kOffsets[] = {0, 1, 8, 15};
+  constexpr size_t kThresholds[] = {4096, 6144, 8192, 12288, 65536};
   for (uint32_t startingChecksum : {0U, ~0U}) {
     for (size_t offset : kOffsets) {
-      for (size_t length = 4080; length <= 4200; length++) {
-        SCOPED_TRACE(
-            testing::Message()
-            << "startingChecksum=" << startingChecksum << " offset=" << offset
-            << " length=" << length);
-        const uint8_t* data = buffer + offset;
-        const uint32_t sw =
-            folly::detail::crc32c_sw(data, length, startingChecksum);
-        ASSERT_EQ(sw, folly::crc32c(data, length, startingChecksum));
-        if (folly::detail::crc32c_hw_supported_sse42()) {
-          ASSERT_EQ(
-              sw,
-              folly::detail::sse_crc32c_v8s3x3(data, length, startingChecksum));
-        }
-        if (avx512CrcUsable()) {
-          ASSERT_EQ(
-              sw,
-              folly::detail::avx512_crc32c_v8s3x4(
-                  data, length, startingChecksum));
+      for (size_t threshold : kThresholds) {
+        for (size_t length = threshold - 16; length <= threshold + 104;
+             length++) {
+          SCOPED_TRACE(
+              testing::Message()
+              << "startingChecksum=" << startingChecksum << " offset=" << offset
+              << " length=" << length);
+          const uint8_t* data = buffer + offset;
+          const uint32_t sw =
+              folly::detail::crc32c_sw(data, length, startingChecksum);
+          ASSERT_EQ(sw, folly::crc32c(data, length, startingChecksum));
+          if (folly::detail::crc32c_hw_supported_sse42()) {
+            ASSERT_EQ(
+                sw,
+                folly::detail::sse_crc32c_v8s3x3(
+                    data, length, startingChecksum));
+          }
+          if (avx512CrcUsable()) {
+            ASSERT_EQ(
+                sw,
+                folly::detail::avx512_crc32c_v8s3x4(
+                    data, length, startingChecksum));
+          }
+#if FOLLY_X64 && FOLLY_HAS_CRC32_VPCLMUL
+          if (folly::detail::crc32c_wide_avx512_usable()) {
+            ASSERT_EQ(
+                sw,
+                folly::detail::crc32c_wide512(data, length, startingChecksum));
+            ASSERT_EQ(
+                sw,
+                folly::detail::crc32c_wide256_avx512(
+                    data, length, startingChecksum));
+          }
+          if (folly::detail::crc32c_wide256_avx2_usable()) {
+            ASSERT_EQ(
+                sw,
+                folly::detail::crc32c_wide256_avx2(
+                    data, length, startingChecksum));
+          }
+#endif
         }
       }
     }
   }
+}
+
+// Which fold a CRC-32 call gets. All three return the same checksum, so no
+// output comparison can catch a call going to the wrong one.
+TEST(Checksum, crc32FoldChoice) {
+  using folly::detail::Crc32Fold;
+  const auto pick = folly::detail::crc32_fold_for;
+  constexpr size_t kAmd = folly::detail::kCrc32Vpclmul512MinVectorsAmd;
+  constexpr size_t kIntel = folly::detail::kCrc32Vpclmul512MinVectorsIntel;
+  static_assert(kAmd < kIntel, "Intel waits longer for the fold, not less");
+
+  // Below the lower floor a part with both folds takes the 256-bit one,
+  // never the 128-bit one, on either vendor. The floor chooses between the
+  // two widest folds the part has; it must not drop a call two widths.
+  for (size_t vecs : {size_t(0), size_t(1), size_t(8), kAmd - 1}) {
+    EXPECT_EQ(Crc32Fold::kVpclmul256, pick(vecs, true, true, false)) << vecs;
+    EXPECT_EQ(Crc32Fold::kVpclmul256, pick(vecs, true, true, true)) << vecs;
+  }
+
+  // 32 vectors is 512 bytes, a common request size, and one where the two
+  // AMD parts measured disagree about which fold is faster. It is under
+  // both floors, and this pins that rather than leaving it to the constants.
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(32, true, true, false));
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(32, true, true, true));
+
+  // AMD takes the 512-bit fold from its own floor up. Intel gains nothing
+  // there, so it keeps the 256-bit fold until its floor.
+  EXPECT_EQ(Crc32Fold::kVpclmul512, pick(kAmd, true, true, false));
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(kAmd, true, true, true));
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(kIntel - 1, true, true, true));
+  EXPECT_EQ(Crc32Fold::kVpclmul512, pick(kIntel, true, true, true));
+
+  // Above the higher floor both vendors take it, at every size.
+  EXPECT_EQ(Crc32Fold::kVpclmul512, pick(size_t(1) << 20, true, true, true));
+  EXPECT_EQ(Crc32Fold::kVpclmul512, pick(size_t(1) << 20, true, true, false));
+
+  // Without the 512-bit fold, the 256-bit one runs at every size.
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(kIntel, false, true, true));
+  EXPECT_EQ(Crc32Fold::kVpclmul256, pick(size_t(1) << 20, false, true, false));
+
+  // A part with neither folds 128 bits at a time, at every size.
+  EXPECT_EQ(Crc32Fold::kScalar, pick(0, false, false, false));
+  EXPECT_EQ(Crc32Fold::kScalar, pick(size_t(1) << 20, false, false, true));
+
+  // AVX-512 without the 256-bit fold is not a part that ships, but the
+  // choice still has to be defined: a short call falls to scalar rather
+  // than to a fold the part cannot run.
+  EXPECT_EQ(Crc32Fold::kScalar, pick(0, true, false, false));
+  EXPECT_EQ(Crc32Fold::kVpclmul512, pick(kAmd, true, false, false));
 }
 
 TEST(Checksum, crc32) {

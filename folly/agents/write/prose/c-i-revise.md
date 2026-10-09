@@ -1,16 +1,11 @@
-# Integrate a fresh review
+# Revise prose after fresh review
 
-The General Cycle's no-edit rule governs author-side passes. Before acting on
-review, mark any useful proposal outside the user's agreed task as
-`SCOPE_EXPANSION`. Without user approval, do not apply it or let it block
-completion.
+Compare the candidate with the independent frame by reader model and structure,
+not sentence by sentence. Neither is preferred; keep the structure that better
+serves the reader.
 
-For prose, compare the candidate with the independent frame by reader model and
-structure, not sentence by sentence. Neither is preferred; keep the structure
-that better serves the reader.
-
-For external prose review, classify every remaining fresh-reviewer finding
-before editing; its response already integrates the cold report:
+Classify every remaining fresh-reviewer finding before editing; its response
+already integrates the cold report:
 
 - `MUST_TAKE`: must be fixed; leaving it would materially harm correctness or
   the reader's task.
@@ -27,6 +22,8 @@ fallback, or exposes a deciding correctness assumption, reapply
 `design-vetting.md` before editing. Pure presentation or citation changes do not
 trigger this.
 
+Treat findings as diagnoses, not patch instructions. Resolve accepted findings
+through a coherent whole-candidate revision, not one-by-one patches.
+
 Record dispositions only in the accountability artifact; summarize
-`SCOPE_EXPANSION` items in the final debrief. For other artifacts, take the
-better version, merge, or apply its findings.
+`SCOPE_EXPANSION` items in the final debrief.

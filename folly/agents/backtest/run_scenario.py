@@ -41,13 +41,19 @@ CRITIC_ITERATE_RULE = PurePosixPath("critic-iterate.md")
 CRITIC_ITERATE_SUPPORT_FILES = (
     PurePosixPath("critic-iterate/cold-review-preamble.md"),
     PurePosixPath("critic-iterate/fresh-review-preamble.md"),
-    PurePosixPath("critic-iterate/review-task.md"),
-    PurePosixPath("critic-iterate/integrate-review.md"),
+    PurePosixPath("critic-iterate/fresh-review.md"),
+    PurePosixPath("critic-iterate/revise.md"),
     PurePosixPath("critic-iterate/auth-prompt.md"),
     PurePosixPath("critic-iterate/run-review.md"),
     PurePosixPath("critic-iterate/review-failures.md"),
     PurePosixPath("critic-iterate/delegated-author.md"),
-    PurePosixPath("code/c-i-critic.md"),
+    PurePosixPath("write/prose/c-i-author.md"),
+    PurePosixPath("write/prose/c-i-fresh-review.md"),
+    PurePosixPath("write/prose/c-i-review.md"),
+    PurePosixPath("write/prose/c-i-revise.md"),
+    PurePosixPath("write/commit-summary/c-i-author.md"),
+    PurePosixPath("write/commit-summary/c-i-fresh-review.md"),
+    PurePosixPath("code/c-i-review.md"),
 )
 TOOL_FILES = {
     "codex-reviewer.py": PurePosixPath("critic-iterate/codex-reviewer.py"),
@@ -189,7 +195,7 @@ def _prompt_for_run(manifest: Manifest, install_rules: bool) -> PurePosixPath:
 
 def _checkpoint_instruction() -> str:
     return (
-        "After writing the initial draft, immediately run "
+        "Immediately after writing the initial draft, run exactly "
         "`backtest-checkpoint 0` and follow its stdout.\n\n"
     )
 
