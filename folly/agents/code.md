@@ -75,6 +75,29 @@ Do not extract a helper merely to name a direct equality, membership, null, or
 enum-state check. Inline the check unless the predicate is reused or names
 domain policy.
 
+## Code comments
+
+Code comments are read beside the code. Explain the outside fact, invariant, or
+reason that the code alone does not show; do not narrate what the code already
+shows.
+
+Prefer compact notation or examples for data shapes and simple relationships.
+Familiar pseudocode is fine; it need not match the implementation language.
+
+- State the condition the reader should rely on, not the mechanism that checks
+  or produces it. For a side-effecting call or ignored return, "Check that every
+  X resolves" beats "Fetch every X"; name the mechanism only when the mechanism
+  is surprising.
+- When a comment's claim depends on facts outside the local expression, include
+  the shortest checkable proof. Name the outside source of truth and the
+  invariant it establishes; don't compress so far that a cold reader must infer
+  why the claim follows.
+- Apply the same standard to code-adjacent prose, including `static_assert`
+  messages: include text only when it adds information the expression does not
+  already carry.
+- `/*paramName=*/` inline comments: only for same-type parameter disambiguation.
+  Remove when parameter types already distinguish the arguments.
+
 ## Error handling
 
 Keep an error boundary only when it meaningfully improves operational
@@ -86,11 +109,34 @@ actionable context; otherwise let it propagate.
   is not to handle OOM).
 - Systems programs must decide deliberately which failures are recoverable and
   which terminate the process.
-- Scripts, utilities, and config generators/validators should usually let rare
-  unexpected failures produce a native exception and stack trace. Handle
-  expected user mistakes, and add context to common failures only when it
-  preserves the original diagnosis and repays the extra code. `CHECK` and
-  `assert` are fine for internal invariants.
+
+### Minimize handling in scripts, utilities, and test/evaluation code
+
+First, simplify failure reporting without removing checked conditions.
+
+- For rare or should-not-happen failures, remove handling that only adds
+  diagnostics to a native exception, without changing program flow. Let such
+  exceptions propagate.
+
+- For internal invariants, use `CHECK` / `LOG(FATAL)` in C++, or bare `assert`
+  in Python (these scripts and tests do not run with `-O`).
+
+Then, consider removing or simplifying checks. Assume the failures they detect
+occur and follow the code without them, including side effects and recovery.
+
+Check the propagation path before changing an exception type, or making it
+fatal. If possible, also simplify downstream handling.
+
+Keep checks needed to prevent wrong results, protect required recovery, or make
+common failures easier to diagnose.
+
+Only keep messages or handling to:
+
+- help diagnose or report common, expected errors during normal use;
+- protect behavior still required after simplification.
+
+Handlers should preserve earlier failures. When reporting an invariant failure,
+keep its backtrace.
 
 ## Naming
 

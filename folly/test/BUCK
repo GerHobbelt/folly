@@ -1389,6 +1389,16 @@ fb_dirsync_cpp_unittest(
     ],
 )
 
+fb_dirsync_cpp_unittest(
+    name = "singleton_vault_registration_complete_hook_test",
+    srcs = ["SingletonVaultRegistrationCompleteHookTest.cpp"],
+    deps = [
+        "//folly:singleton",
+        "//folly/portability:gtest",
+        "//folly/portability:unistd",
+    ],
+)
+
 fb_dirsync_cpp_library(
     name = "singleton_test_structs",
     srcs = ["SingletonTestStructs.cpp"],
@@ -1405,7 +1415,7 @@ fb_dirsync_cpp_binary(
     dlopen_enabled = True,
     overridden_link_style = "shared",
     target_compatible_with = ["fbcode//opensource/macros:broken-in-oss"],
-    xplat_sanitizer_runtime = "host",
+    xplat_sanitizer_runtime_provider = "host",
     deps = [
         "//folly:singleton_thread_local",
     ],
@@ -1685,7 +1695,7 @@ fb_dirsync_cpp_binary(
     dlopen_enabled = True,
     overridden_link_style = "shared",
     target_compatible_with = ["fbcode//opensource/macros:broken-in-oss"],
-    xplat_sanitizer_runtime = "host",
+    xplat_sanitizer_runtime_provider = "host",
     deps = [
         "//folly:thread_local",
     ],
