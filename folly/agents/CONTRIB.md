@@ -10,22 +10,29 @@ or push an agent toward the wrong work.
 
 ## Principles
 
-- Solve general problems. Add a rule only for a real, recurring failure, not a
-  one-off incident.
+- Solve general problems. Use `rule-design.md` to decide what earns a rule.
 - Say the rule in the fewest plain words that still tell an agent what to do.
-- "Every rule is written in blood." Learn why a rule exists before changing it.
-  Update the nearest `.contrib.md` only to fix stale notes or preserve new
-  goals, constraints, or reasons not clear from the rule. Do not repeat rules or
-  log routine fixes.
+- "Every rule is written in blood." Ground new rules in real incidents. Before
+  changing an existing rule, understand the failure it was meant to prevent and
+  preserve that protection. Update the nearest `.contrib.md` only to fix stale
+  notes or preserve new goals, constraints, or reasons not clear from the rule.
+  Do not repeat rules, except for [short source quotations](#quoting-rule-text).
+  Do not log routine fixes.
 - When a task needs several kinds of guidance, combine small, focused rules
   instead of growing one file to cover everything.
-- Load only rules that help with the current task. Use `write/concise-rules.md`
-  and careful editing to keep every loaded word useful.
+- Load only rules that help with the current task. Use `rule-design.md` and
+  careful editing to keep every loaded word useful.
 - Keep general rules free of assumptions about one user, company, repository,
   agent tool, or filesystem. Put Meta-only rules under `facebook/`; Folly's
   open-source export omits that directory.
 - Keep maintainer notes concrete and plain. Use simple words. Keep an example
   when it explains the problem better than a summary.
+
+## Quoting rule text
+
+A contributor note may quote the rule text it explains. Use this when a link
+alone leaves the passage unclear. Link the source, quote only the needed
+excerpt, and mark omissions with `...`.
 
 ## Make the reader's job easy
 
