@@ -1244,6 +1244,15 @@ struct PosixMutex {
   void unlock_shared() { pthread_mutex_unlock(&lock_); }
 };
 
+// In TSAN, tests run a lot slower. To avoid test timeouts, adjust the number
+// of repetitions we need for tests.
+static std::size_t adjustReps(std::size_t reps) {
+  if (folly::kIsSanitizeThread) {
+    return reps / 10;
+  }
+  return reps;
+}
+
 template <template <typename> class Atom, typename Lock, typename Locker>
 static void runContendedReaders(
     size_t numOps, size_t numThreads, bool useSeparateLocks) {
@@ -1727,14 +1736,14 @@ TEST(SharedMutex, deterministicConcurrentReadersOfOneLockWritePrio) {
 TEST(SharedMutex, concurrentReadersOfOneLockReadPrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexReadPriority, Locker>(
-        100000, 32, false);
+        adjustReps(100000), adjustReps(32), false);
   }
 }
 
 TEST(SharedMutex, concurrentReadersOfOneLockWritePrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexWritePriority, Locker>(
-        100000, 32, false);
+        adjustReps(100000), adjustReps(32), false);
   }
 }
 
@@ -1757,14 +1766,14 @@ TEST(SharedMutex, deterministicReadersOfConcurrentLocksWritePrio) {
 TEST(SharedMutex, readersOfConcurrentLocksReadPrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexReadPriority, TokenLocker>(
-        100000, 32, true);
+        adjustReps(100000), adjustReps(32), true);
   }
 }
 
 TEST(SharedMutex, readersOfConcurrentLocksWritePrio) {
   for (int pass = 0; pass < 10; ++pass) {
     runContendedReaders<atomic, SharedMutexWritePriority, TokenLocker>(
-        100000, 32, true);
+        adjustReps(100000), adjustReps(32), true);
   }
 }
 
@@ -1787,14 +1796,14 @@ TEST(SharedMutex, deterministicMixedMostlyReadWritePrio) {
 TEST(SharedMutex, mixedMostlyReadReadPrio) {
   for (int pass = 0; pass < 5; ++pass) {
     runMixed<atomic, SharedMutexReadPriority, TokenLocker>(
-        10000, 32, 0.1, false);
+        adjustReps(10000), adjustReps(32), 0.1, false);
   }
 }
 
 TEST(SharedMutex, mixedMostlyReadWritePrio) {
   for (int pass = 0; pass < 5; ++pass) {
     runMixed<atomic, SharedMutexWritePriority, TokenLocker>(
-        10000, 32, 0.1, false);
+        adjustReps(10000), adjustReps(32), 0.1, false);
   }
 }
 
@@ -1820,15 +1829,6 @@ TEST(SharedMutex, deterministicLostWakeupWritePrio) {
     runMixed<DeterministicAtomic, DSharedMutexWritePriority, TokenLocker>(
         1000, 3, 1.0, false);
   }
-}
-
-// In TSAN, tests run a lot slower. To avoid test timeouts, adjust the number
-// of repetitions we need for tests.
-static std::size_t adjustReps(std::size_t reps) {
-  if (folly::kIsSanitizeThread) {
-    return reps / 10;
-  }
-  return reps;
 }
 
 TEST(SharedMutex, mixedMostlyWriteReadPrio) {
@@ -1866,7 +1866,7 @@ TEST(SharedMutex, deterministicAllOpsWritePrio) {
 
 TEST(SharedMutex, allOpsReadPrio) {
   for (int pass = 0; pass < 5; ++pass) {
-    runAllAndValidate<SharedMutexReadPriority, atomic>(100000, 32);
+    runAllAndValidate<SharedMutexReadPriority, atomic>(adjustReps(100000), 32);
   }
 }
 
