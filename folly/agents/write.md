@@ -2,6 +2,9 @@
 
 Resolve package paths relative to this file's directory.
 
+When writing or reviewing `CONTRIB.md` or `*.contrib.md`, follow
+`{FA}/write/contributor-notes.md`.
+
 ## Critic-iterate
 
 To author prose under critic-iterate, follow `{FA}/write/prose/c-i-review.md`,
@@ -40,25 +43,31 @@ To revise prose after a usable review, follow the generic base
 - **Rework, don't append.** When fixing prose, default to rewriting the line
   rather than adding to it. Append-style patches ("See X for Y", "Note: Z") are
   almost always barnacles.
+
 - **Do not edit for motion.** In review mode, change text only to improve
   clarity or accuracy, or to make it materially shorter without losing needed
   content or increasing reader effort. Replace an abstract process label when
   the target audience would have to unpack it.
-- **Pick the right shape:**
-  - Lifecycle or procedure → numbered list.
-  - 2+ parallel states, facts, decisions, or reasons → bullets.
-  - 3+ inline items → bullets.
 
-  Use lead labels where they aid scanning. Reserve semicolon/em-dash glue for
-  tight causal pairs ("keep X — stripping breaks Y"). A parallel comparison or
-  enumeration hiding in prose is a shape miss — rewrite the container, not just
-  the sentences. (The Iterate loop's Shape pass applies this for commit messages
-  specifically.)
+- **Pick the right shape.** Choose the form that makes the text easiest to
+  follow.
 
-- **Lead with why.** For prose about code, start with the problem or goal. Add a
-  constraint, rejected alternative, or invariant when it explains the choice.
-  Include enough of what the code does to make that reason clear, then leave
-  routine mechanics to the code. If one sentence is enough, stop.
+  - Use numbered steps for instructions whose order matters.
+
+  - Prefer bullets for parallel facts, choices or reasons, rather than packing
+    them into paragraphs.
+
+  - Keep a connected explanation in prose when splitting it would make it harder
+    to follow.
+
+  - Use labels only when they help the reader find, compare or interpret
+    information.
+
+- **Lead with what the reader needs first.** For prose about code, start with
+  the problem or purpose. A fact that needs no background explanation may come
+  first when it helps interpret the rest. Explain enough of what happens or is
+  proposed to make the point clear; leave routine mechanics in the code. If one
+  sentence is enough, stop.
 
 ## Author disposition
 
@@ -77,12 +86,16 @@ The author must adopt a persona free from cognitive biases like rationalization
 
 ## Substance
 
-**Select facts, then compress wording.** Use sources to get the facts right, not
-to decide that every fact belongs. Keep only the facts the primary reader needs
-to do the job the artifact exists to support. Being true, related, or
-non-obvious is not enough. For a fact that stays, keep the concrete detail that
-makes it useful to that reader. Replacing that detail with a broad label is not
-concision.
+**Cut unneeded content; make the rest easy to read.** Keep only the facts and
+connections the reader needs for the artifact's purpose and their task. Use
+sources to get those facts right. Being true, related, or non-obvious is not
+enough to earn space.
+
+Explain the selected content clearly. Then cut words that add nothing to meaning
+or flow. Preserve the concrete details and connections the reader needs to
+understand the point or do the task. Reread the whole passage after cuts, using
+only the reader's expected knowledge. A shorter version that is choppy or harder
+to follow is worse.
 
 - Assume the intended reader's normal background, but not this artifact or its
   drafting history. State the question or problem and enough framing and
@@ -93,9 +106,9 @@ concision.
 - Avoid wordiness: cut filler, hedging, and restatement (don't say the same
   thing twice in different words — merge sentences that make the same point).
 - State simple points simply. Add how or why only when the reader needs it.
-- Prefer common words and concrete verbs when they are equally precise. If a
-  sentence says a change "enables," "supports," or "provides" something vague,
-  rewrite it around the concrete outcome.
+- Prefer familiar words and concrete verbs without losing precision. Keep needed
+  technical terms; explain them when the reader may not know them. Replace vague
+  labels with who or what acts, what happens, or how the parts relate.
 - Prefer a concrete example when it makes a needed point clearer than abstract
   prose.
 - Use identifiers to point readers to relevant code, not in place of a plain
@@ -103,10 +116,13 @@ concision.
 - When shortening rules/guidelines, preserve the decision function: enough
   detail to apply the rule, not just know it exists.
 
-## Sentences
+## Sentences and paragraphs
 
-- Short sentences. Short paragraphs.
-- **Dense sentences.** If a sentence stacks 4+ noun phrases or chained
+Prefer short sentences and paragraphs. Keep a connected explanation together
+when a split would make it harder to follow. Start a new paragraph when moving
+to a different point.
+
+- **Split dense sentences.** If a sentence stacks 4+ noun phrases or chained
   possessives, cut it if unneeded; otherwise restructure it. For a sentence over
   20 words, read it aloud; cut or restructure it if you stumble.
 - One claim per sentence by default — the goal is fast comprehension. Glue
@@ -177,22 +193,18 @@ remaining implementation detail to the diff. A fact's presence in the diff
 neither earns nor disqualifies it; keep it here only when the reviewer needs it
 before reading the code.
 
-**State the goal early.** Commit / diff messages and design docs must say what
-the artifact is trying to accomplish for intended readers. Lead with the goal,
-or with a concise account of the concrete problem it solves followed immediately
-by the goal. A self-explanatory invariant (for example, that a refactor is a
-no-op) may come first when the reviewer needs it to interpret the goal. Put
-context-dependent invariants after the goal. Omit invariants the reviewer does
-not need to understand or verify the change. Stack context may briefly
-cross-reference a prior `D<num>` for detail or evidence; include all framing the
-current reader needs inline.
+**Prepare the reader to review.** For commit / diff messages and design docs,
+make the purpose clear early. Include the approach when the reader needs it to
+assess the work. Keep needed framing in the text; a brief reference to a prior
+`D<num>` can supply detail or evidence.
 
 ## Titles
 
-Commit / diff / doc titles must be clear in a title-only list-view without the
-summary. Name the concrete object and the relationship or condition changed; do
-not shorten away the object that makes the change intelligible. Use plain
-language when implementation detail does not help readers identify the change.
+Titles must make sense without the body. For a change, name the concrete object
+and the relationship or condition changed. For other documents, name the
+concrete topic or task. Keep the words that identify the subject and distinguish
+it from nearby work. Prefer plain language; keep technical names when they help
+readers identify the subject.
 
 Example: Prefer `check job migration state vs that of its reservation` over
 `validate paired migration states`.
@@ -239,11 +251,23 @@ concerns; keep each section short. Sections that typically earn their keep:
 - Alternatives considered and why they lost.
 - Privacy / killswitch / rollback strategy.
 
-**Composite diff (main + tangential cleanup) → main mode + `Drive-by:` line.**
-Label the cleanup with `Drive-by:` so the reader knows where the main thread
-ends. Describe pain or constraint (the bug, the awkwardness it removes), not the
-mechanic the diff already shows. If the cleanup is self-evident, a one-liner
-like `Drive-by: drop some dead code.` is enough.
+**Additional fixes.** Mark small incidental fixes so reviewers do not mistake
+them for part of the main change:
+
+- One simple fix:
+  ```text
+  **Also:** Simple fix.
+  ```
+- A few simple fixes:
+  ```text
+  Incidental fixes:
+
+  - Simple fix 1
+  - Simple fix 2
+  ```
+
+Briefly explain non-obvious reasons; do not restate code. Use this sparingly. If
+the fixes are many, complex, or completely unrelated -- split the diff.
 
 ## What evergreen context means
 
@@ -271,20 +295,6 @@ any required Fresh Review from `{FA}/critic-iterate.md`.
 
 Per round: explanation → shape → cut (including the test plan) → plain language
 → cold re-read. Converge when a full round makes no edit.
-
-### Shape pass (before sentence cuts)
-
-If a paragraph has a shape problem, fix the container FIRST — sentence cuts on
-the wrong container are wasted motion.
-
-1. **Prose hiding an enumeration?** "A, B, and C" → bullets.
-2. **Parallel-states comparison?** A vs. B vs. C → bullets, lead labels where
-   they aid scanning.
-3. **One dense paragraph doing two reader jobs?** Split: claim sentence first,
-   consequence sentence next.
-4. **Dense paragraph with jargon pile-up?** If a cold-read makes you re-parse a
-   noun chain ("the X's Y whose Z affects W") or reach for the dictionary, split
-   or rewrite. Jargon stacks fail even when each term is correct.
 
 ### Cut test — per sentence
 
@@ -429,7 +439,9 @@ cases:
 
 ## Note on genre
 
-The examples here are commit-message-shaped. The same principles apply to design
-proposals, group posts seeking input, and code-review comments — the audience
-structure (current + future) and the goal (evergreen context, few reasonable
-words) carry over. Adapt the section structure to the medium.
+The examples use commit messages. For design proposals, rules and guidelines,
+group posts seeking input, review comments, and other prose, apply the same
+principles for choosing content and reducing reader effort. Adapt the content
+and structure to the artifact's purpose and established audience. Include
+context for future readers when the artifact is expected to remain useful to
+them.
