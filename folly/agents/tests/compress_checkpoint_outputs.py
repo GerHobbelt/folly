@@ -16,26 +16,28 @@
 
 Usage: python3 -m folly.agents.tests.compress_checkpoint_outputs SAMPLE
 
-SAMPLE must contain uncompressed `output.md`, `checkpoints.json`, and every
+SAMPLE must contain uncompressed `output/main.md`, `checkpoints.json`, and every
 artifact named by that JSON. The tool deduplicates exact content, preferring
-`output.md` and otherwise the earliest phase file. For each remaining adjacent
+`output/main.md` and otherwise the earliest phase file. For each remaining adjacent
 change, it stores an earlier-to-later normal diff when the diff is less than 60%
 of the later file. It verifies every reconstruction before deleting redundant
 full files, removes stale `artifact` fields from `checkpoints.json`, and prints
-the `## Checkpoints` README section.
+the `## Checkpoints` README section. File membership in `checkpoints.json`
+lets `SAMPLE --restore PHASE --destination PATH` restore a phase as output files.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence, TextIO
+
+from folly.agents.tests import directory_snapshot
 
 
 _STAGED_SCRIPTS = Path(__file__).parent / "folly/agents/scripts"
@@ -59,16 +61,23 @@ class Representation:
     diffs: tuple[str, ...] = ()
 
 
-def _read_regular(path: Path) -> bytes:
-    """Reject links and special files before reading destructive-work inputs."""
+def _read_regular(sample: Path, relative: str | Path) -> bytes:
+    parent = sample
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError(f"sample input is not a regular directory: {parent}")
+    for component in Path(relative).parts[:-1]:
+        parent /= component
+        if parent.is_symlink() or not parent.is_dir():
+            raise ValueError(f"sample input is not a regular directory: {parent}")
+    path = sample / relative
     if path.is_symlink() or not path.is_file():
-        raise ValueError(f"sample input is not a regular file: {path.name}")
+        raise ValueError(f"sample input is not a regular file: {path}")
     return path.read_bytes()
 
 
 def _load(sample: Path) -> tuple[list[dict[str, Any]], list[Phase]]:
     """Read the uncompressed phase sequence and enforce its flat-file shape."""
-    records = json.loads(_read_regular(sample / "checkpoints.json").decode())
+    records = json.loads(_read_regular(sample, "checkpoints.json").decode())
     if not isinstance(records, list) or not records:
         raise ValueError("checkpoints.json must contain a nonempty list")
 
@@ -91,11 +100,11 @@ def _load(sample: Path) -> tuple[list[dict[str, Any]], list[Phase]]:
             or artifact != f"output-{name}.md"
         ):
             raise ValueError("checkpoint phase or artifact is invalid")
-        phases.append(Phase(name, artifact, _read_regular(sample / artifact)))
+        phases.append(Phase(name, artifact, _read_regular(sample, artifact)))
 
-    output = _read_regular(sample / "output.md")
+    output = _read_regular(sample, "output/main.md")
     if output != phases[-1].contents:
-        raise ValueError("output.md does not match the final checkpoint")
+        raise ValueError("output/main.md does not match the final checkpoint")
     return records, phases
 
 
@@ -104,22 +113,23 @@ def _use_diff(diff_size: int, full_size: int) -> bool:
     return diff_size * 5 < full_size * 3
 
 
-def _forward_diff(sample: Path, earlier: Phase, later: Phase) -> bytes | None:
-    """Describe one text transition, or retain non-text input as a full file."""
+def _forward_diff(
+    sample: Path, earlier: Path, later: Path, old: bytes, new: bytes
+) -> bytes | None:
     if (
-        b"\0" in later.contents
-        or b"\0" in earlier.contents
-        or not later.contents.endswith(b"\n")
-        or not earlier.contents.endswith(b"\n")
+        b"\0" in old
+        or b"\0" in new
+        or not old.endswith(b"\n")
+        or not new.endswith(b"\n")
     ):
         return None
     try:
-        later.contents.decode()
-        earlier.contents.decode()
+        old.decode()
+        new.decode()
     except UnicodeDecodeError:
         return None
     result = subprocess.run(
-        ["diff", "--", earlier.artifact, later.artifact],
+        ["diff", "--", str(earlier), str(later)],
         cwd=sample,
         stdout=subprocess.PIPE,
     )
@@ -130,13 +140,13 @@ def _forward_diff(sample: Path, earlier: Phase, later: Phase) -> bytes | None:
 
 def _representations(sample: Path, phases: list[Phase]) -> list[Representation]:
     """Choose one verified full-or-diff representation for every phase."""
-    output = (sample / "output.md").read_bytes()
-    canonical = {output: "output.md"}
+    output = (sample / "output/main.md").read_bytes()
+    canonical = {output: "output/main.md"}
     for phase in phases:
         canonical.setdefault(phase.contents, phase.artifact)
 
     counts = Counter(phase.contents for phase in phases)
-    by_contents = {output: Representation("output.md")}
+    by_contents = {output: Representation("output/main.md")}
     result = []
     for index, phase in enumerate(phases):
         representation = by_contents.get(phase.contents)
@@ -144,7 +154,13 @@ def _representations(sample: Path, phases: list[Phase]) -> list[Representation]:
             representation = Representation(canonical[phase.contents])
         if representation is None and index:
             earlier = phases[index - 1]
-            diff = _forward_diff(sample, earlier, phase)
+            diff = _forward_diff(
+                sample,
+                Path(earlier.artifact),
+                Path(phase.artifact),
+                earlier.contents,
+                phase.contents,
+            )
             diff_name = f"output-{earlier.name}-to-{phase.name}.diff"
             if diff is not None and _use_diff(len(diff), len(phase.contents)):
                 diff_path = sample / diff_name
@@ -161,26 +177,49 @@ def _representations(sample: Path, phases: list[Phase]) -> list[Representation]:
     return result
 
 
-def _reconstruct(sample: Path, representation: Representation) -> bytes:
-    """Use the reader-facing helper to verify one stored representation."""
-    if not representation.diffs:
-        return (sample / representation.base).read_bytes()
-    result = subprocess.run(
-        [str(_APPLY_DIFFS), representation.base, *representation.diffs],
-        cwd=sample,
-        check=True,
-        stdout=subprocess.PIPE,
-    )
-    return result.stdout
+def _reconstruct(sample: Path, storage: dict[str, Any]) -> directory_snapshot.Snapshot:
+    entries: directory_snapshot.Snapshot = {}
+    for name, stored in storage["files"].items():
+        relative = Path(name)
+        representation = Representation(stored["base"], tuple(stored["diffs"]))
+        for source in (representation.base, *representation.diffs):
+            path = Path(source)
+            if not path.parts or path.is_absolute() or ".." in path.parts:
+                raise ValueError(f"invalid storage reference: {source}")
+            _read_regular(sample, path)
+        if representation.diffs:
+            result = subprocess.run(
+                [str(_APPLY_DIFFS), representation.base, *representation.diffs],
+                cwd=sample,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            entries[relative] = result.stdout
+        else:
+            entries[relative] = _read_regular(sample, representation.base)
+    return entries
 
 
-def _mapping(sample: Path, phases: list[Phase], stored: list[Representation]) -> str:
-    """Render the complete phase-to-storage map for the sample README."""
-    helper = os.path.relpath(_APPLY_DIFFS, sample)
-    lines = ["## Checkpoints", ""]
-    if any(representation.diffs for representation in stored):
-        lines.extend([f"Below, `apply_diffs` is short for `{helper}`.", ""])
-    for phase, representation in zip(phases, stored):
+def restore(sample: Path, phase: str, destination: Path) -> None:
+    """Restore each file at its original relative path."""
+    records = json.loads(_read_regular(sample, "checkpoints.json").decode())
+    matching = [record for record in records if record["phase"] == phase]
+    if len(matching) != 1:
+        raise ValueError(f"expected one checkpoint phase: {phase}")
+    entries = _reconstruct(sample, matching[0]["storage"])
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"restore destination already exists: {destination}")
+    directory_snapshot.write(entries, destination)
+
+
+def _mapping(phases: list[Phase]) -> str:
+    lines = [
+        "## Checkpoints",
+        "",
+        "From the checkout's `fbcode/`, replace `SAMPLE_DIRECTORY` and each destination path.",
+        "",
+    ]
+    for phase in phases:
         label = (
             "Initial draft"
             if phase.name == "initial"
@@ -190,13 +229,10 @@ def _mapping(sample: Path, phases: list[Phase], stored: list[Representation]) ->
                 else f"Review {phase.name.removeprefix('review')}"
             )
         )
-        if not representation.diffs:
-            target = f"[{representation.base}]({representation.base})"
-        else:
-            target = (
-                f"`apply_diffs {representation.base} {' '.join(representation.diffs)}`"
-            )
-        lines.append(f"- **{label}:** {target}")
+        lines.append(
+            f"- **{label}:** `python3 -m folly.agents.tests.compress_checkpoint_outputs "
+            f"SAMPLE_DIRECTORY --restore {phase.name} --destination /path/to/{phase.name}`"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -205,15 +241,16 @@ def compress(sample: Path, mapping_output: TextIO) -> None:
     sample = sample.resolve()
     records, phases = _load(sample)
     stored = _representations(sample, phases)
-    for phase, representation in zip(phases, stored):
-        if _reconstruct(sample, representation) != phase.contents:
+    for record, phase, representation in zip(records, phases, stored):
+        record["storage"] = {"files": {"main.md": asdict(representation)}}
+        if _reconstruct(sample, record["storage"]) != {Path("main.md"): phase.contents}:
             raise ValueError(f"could not reconstruct phase {phase.name}")
 
-    mapping_output.write(_mapping(sample, phases, stored))
+    mapping_output.write(_mapping(phases))
     mapping_output.flush()
 
     retained = {
-        "output.md",
+        "output/main.md",
         *(item.base for item in stored),
         *(diff for item in stored for diff in item.diffs),
     }
@@ -241,8 +278,15 @@ def compress(sample: Path, mapping_output: TextIO) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sample", type=Path)
+    parser.add_argument("--restore", metavar="PHASE")
+    parser.add_argument("--destination", type=Path)
     args = parser.parse_args(argv)
-    compress(args.sample, sys.stdout)
+    if (args.restore is None) != (args.destination is None):
+        parser.error("--restore and --destination must be supplied together")
+    if args.restore is None:
+        compress(args.sample, sys.stdout)
+    else:
+        restore(args.sample, args.restore, args.destination)
     return 0
 
 

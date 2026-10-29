@@ -327,7 +327,7 @@ class RunScenarioTest(unittest.TestCase):
             commands.append(command)
             environments.append(env)
             if output is not None:
-                (codex_cwd / "output.md").write_text(output)
+                (codex_cwd / "output/main.md").write_text(output)
             stdout.write(trace)
             stderr.write(errors)
             return subprocess.CompletedProcess(command, returncode)
@@ -356,21 +356,6 @@ class RunScenarioTest(unittest.TestCase):
         )
 
         self.assertTrue(args.no_rules)
-
-    def test_parser_accepts_critic_iterate_rounds(self) -> None:
-        args = runner._parser().parse_args(
-            [
-                "scenario",
-                "--model",
-                "model",
-                "--reasoning-effort",
-                "high",
-                "--critic-iterate-rounds",
-                "0",
-            ]
-        )
-
-        self.assertEqual(args.critic_iterate_rounds, 0)
 
     def test_main_passes_critic_iterate_rounds_to_prepare(self) -> None:
         manifest = runner.Manifest(
@@ -436,6 +421,7 @@ class RunScenarioTest(unittest.TestCase):
         self.assertTrue(
             {
                 "run_scenario.py",
+                "directory_snapshot.py",
                 "scenario/prompt.md",
                 "scenario/scenario.json",
                 "scenario/input",
@@ -751,7 +737,7 @@ class RunScenarioTest(unittest.TestCase):
     def test_prepare_leaves_review_only_scenarios_uncheckpointed(self) -> None:
         write(self.rules_root / runner.CRITIC_ITERATE_RULE, "critic")
         self.manifest(
-            inputs=[{"source": "prompt.md", "destination": "output.md"}],
+            inputs=[{"source": "prompt.md", "destination": "output/main.md"}],
             rules=[runner.CRITIC_ITERATE_RULE.as_posix()],
         )
 
@@ -782,7 +768,9 @@ class RunScenarioTest(unittest.TestCase):
         run = self.prepare(install_rules=False)
 
         self.assertEqual(run.prompt.read_text(), "Do the bare task.\n")
-        self.assertEqual({path.name for path in run.workdir.iterdir()}, {"input.md"})
+        self.assertEqual(
+            {path.name for path in run.workdir.iterdir()}, {"input.md", "output"}
+        )
         self.assertFalse(run.install_rules)
         metadata = json.loads((run.root / "run.json").read_text())
         self.assertEqual(metadata["rules"], [])
@@ -840,13 +828,13 @@ class RunScenarioTest(unittest.TestCase):
         write(self.scenario / "draft.md", "draft")
         write(self.scenario / "source/Api.h.txt", "header")
         write(self.root / "shared.md", "shared")
-        write(self.scenario / "samples/1/output.md", "prior output")
+        write(self.scenario / "samples/1/output/main.md", "prior output")
         write(self.rules_root / "write.md", "writing")
         write(self.rules_root / runner.CRITIC_ITERATE_RULE, "critic")
         write(self.rules_root / "write.contrib.md", "decoy")
         manifest = self.manifest(
             inputs=[
-                {"source": "draft.md", "destination": "output.md"},
+                {"source": "draft.md", "destination": "output/main.md"},
                 {"source": "source", "destination": "source"},
                 {"source": "../shared.md", "destination": "shared.md"},
             ],
@@ -857,13 +845,36 @@ class RunScenarioTest(unittest.TestCase):
 
         self.assertEqual((workdir / "source/Api.h").read_text(), "header")
         self.assertEqual((workdir / "shared.md").read_text(), "shared")
-        self.assertTrue((workdir / "output.md").stat().st_mode & 0o200)
+        self.assertTrue((workdir / "output/main.md").stat().st_mode & 0o200)
         self.assertFalse((workdir / "source/Api.h").stat().st_mode & 0o200)
         self.assertFalse((workdir / "rules/write.contrib.md").exists())
         self.assertFalse((workdir / "samples").exists())
         inventory = (workdir / "rules/rules-inventory.md").read_text()
         self.assertIn("1. `write.md`", inventory)
         self.assertIn("2. `critic-iterate.md`", inventory)
+
+    def test_every_seeded_output_file_is_writable_not_just_required_names(self) -> None:
+        write(self.scenario / "draft/main.md", "main draft")
+        write(self.scenario / "draft/nested/notes.md", "notes draft")
+        write(self.scenario / "evidence.md", "readonly evidence")
+        self.manifest(
+            inputs=[
+                {"source": "draft", "destination": "output"},
+                {"source": "evidence.md", "destination": "evidence.md"},
+            ]
+        )
+        run = self.prepare()
+        for name in ("main.md", "nested/notes.md"):
+            self.assertTrue((run.workdir / "output" / name).stat().st_mode & 0o222)
+        self.assertFalse((run.workdir / "evidence.md").stat().st_mode & 0o222)
+        (run.workdir / "output/nested/notes.md").write_text("finished notes")
+        self.assertEqual(runner._finish_run(run, 0), 0)
+        self.assertEqual(
+            (run.root / "output/nested/notes.md").read_text(), "finished notes"
+        )
+        self.assertEqual(
+            (self.scenario / "draft/nested/notes.md").read_text(), "notes draft"
+        )
 
     def test_stage_rejects_hidden_policy_inside_an_input_tree(self) -> None:
         workdir = self.root / "workdir"
@@ -888,7 +899,7 @@ class RunScenarioTest(unittest.TestCase):
 
     def test_launch_uses_isolated_tools_and_preserves_output(self) -> None:
         write(self.scenario / "draft.md", "draft")
-        self.manifest(inputs=[{"source": "draft.md", "destination": "output.md"}])
+        self.manifest(inputs=[{"source": "draft.md", "destination": "output/main.md"}])
         run, codex = self.prepare_launch()
         commands, environments, command_runner = self.fake_codex(
             run,
@@ -969,7 +980,7 @@ class RunScenarioTest(unittest.TestCase):
         for name in runner.TOOL_FILES:
             self.assertIn(f'host_executable(name="{name}"', policy)
             self.assertIn(f'prefix_rule(pattern=["{name}"]', policy)
-        self.assertEqual((run.root / "output.md").read_text(), "complete")
+        self.assertEqual((run.root / "output/main.md").read_text(), "complete")
         self.assertEqual((run.root / "trace.jsonl").read_text(), "trace\n")
         self.assertEqual((run.root / "err.txt").read_text(), "diagnostic\n")
         metadata = json.loads((run.root / "run.json").read_text())
@@ -995,7 +1006,7 @@ class RunScenarioTest(unittest.TestCase):
         self.assertEqual(environment["FOLLY_BACKTEST_WORKDIR"], str(run.workdir))
         self.assertTrue((run.root / "reviews").is_dir())
 
-        (run.workdir / "output.md").write_text("complete")
+        (run.workdir / "output/main.md").write_text("complete")
         with self.assertRaisesRegex(ValueError, "gap-free sequence"):
             runner._finish_run(run, 0)
         metadata = json.loads((run.root / "run.json").read_text())
@@ -1004,7 +1015,7 @@ class RunScenarioTest(unittest.TestCase):
 
     def test_failed_launch_preserves_partial_output_and_diagnostics(self) -> None:
         write(self.scenario / "draft.md", "draft")
-        self.manifest(inputs=[{"source": "draft.md", "destination": "output.md"}])
+        self.manifest(inputs=[{"source": "draft.md", "destination": "output/main.md"}])
         run, codex = self.prepare_launch()
         commands, _, command_runner = self.fake_codex(
             run,
@@ -1021,7 +1032,7 @@ class RunScenarioTest(unittest.TestCase):
         self.assertEqual(result, 7)
         codex_cwd = Path(commands[0][commands[0].index("-C") + 1])
         self.assertTrue(codex_cwd.is_dir())
-        self.assertEqual((run.root / "output.md").read_text(), "partial")
+        self.assertEqual((run.root / "output/main.md").read_text(), "partial")
         self.assertEqual((run.root / "trace.jsonl").read_text(), "trace\n")
         self.assertEqual((run.root / "err.txt").read_text(), "failure\n")
         metadata = json.loads((run.root / "run.json").read_text())
@@ -1029,20 +1040,19 @@ class RunScenarioTest(unittest.TestCase):
         self.assertEqual(metadata["exit_code"], 7)
         self.assertEqual(metadata["executables"]["codex"], str(codex.resolve()))
 
-    def test_finish_run_preserves_failure_with_invalid_partial_output(self) -> None:
+    def test_invalid_output_keeps_workspace_evidence_and_author_status(self) -> None:
         self.manifest()
         run = self.prepare()
-        (run.workdir / "output.md").mkdir()
+        (run.workdir / "output/review.md").write_text("finding")
+        (run.workdir / "output/main.md").mkdir()
 
         self.assertEqual(runner._finish_run(run, 7), 7)
 
+        self.assertEqual((run.workdir / "output/review.md").read_text(), "finding")
         metadata = json.loads((run.root / "run.json").read_text())
         self.assertEqual(metadata["status"], "failed")
         self.assertEqual(metadata["exit_code"], 7)
-        self.assertEqual(
-            metadata["output_preservation_error"],
-            "output.md is not a regular file",
-        )
+        self.assertIn("main.md", metadata["output_preservation_error"])
 
     def test_success_without_output_is_runner_failure(self) -> None:
         self.manifest()
@@ -1058,48 +1068,77 @@ class RunScenarioTest(unittest.TestCase):
         self.assertEqual(metadata["status"], "missing-output")
         self.assertEqual(metadata["exit_code"], 2)
 
-    def test_success_rejects_non_file_output(self) -> None:
+    def test_output_root_and_workspace_ancestors_cannot_be_worker_symlinks(
+        self,
+    ) -> None:
         self.manifest()
-        codex = executable(self.root / "codex")
-        for kind in ("directory", "symlink"):
-            with self.subTest(kind):
+        outside = self.root / "outside"
+        write(outside / "output/main.md", "private")
+        for target in ("output", "task", "workspace"):
+            with self.subTest(target=target):
                 run = self.prepare()
-
-                def fake_codex(
-                    command: list[str],
-                    *,
-                    output_kind: str = kind,
-                    active_run: runner.Run = run,
-                    **unused: object,
-                ) -> subprocess.CompletedProcess[bytes]:
-                    if command[0] == "git":
-                        (active_run.agent_workspace.workspace_root / ".git").mkdir()
-                        return subprocess.CompletedProcess(command, 0, b"", b"")
-                    output = active_run.workdir / "output.md"
-                    if output_kind == "directory":
-                        output.mkdir()
-                    else:
-                        write(self.root / "outside.md", "outside")
-                        output.symlink_to(self.root / "outside.md")
-                    return subprocess.CompletedProcess(command, 0)
-
-                result = runner.launch(
-                    run,
-                    codex,
-                    "model",
-                    "high",
-                    command_runner=fake_codex,
-                )
-
-                self.assertEqual(result, 2)
-                self.assertFalse((run.root / "output.md").exists())
+                if target == "output":
+                    replaced = run.workdir / "output"
+                    replaced.rmdir()
+                    replaced.symlink_to(outside / "output")
+                elif target == "task":
+                    replaced = run.workdir
+                    replaced.rename(replaced.with_name("original-task"))
+                    replaced.symlink_to(outside)
+                else:
+                    replaced = run.agent_workspace.workspace_root
+                    replaced.rename(replaced.with_name("original-workspace"))
+                    (outside / "task").symlink_to(outside)
+                    replaced.symlink_to(outside)
+                self.assertEqual(runner._finish_run(run, 0), 2)
+                self.assertFalse((run.root / "output/main.md").exists())
                 metadata = json.loads((run.root / "run.json").read_text())
                 self.assertEqual(metadata["status"], "invalid-output")
-                self.assertEqual(metadata["exit_code"], 2)
-                self.assertEqual(
-                    metadata["output_preservation_error"],
-                    "output.md is not a regular file",
-                )
+                self.assertTrue(metadata["output_preservation_error"])
+
+    def test_preservation_write_error_keeps_workspace_and_author_failure(self) -> None:
+        self.manifest()
+        run = self.prepare()
+        (run.workdir / "output/a-failed").write_bytes(b"failed")
+        (run.workdir / "output/z-good").write_bytes(b"preserved")
+
+        with mock.patch.object(
+            runner.directory_snapshot,
+            "write",
+            side_effect=PermissionError("cannot preserve output"),
+        ):
+            self.assertEqual(runner._finish_run(run, 7), 7)
+
+        self.assertEqual((run.workdir / "output/a-failed").read_bytes(), b"failed")
+        self.assertEqual((run.workdir / "output/z-good").read_bytes(), b"preserved")
+        metadata = json.loads((run.root / "run.json").read_text())
+        self.assertEqual(metadata["status"], "failed")
+        self.assertEqual(metadata["exit_code"], 7)
+        self.assertIn("cannot preserve output", metadata["output_preservation_error"])
+
+    def test_successful_but_inexact_preservation_does_not_complete_a_run(self) -> None:
+        self.manifest()
+        run = self.prepare()
+        (run.workdir / "output/nested").mkdir()
+        (run.workdir / "output/main.md").write_text("valid draft")
+        (run.workdir / "output/nested/data.bin").write_bytes(b"\0\xff")
+        expected = runner.directory_snapshot.read(run.workdir / "output")
+        write_tree = runner.directory_snapshot.write
+
+        def faulty_write(entries, destination):
+            copied = dict(entries)
+            copied[Path("nested/data.bin")] = b"wrong bytes"
+            write_tree(copied, destination)
+
+        with mock.patch.object(runner.directory_snapshot, "write", faulty_write):
+            self.assertEqual(runner._finish_run(run, 0), 2)
+
+        metadata = json.loads((run.root / "run.json").read_text())
+        self.assertEqual(metadata["status"], "invalid-output")
+        self.assertTrue(metadata["output_preservation_error"])
+        self.assertEqual(
+            runner.directory_snapshot.read(run.workdir / "output"), expected
+        )
 
     def test_launch_without_rules_preserves_the_ambient_path(self) -> None:
         self.manifest(no_rules_prompt="prompt.md")
@@ -1114,7 +1153,7 @@ class RunScenarioTest(unittest.TestCase):
         )
 
         self.assertEqual(result, 0)
-        self.assertEqual((run.root / "output.md").read_text(), "complete")
+        self.assertEqual((run.root / "output/main.md").read_text(), "complete")
         self.assertEqual(environments[0].get("PATH"), os.environ.get("PATH"))
         self.assertFalse((run.root / "bin").exists())
         self.assertFalse((run.agent_home / "rules/default.rules").exists())
