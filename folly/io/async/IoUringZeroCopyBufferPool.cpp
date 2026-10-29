@@ -17,6 +17,7 @@
 #include <folly/io/async/IoUringZeroCopyBufferPool.h>
 
 #include <mutex>
+#include <stdexcept>
 
 #include <folly/Conv.h>
 #include <folly/GLog.h>
@@ -26,7 +27,7 @@
 #include <folly/portability/SysMman.h>
 #include <folly/synchronization/DistributedMutex.h>
 
-#if FOLLY_HAS_LIBURING
+#if FOLLY_HAS_LIBURING_ZCRX
 
 // TODO: T264228475: remove this once liburing/uapi headers are updated.
 #define ZCRX_REG_NODEV 2
@@ -177,7 +178,12 @@ class IoUringZeroCopyBufferPoolImpl {
       const IoUringZeroCopyBufferPool::Params& params, uint32_t pageSize);
   void delayedDestroy(uint32_t refs) noexcept;
   void refillBuffer(Buffer* buffer) noexcept;
-  void flushRefillQueue() noexcept;
+  void requestRefillQueueFlush() noexcept;
+  bool isRefillFlushPending() const noexcept {
+    return refillFlushPending_.load(std::memory_order_acquire);
+  }
+  void flushRefillQueueIfNeeded(
+      struct io_uring* ring, uint32_t zcrxId) noexcept;
 
   void incNoBufferCount() noexcept { noBufferCount_ += 1; }
   uint64_t getAndResetNotifStat(uint64_t& stat, uint64_t& prev) noexcept {
@@ -204,6 +210,7 @@ class IoUringZeroCopyBufferPoolImpl {
   unsigned rqMask_{0};
   uint32_t id_{0};
   std::atomic<uint32_t> bufDispensed_{0};
+  std::atomic<bool> refillFlushPending_{false};
 
   folly::DistributedMutex mutex_;
   std::atomic<bool> wantsShutdown_{false};
@@ -575,8 +582,7 @@ void IoUringZeroCopyBufferPoolImpl::returnBuffer(Buffer* buffer) noexcept {
   } else {
     pendingBuffers_.push(buffer);
 
-    lock.unlock();
-    flushRefillQueue();
+    requestRefillQueueFlush();
     return;
   }
 
@@ -592,27 +598,37 @@ void IoUringZeroCopyBufferPoolImpl::returnBuffer(Buffer* buffer) noexcept {
     const bool shouldFlush = supportedFeatures_.flushRq &&
         (noDev_ || freeEntries <= rqEntries_ / kRefillFlushFreeEntriesDivisor);
     if (FOLLY_UNLIKELY(shouldFlush)) {
-      lock.unlock();
-      flushRefillQueue();
+      requestRefillQueueFlush();
     }
   }
 }
 
-void IoUringZeroCopyBufferPoolImpl::flushRefillQueue() noexcept {
+void IoUringZeroCopyBufferPoolImpl::requestRefillQueueFlush() noexcept {
+  if (supportedFeatures_.flushRq) {
+    refillFlushPending_.store(true, std::memory_order_release);
+  }
+}
+
+void IoUringZeroCopyBufferPoolImpl::flushRefillQueueIfNeeded(
+    struct io_uring* ring, uint32_t zcrxId) noexcept {
+  if (!refillFlushPending_.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+
   if (!supportedFeatures_.flushRq) {
     return;
   }
 
-  if (FOLLY_UNLIKELY(ring_ == nullptr)) {
+  if (FOLLY_UNLIKELY(ring == nullptr)) {
     io_uring_smp_store_release(rqRing_.khead, rqTail_);
     return;
   }
 
   struct zcrx_ctrl ctrl{};
-  ctrl.zcrx_id = id_;
+  ctrl.zcrx_id = zcrxId;
   ctrl.op = ZCRX_CTRL_FLUSH_RQ;
   const auto ret =
-      io_uring_register(ring_->ring_fd, IORING_REGISTER_ZCRX_CTRL, &ctrl, 0);
+      io_uring_register(ring->ring_fd, IORING_REGISTER_ZCRX_CTRL, &ctrl, 0);
   if (FOLLY_UNLIKELY(ret < 0)) {
     FB_LOG_EVERY_MS(WARNING, 60000)
         << "Zero copy receive refill queue flush failed: "
@@ -785,6 +801,69 @@ void* IoUringZeroCopyBufferPool::getNotifStatsPtr() const noexcept {
 
 void IoUringZeroCopyBufferPool::incNoBufferCount() noexcept {
   impl_->incNoBufferCount();
+}
+
+bool IoUringZeroCopyBufferPool::isRefillFlushPending() const noexcept {
+  return impl_->isRefillFlushPending();
+}
+
+void IoUringZeroCopyBufferPool::flushRefillQueueIfNeeded() noexcept {
+  impl_->flushRefillQueueIfNeeded(ring_, static_cast<uint32_t>(zcrxId_));
+}
+
+} // namespace folly
+
+#elif FOLLY_HAS_LIBURING
+
+// TODO: T294823393: remove these stand-ins along with FOLLY_HAS_LIBURING_ZCRX.
+
+namespace folly {
+
+bool IoUringZeroCopyBufferPool::kernelZeroCopyRxSupported() {
+  return false;
+}
+
+/* static */ IoUringZeroCopyBufferPool::UniquePtr
+IoUringZeroCopyBufferPool::create(Params) {
+  return nullptr;
+}
+
+/* static */ IoUringZeroCopyBufferPool::UniquePtr
+IoUringZeroCopyBufferPool::importHandle(ExportHandle, struct io_uring*) {
+  return nullptr;
+}
+
+IoUringZeroCopyBufferPool::ExportHandle
+IoUringZeroCopyBufferPool::exportHandle() const {
+  throw std::runtime_error(
+      "io_uring zero-copy receive is not supported by these liburing headers");
+}
+
+IoUringZeroCopyBufferPool::~IoUringZeroCopyBufferPool() = default;
+
+IoUringZeroCopyBufferPool::Result IoUringZeroCopyBufferPool::getIoBuf(
+    const struct io_uring_cqe*, const struct io_uring_zcrx_cqe*) noexcept {
+  return {nullptr, false};
+}
+
+void IoUringZeroCopyBufferPool::processNotificationCqe(
+    const struct io_uring_cqe*) noexcept {}
+
+uint64_t IoUringZeroCopyBufferPool::getAndResetCopyFallbackCount() noexcept {
+  return 0;
+}
+
+uint64_t IoUringZeroCopyBufferPool::getAndResetCopyFallbackBytes() noexcept {
+  return 0;
+}
+
+uint32_t IoUringZeroCopyBufferPool::getAndResetNoBufferCount() noexcept {
+  return 0;
+}
+
+IoUringZeroCopyBufferPool::Diagnostics
+IoUringZeroCopyBufferPool::getDiagnostics() noexcept {
+  return {};
 }
 
 } // namespace folly
