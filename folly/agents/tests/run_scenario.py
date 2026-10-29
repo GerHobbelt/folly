@@ -191,7 +191,7 @@ def _prompt_for_run(manifest: Manifest, install_rules: bool) -> PurePosixPath:
 def _checkpoint_instruction() -> str:
     return (
         "Immediately after writing the initial draft, run exactly "
-        "`backtest-checkpoint 0` and follow its stdout.\n\n"
+        "`backtest-checkpoint 0`; print and follow its stdout.\n\n"
     )
 
 
@@ -775,7 +775,6 @@ def launch(
                 isolated_agent.Request(
                     model=model,
                     effort=effort,
-                    access="workspace-write",
                     working_directory="task",
                 ),
                 stdin=stdin,
